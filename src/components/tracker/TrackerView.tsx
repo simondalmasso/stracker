@@ -2642,6 +2642,9 @@ export default function TrackerView() {
   // No anonymous timers escape. Deps = [isLiveMode, wsConnected] (minimal).
   // When isLiveMode === false, the effect returns immediately — zero timers,
   // zero fetches, zero memory pressure. V6.11 logic inside poll() preserved.
+  // V11 AUDIT FIX (Gemini+Qwen+Sakana consensus): AbortController added to
+  // cancel any in-flight fetch on cleanup. Prevents setState on unmounted
+  // component (React 19 memory leak warning + zombie state mutations).
   useEffect(() => {
     // V11: Live mode gate. When paused, ALL polling stops. The last snapshot
     // is preserved. (V6.11 re-enables isLiveMode on fresh payload, so this
@@ -2650,6 +2653,9 @@ export default function TrackerView() {
 
     let intervalId: ReturnType<typeof setInterval> | null = null
     let staleTimerId: ReturnType<typeof setTimeout> | null = null
+    // V11 AUDIT FIX: AbortController cancels in-flight fetch on cleanup.
+    // Survives dep changes (wsConnected flip) and unmount without leaking.
+    const controller = new AbortController()
 
     const poll = async () => {
       try {
@@ -2659,9 +2665,13 @@ export default function TrackerView() {
         // INFRA_01 (stracker_v5.3_integration): fetchWithAuth injects the
         // Bearer token (localStorage-backed) and validates the session before
         // each call — refresh loop. Survives F5 without re-authentication.
+        // V11 AUDIT FIX: signal propagated to underlying fetch() so cleanup
+        // can abort the request mid-flight.
         const endTs = Date.now()
         const startTs = endTs - 24 * 60 * 60 * 1000 // NOW() - 24h
-        const resp = await fetchWithAuth(`/points?start=${startTs}&end=${endTs}`)
+        const resp = await fetchWithAuth(`/points?start=${startTs}&end=${endTs}`, {
+          signal: controller.signal,
+        })
         if (resp.ok) {
           const data = await resp.json()
           // V7: ghostrail_pts comes from CSV (canonical). Prefer top-level (already transformed),
@@ -2710,9 +2720,12 @@ export default function TrackerView() {
           // label are reflected in the HUD.
           v611ForceRenderRef.current += 1
           setV611AuditTick(v611ForceRenderRef.current)
-          // V6.11: enforce isLiveMode = true on every fresh payload —
-          // no event, no user gesture, no socket glitch can disable it.
-          if (!isLiveMode) setIsLiveMode(true)
+          // V11 AUDIT FIX (Gemini+Qwen consensus): the previous
+          // `if (!isLiveMode) setIsLiveMode(true)` was DEAD CODE — the
+          // effect aborts above when !isLiveMode, so poll() can never
+          // execute in a paused state. Removed to avoid confusion and
+          // the (theoretical) state-resurrection race if a fetch were
+          // already in-flight when the user paused.
           // V6.11: append forensic audit entry for post-mortem analysis.
           appendV611AuditLog({
             ts: Date.now(),
@@ -2724,8 +2737,18 @@ export default function TrackerView() {
           })
           return
         }
-      } catch (e) { console.error('[V10] /points fetch failed:', e) }
+      } catch (e) {
+        // V11 AUDIT FIX: AbortError is expected on cleanup/deps change —
+        // it means the controller aborted an in-flight request. Do NOT
+        // mark wsConnected=false in this case (would cause spurious flips).
+        const err = e as { name?: string }
+        if (err?.name === 'AbortError') return
+        console.error('[V10] /points fetch failed:', e)
+      }
 
+      // V11 AUDIT FIX: guard against setState after abort (controller may
+      // have fired between the catch above and this line in edge cases).
+      if (controller.signal.aborted) return
       setWsConnected(false)
     }
 
@@ -2744,9 +2767,12 @@ export default function TrackerView() {
       intervalId = setInterval(poll, 3000)
     }
 
-    // V11 SURGICAL CLEANUP: both timers are cleared on unmount OR dep change.
-    // Single exit point — no timer can leak across renders.
+    // V11 SURGICAL CLEANUP: both timers + in-flight fetch are cancelled on
+    // unmount OR dep change. Single exit point — no timer/request leaks.
+    // V11 AUDIT FIX: controller.abort() cancels any pending fetchWithAuth
+    // so its .then() never fires setState on an unmounted/re-mounted comp.
     return () => {
+      controller.abort()
       if (intervalId) clearInterval(intervalId)
       if (staleTimerId) clearTimeout(staleTimerId)
     }
