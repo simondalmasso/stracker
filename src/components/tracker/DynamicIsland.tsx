@@ -40,9 +40,11 @@ function resolveMovementIcon(token: string): LucideCmp {
  *   - dynamic_island_snap: spring(mass 0.5, stiffness 400, damping 30)
  *   - apple_spring: cubic-bezier(0.32, 0.72, 0, 1)
  *
- * The pill sits at top-center, pointer-events-none (alerts are informational).
- * maxWidth is clamped so it never collides with FloatingControls (top-right)
- * or the desktop left panel.
+ * V12 MOBILE_UI_POLISH (Gemini+Sakana consensus):
+ *   - placeText opacity bumped .55 → .85 for mobile outdoor legibility.
+ *   - LED brightness boosted: stronger glow shadow when not in alert.
+ *   - Compact text color unified to white/.9 (was .55 on placeText → ilegible).
+ *   - Logic V11 (heartbeat, alerts, spoof LED) untouched.
  */
 
 export type IslandAlertKind = 'info' | 'warning' | 'critical'
@@ -170,7 +172,11 @@ export function DynamicIsland({
               inset: 0,
               borderRadius: '50%',
               background: hasAlert ? alertVisual?.led : spoofColor,
-              boxShadow: `0 0 8px ${hasAlert ? alertVisual?.led : spoofColor}, 0 0 16px ${hasAlert ? alertVisual?.glow : spoofColor}80`,
+              // V12: stronger glow for non-alert state so LED reads as "live" beacon
+              // even under bright outdoor light. Was 8px+16px, now 10px+20px.
+              boxShadow: hasAlert
+                ? `0 0 8px ${alertVisual?.led}, 0 0 16px ${alertVisual?.glow}80`
+                : `0 0 10px ${spoofColor}, 0 0 20px ${spoofColor}99`,
               animation: hasAlert ? 'led-pulse-critical 0.8s ease-in-out infinite' : ledAnimation,
             }}
           />
@@ -244,12 +250,14 @@ export function DynamicIsland({
               <span
                 className="truncate tabular-nums"
                 style={{
-                  color: 'rgba(255,255,255,.55)',
+                  // V12: opacity .55 → .85 for outdoor legibility (Gemini roast fix).
+                  // Was nearly invisible on mobile under sunlight.
+                  color: 'rgba(255,255,255,.85)',
                   fontSize: isMobile ? 11 : 12,
-                  fontWeight: 500,
+                  fontWeight: 600,
                 }}
               >
-                {placeText} {zoneText && <span style={{ opacity: 0.6 }}>{zoneText}</span>}
+                {placeText} {zoneText && <span style={{ opacity: 0.7 }}>{zoneText}</span>}
               </span>
             </motion.div>
           )}

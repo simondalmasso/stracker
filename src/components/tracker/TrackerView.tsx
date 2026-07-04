@@ -3799,87 +3799,131 @@ export default function TrackerView() {
         {/* SCROLLABLE CONTENT */}
         <div className="flex-1 overflow-y-auto px-4 pb-4" style={{ scrollbarWidth: 'none' }}>
 
-          {/* ── ROW 1: LIVE TOGGLE (V11 isLiveMode) + SPEED + HEADING ── */}
-          <div className="flex items-center gap-3 mb-3">
-            {/* V11 Live/Pause toggle — 44px touch target, #ff3b30 when live */}
+          {/* ════════════════════════════════════════════════════════════════
+              V12 MOBILE_UI_POLISH — Bottom Sheet visual hierarchy.
+              Gemini+Sakana consensus: replace flat rows with clear hierarchy:
+                1. Título (placeLabel) — text-white font-semibold text-base
+                2. Grid 2 cols (Velocidad + Rumbo) — bg-zinc-800/50 cards
+                3. LIVE toggle FAB + compact pills row
+                4. Coords + status footer
+              V11 logic (isLiveMode, wsConnected, movement, effectiveHeading)
+              is preserved verbatim — only JSX/className refactored.
+              ════════════════════════════════════════════════════════════════ */}
+
+          {/* ── ROW 1: TÍTULO (placeLabel) + LIVE/OFFLINE STATUS PILL ── */}
+          <div className="flex items-center justify-between gap-2 mb-2.5">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              {(() => { const MIcon = resolveMovementIcon(movement.compactIcon); return <MIcon size={15} strokeWidth={1.5} style={{ color: movement.isActive ? '#ff3b30' : 'rgba(255,255,255,0.6)', flexShrink: 0 }} /> })()}
+              <h2 className="font-semibold text-white truncate" style={{ fontSize: 15, letterSpacing: '-0.01em' }}>
+                {locationLabel || 'Sin ubicación'}
+              </h2>
+            </div>
+            {/* V12: status pill with bright LED — high contrast */}
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0"
+              style={{
+                background: wsConnected ? 'rgba(255,59,48,0.15)' : 'rgba(255,255,255,0.06)',
+                border: `1px solid ${wsConnected ? 'rgba(255,59,48,0.4)' : 'rgba(255,255,255,0.1)'}`,
+              }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{
+                  background: wsConnected ? '#ff3b30' : 'rgba(255,255,255,0.4)',
+                  boxShadow: wsConnected ? '0 0 6px #ff3b30, 0 0 12px rgba(255,59,48,0.6)' : 'none',
+                }}
+              />
+              <span
+                className="font-bold uppercase tracking-wider"
+                style={{ fontSize: 9, color: wsConnected ? '#ff3b30' : 'rgba(255,255,255,0.6)' }}
+              >
+                {wsConnected ? 'LIVE' : 'OFFLINE'}
+              </span>
+            </div>
+          </div>
+
+          {/* ── ROW 2: GRID 2 COLS — Velocidad + Rumbo (tarjetas con borde sutil) ── */}
+          <div className="grid grid-cols-2 gap-2 mb-2.5">
+            {/* Velocidad — primary readout, card style */}
+            <div
+              className="flex flex-col justify-center items-start px-2.5 py-2 rounded-xl"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              <span className="font-bold uppercase tracking-wider text-zinc-400" style={{ fontSize: 9, letterSpacing: '0.1em' }}>Velocidad</span>
+              <span className="font-bold tabular-nums text-white" style={{ fontSize: 18, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+                {movement.speedKmh == null ? '--' : movement.speedKmh.toFixed(1)}
+                <span className="text-zinc-400 font-medium ml-1" style={{ fontSize: 10 }}>km/h</span>
+              </span>
+            </div>
+            {/* Rumbo — secondary readout, card style */}
+            <div
+              className="flex flex-col justify-center items-start px-2.5 py-2 rounded-xl"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              <span className="font-bold uppercase tracking-wider text-zinc-400" style={{ fontSize: 9, letterSpacing: '0.1em' }}>Rumbo</span>
+              <span className="font-bold tabular-nums text-white" style={{ fontSize: 18, lineHeight: 1.2 }}>
+                {effectiveHeading != null ? `${Math.round(effectiveHeading)}°` : '--'}
+              </span>
+            </div>
+          </div>
+
+          {/* ── ROW 3: LIVE TOGGLE (V11 isLiveMode) + COMPACT PILLS ── */}
+          <div className="flex items-center gap-2 mb-2.5">
+            {/* V12: LIVE FAB with high-contrast state — red when live, gray when paused */}
             <button
               aria-label={isLiveMode ? 'Pausar modo live' : 'Activar modo live'}
               className="flex items-center justify-center w-11 h-11 rounded-full cursor-pointer flex-shrink-0 transition-all active:scale-95"
               style={{
-                background: isLiveMode ? 'rgba(255,59,48,0.18)' : 'rgba(255,255,255,0.06)',
-                border: `1px solid ${isLiveMode ? 'rgba(255,59,48,0.5)' : '#1f2937'}`,
+                background: isLiveMode ? 'rgba(255,59,48,0.2)' : 'rgba(255,255,255,0.05)',
+                border: `1px solid ${isLiveMode ? 'rgba(255,59,48,0.6)' : 'rgba(255,255,255,0.12)'}`,
                 color: isLiveMode ? '#ff3b30' : 'rgba(255,255,255,0.5)',
+                boxShadow: isLiveMode ? '0 0 12px rgba(255,59,48,0.3)' : 'none',
               }}
               onClick={() => setIsLiveMode(!isLiveMode)}
             >
               <Radio size={16} strokeWidth={2} />
             </button>
 
-            {/* Speed — primary readout */}
-            <div className="flex flex-col flex-1 min-w-0">
-              <span className="font-light uppercase tracking-wider text-gray-500" style={{ fontSize: 9, letterSpacing: '0.08em' }}>Velocidad</span>
-              <span className="font-semibold tabular-nums text-white" style={{ fontSize: 20, letterSpacing: '-0.02em' }}>
-                {movement.speedKmh == null ? '--' : movement.speedKmh.toFixed(1)}
-                <span className="text-gray-500 font-light ml-1" style={{ fontSize: 11 }}>km/h</span>
-              </span>
-            </div>
-
-            {/* Heading — V9 effectiveHeading (payload-injected) */}
-            <div className="flex flex-col items-end">
-              <span className="font-light uppercase tracking-wider text-gray-500" style={{ fontSize: 9, letterSpacing: '0.08em' }}>Rumbo</span>
-              <span className="font-semibold tabular-nums text-white" style={{ fontSize: 15 }}>
-                {effectiveHeading != null ? `${Math.round(effectiveHeading)}°` : '--'}
-              </span>
-            </div>
+            {/* Compact metric pills — scrollable */}
+            {snapshot ? (
+              <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
+                <SpoofBadgeV2 result={spoofResult} />
+                {batteryLabel && (
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <Battery size={11} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} />
+                    <span className="font-semibold tabular-nums text-gray-200" style={{ fontSize: 10 }}>{batteryLabel}%</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  {(() => { const NIcon = resolveNetworkIcon(networkTypeToToken(network.type)); return <NIcon size={11} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} /> })()}
+                  <span className="font-semibold uppercase text-gray-200" style={{ fontSize: 10 }}>{network.type}</span>
+                </div>
+                <div className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <Signal size={11} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} />
+                  <span className="font-semibold uppercase text-gray-200" style={{ fontSize: 10 }}>{gpsQuality}</span>
+                </div>
+                <div className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <Smartphone size={11} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} />
+                  <span className="font-semibold uppercase text-gray-200" style={{ fontSize: 10 }}>{screen.shortLabel}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div className="skeleton-shimmer h-5 w-16 rounded-full" />
+                <div className="skeleton-shimmer h-5 w-12 rounded-full" />
+                <div className="skeleton-shimmer h-5 w-14 rounded-full" />
+              </div>
+            )}
           </div>
 
-          {/* ── ROW 2: COMPACT METRIC PILLS — spoof, battery, network, gps, screen ── */}
-          {snapshot ? (
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar mb-3" style={{ scrollbarWidth: 'none' }}>
-              <SpoofBadgeV2 result={spoofResult} />
-              {batteryLabel && (
-                <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid #1f2937' }}>
-                  <Battery size={12} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} />
-                  <span className="font-semibold tabular-nums text-gray-200" style={{ fontSize: 10 }}>{batteryLabel}%</span>
-                </div>
-              )}
-              <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid #1f2937' }}>
-                {(() => { const NIcon = resolveNetworkIcon(networkTypeToToken(network.type)); return <NIcon size={12} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} /> })()}
-                <span className="font-semibold uppercase text-gray-200" style={{ fontSize: 10 }}>{network.type}</span>
-              </div>
-              <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid #1f2937' }}>
-                <Signal size={12} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} />
-                <span className="font-semibold uppercase text-gray-200" style={{ fontSize: 10 }}>{gpsQuality}</span>
-              </div>
-              <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid #1f2937' }}>
-                <Smartphone size={12} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} />
-                <span className="font-semibold uppercase text-gray-200" style={{ fontSize: 10 }}>{screen.shortLabel}</span>
-              </div>
-              <span className="font-mono text-gray-600 ml-auto flex-shrink-0" style={{ fontSize: 9 }}>v{snapshotVersion}</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 mb-3">
-              <div className="skeleton-shimmer h-5 w-16 rounded-full" />
-              <div className="skeleton-shimmer h-5 w-12 rounded-full" />
-              <div className="skeleton-shimmer h-5 w-14 rounded-full" />
-            </div>
-          )}
-
-          {/* ── ROW 3: PLACE + COORDS + LIVE INDICATOR (always visible) ── */}
+          {/* ── ROW 4: COORDS + VERSION FOOTER (discreet, always visible) ── */}
           <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-gray-800">
-            <div className="flex items-center gap-2 min-w-0">
-              {(() => { const MIcon = resolveMovementIcon(movement.compactIcon); return <MIcon size={14} strokeWidth={1.5} style={{ color: movement.isActive ? '#ff3b30' : 'rgba(255,255,255,0.5)' }} /> })()}
-              <div className="min-w-0">
-                <div className="font-semibold text-white truncate" style={{ fontSize: 12 }}>{locationLabel || 'Sin ubicación'}</div>
-                <div className="font-mono text-gray-500 tabular-nums" style={{ fontSize: 10 }}>
-                  {verMasGps?.lat_str || '--'} · {verMasGps?.lng_str || '--'}
-                </div>
-              </div>
+            <div className="font-mono tabular-nums text-zinc-500" style={{ fontSize: 10 }}>
+              {verMasGps?.lat_str || '--'} · {verMasGps?.lng_str || '--'}
             </div>
-            <div className="flex items-center gap-1.5 flex-shrink-0">
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: wsConnected ? '#ff3b30' : 'rgba(255,255,255,0.25)', boxShadow: wsConnected ? '0 0 6px #ff3b30' : 'none' }} />
-              <span className="font-semibold uppercase text-gray-400" style={{ fontSize: 9 }}>{wsConnected ? 'LIVE' : 'OFFLINE'}</span>
-            </div>
+            {snapshot && (
+              <span className="font-mono text-zinc-600 flex-shrink-0" style={{ fontSize: 9 }}>v{snapshotVersion}</span>
+            )}
           </div>
 
           {/* ════════════════════════════════════════════════════════════════
