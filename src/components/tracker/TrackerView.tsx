@@ -3816,7 +3816,7 @@ export default function TrackerView() {
               movement, effectiveHeading) — pure Tailwind/inline style changes.
               ════════════════════════════════════════════════════════════════ */}
 
-          {/* ── ROW 1: TÍTULO (placeLabel) + LIVE/OFFLINE STATUS PILL ── */}
+          {/* ── ROW 1: TÍTULO (placeLabel) + STALENESS HONESTY PILL (V14) ── */}
           <div className="flex items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               {(() => { const MIcon = resolveMovementIcon(movement.compactIcon); return <MIcon size={16} strokeWidth={1.5} style={{ color: movement.isActive ? '#ff3b30' : 'rgba(255,255,255,0.6)', flexShrink: 0 }} /> })()}
@@ -3825,28 +3825,59 @@ export default function TrackerView() {
                 {locationLabel || 'Sin ubicación'}
               </h2>
             </div>
-            {/* V13: status pill — mantener LED pero con bg #2c2c2e/70 */}
-            <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0"
-              style={{
-                background: wsConnected ? 'rgba(255,59,48,0.15)' : 'rgba(44, 44, 46, 0.7)',
-                border: `0.5px solid ${wsConnected ? 'rgba(255,59,48,0.4)' : 'rgba(255,255,255,0.08)'}`,
-              }}
-            >
-              <span
-                className="w-1.5 h-1.5 rounded-full"
-                style={{
-                  background: wsConnected ? '#ff3b30' : 'rgba(255,255,255,0.4)',
-                  boxShadow: wsConnected ? '0 0 6px #ff3b30, 0 0 12px rgba(255,59,48,0.6)' : 'none',
-                }}
-              />
-              <span
-                className="font-bold uppercase tracking-wider"
-                style={{ fontSize: 9, color: wsConnected ? '#ff3b30' : 'rgba(255,255,255,0.6)' }}
-              >
-                {wsConnected ? 'LIVE' : 'OFFLINE'}
-              </span>
-            </div>
+            {/* V14 HONESTY_PATCH: LED staleness honesto.
+                Antes: 'LIVE' siempre que wsConnected=true (mentía si había 9 min de delay).
+                Ahora: calcula edad real del último payload (lastDataTsRef) y muestra:
+                  - <60s    → verde #22c55e 'hace Xs'   (FRESH, real-time)
+                  - 61-300s → amarillo #fbbf24 'hace Xmin' (STALE, delayed)
+                  - >300s   → gris #71717a 'hace Xmin'   (DEAD, disconnected)
+                driftTick (cada 2s) fuerza re-render para que el contador se actualice. */}
+            {(() => {
+              // V14: referencia driftTick para forzar re-render cada 2s (sin usarlo directamente,
+              // solo para que React re-evalúe el IIFE cuando driftTick cambie).
+              void driftTick
+              const ageMs = lastDataTsRef.current > 0 ? Date.now() - lastDataTsRef.current : -1
+              const ageSec = ageMs > 0 ? Math.floor(ageMs / 1000) : -1
+              const ageMin = ageSec > 0 ? Math.floor(ageSec / 60) : 0
+              const isFresh = ageSec >= 0 && ageSec <= 60
+              const isStale = ageSec > 60 && ageSec <= 300
+              const isDead = ageSec > 300 || ageSec < 0
+              const ledColor = isFresh ? '#22c55e' : isStale ? '#fbbf24' : '#71717a'
+              const label = ageSec < 0
+                ? 'OFFLINE'
+                : ageSec < 5 ? 'LIVE'
+                  : ageSec < 60 ? `hace ${ageSec}s`
+                    : `hace ${ageMin}min`
+              const statusText = isFresh ? 'LIVE' : isStale ? 'STALE' : 'DEAD'
+              return (
+                <div
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0"
+                  style={{
+                    background: isFresh ? 'rgba(34,197,94,0.15)' : isStale ? 'rgba(251,191,36,0.15)' : 'rgba(113,113,122,0.15)',
+                    border: `0.5px solid ${isFresh ? 'rgba(34,197,94,0.4)' : isStale ? 'rgba(251,191,36,0.4)' : 'rgba(113,113,122,0.4)'}`,
+                  }}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{
+                      background: ledColor,
+                      boxShadow: isFresh ? `0 0 6px ${ledColor}, 0 0 12px ${ledColor}99` : 'none',
+                      animation: isFresh ? 'led-pulse-calm 2.8s ease-in-out infinite' : isStale ? 'led-pulse-warn 1.6s ease-in-out infinite' : 'none',
+                    }}
+                  />
+                  <span
+                    className="font-bold uppercase tracking-wider"
+                    style={{ fontSize: 9, color: ledColor }}
+                  >
+                    {label}
+                  </span>
+                  {/* V14: micro status text below the age (STALE/DEAD visibility) */}
+                  {!isFresh && (
+                    <span className="sr-only">{statusText}</span>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           {/* ── ROW 2: GRID 2 COLS — Velocidad + Rumbo (V13 premium cards) ── */}
@@ -3903,9 +3934,52 @@ export default function TrackerView() {
               <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
                 <SpoofBadgeV2 result={spoofResult} />
                 {batteryLabel && (
-                  <div className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <Battery size={11} strokeWidth={1.5} style={{ color: 'rgba(255,255,255,0.7)' }} />
-                    <span className="font-semibold tabular-nums text-gray-200" style={{ fontSize: 10 }}>{batteryLabel}%</span>
+                  <div
+                    className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0"
+                    style={{
+                      // V14 HONESTY_PATCH Fix C: battery alert visual.
+                      // <30% → rojo pulsante (peligro Doze Mode)
+                      // 30-50% → amarillo (precaución)
+                      // >50% → estilo normal
+                      background: batteryPct !== null && batteryPct < 30
+                        ? 'rgba(239,68,68,0.2)'
+                        : batteryPct !== null && batteryPct < 50
+                          ? 'rgba(251,191,36,0.15)'
+                          : 'rgba(255,255,255,0.05)',
+                      border: batteryPct !== null && batteryPct < 30
+                        ? '1px solid rgba(239,68,68,0.5)'
+                        : batteryPct !== null && batteryPct < 50
+                          ? '0.5px solid rgba(251,191,36,0.4)'
+                          : '1px solid rgba(255,255,255,0.08)',
+                      animation: batteryPct !== null && batteryPct < 30
+                        ? 'led-pulse-warn 1s ease-in-out infinite'
+                        : 'none',
+                    }}
+                  >
+                    <Battery
+                      size={11}
+                      strokeWidth={1.5}
+                      style={{
+                        color: batteryPct !== null && batteryPct < 30
+                          ? '#ef4444'
+                          : batteryPct !== null && batteryPct < 50
+                            ? '#fbbf24'
+                            : 'rgba(255,255,255,0.7)',
+                      }}
+                    />
+                    <span
+                      className="font-semibold tabular-nums"
+                      style={{
+                        fontSize: 10,
+                        color: batteryPct !== null && batteryPct < 30
+                          ? '#ef4444'
+                          : batteryPct !== null && batteryPct < 50
+                            ? '#fbbf24'
+                            : 'rgb(229,231,235)',
+                      }}
+                    >
+                      {batteryLabel}%
+                    </span>
                   </div>
                 )}
                 <div className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
