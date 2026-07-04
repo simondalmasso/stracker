@@ -3776,12 +3776,18 @@ export default function TrackerView() {
         className="fixed left-0 right-0 bottom-0 z-20 flex flex-col pointer-events-auto"
         style={{
           height: sheetExpanded ? '55vh' : '22vh',
-          background: 'rgba(0,0,0,0.7)',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          borderTop: '1px solid #1f2937',
-          borderRadius: '20px 20px 0 0',
-          boxShadow: '0 -8px 32px rgba(0,0,0,.5)',
+          // V13 PREMIUM_GLASSMORPHISM: Apple dark surface tone rgba(28,28,30,0.85)
+          // (was rgba(0,0,0,0.7) — too flat). 0.85 alpha lets blur show through.
+          background: 'rgba(28, 28, 30, 0.85)',
+          // V13: blur 16px → 24px (richer esmerilado, matches Apple Maps)
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          // V13: borde hiper-sutil 0.5px blanco/.10 (was 1px #1f2937 — too heavy)
+          borderTop: '0.5px solid rgba(255, 255, 255, 0.1)',
+          // V13: radio 20px → 24px (esquinas más suaves)
+          borderRadius: '24px 24px 0 0',
+          // V13: box-shadow pesada eliminada — Apple Maps no usa sombra dura
+          boxShadow: 'none',
           transition: 'height 350ms cubic-bezier(0.2,0.8,0.2,1)',
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}
@@ -3796,34 +3802,35 @@ export default function TrackerView() {
           <div style={{ width: 40, height: 5, borderRadius: 3, background: '#52525b' }} />
         </button>
 
-        {/* SCROLLABLE CONTENT */}
-        <div className="flex-1 overflow-y-auto px-4 pb-4" style={{ scrollbarWidth: 'none' }}>
+        {/* SCROLLABLE CONTENT — V13 INTERNAL_PADDINGS: px-5 + pt-2 (was px-4) */}
+        <div className="flex-1 overflow-y-auto px-5 pt-2 pb-5" style={{ scrollbarWidth: 'none' }}>
 
           {/* ════════════════════════════════════════════════════════════════
-              V12 MOBILE_UI_POLISH — Bottom Sheet visual hierarchy.
-              Gemini+Sakana consensus: replace flat rows with clear hierarchy:
-                1. Título (placeLabel) — text-white font-semibold text-base
-                2. Grid 2 cols (Velocidad + Rumbo) — bg-zinc-800/50 cards
-                3. LIVE toggle FAB + compact pills row
-                4. Coords + status footer
-              V11 logic (isLiveMode, wsConnected, movement, effectiveHeading)
-              is preserved verbatim — only JSX/className refactored.
+              V13 APPLE_MAPS_AESTHETIC_PERFECTION (Gemini consensus):
+                - Premium glassmorphism: rgba(28,28,30,0.85) + blur(24px)
+                - Cards #2c2c2e/70 + rounded-2xl (Apple surface layering)
+                - Numbers as visual kings: text-2xl font-bold tabular-nums
+                - Location header text-lg tracking-tight (contundente)
+                - LIVE FAB: bg-#ff3b30 sólido cuando activo (no translúcido)
+              V11/V12 logic preserved verbatim (isLiveMode, wsConnected,
+              movement, effectiveHeading) — pure Tailwind/inline style changes.
               ════════════════════════════════════════════════════════════════ */}
 
           {/* ── ROW 1: TÍTULO (placeLabel) + LIVE/OFFLINE STATUS PILL ── */}
-          <div className="flex items-center justify-between gap-2 mb-2.5">
+          <div className="flex items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              {(() => { const MIcon = resolveMovementIcon(movement.compactIcon); return <MIcon size={15} strokeWidth={1.5} style={{ color: movement.isActive ? '#ff3b30' : 'rgba(255,255,255,0.6)', flexShrink: 0 }} /> })()}
-              <h2 className="font-semibold text-white truncate" style={{ fontSize: 15, letterSpacing: '-0.01em' }}>
+              {(() => { const MIcon = resolveMovementIcon(movement.compactIcon); return <MIcon size={16} strokeWidth={1.5} style={{ color: movement.isActive ? '#ff3b30' : 'rgba(255,255,255,0.6)', flexShrink: 0 }} /> })()}
+              {/* V13: text-base → text-lg, tracking-tight, mb-1 (contundente) */}
+              <h2 className="font-semibold text-white text-lg tracking-tight mb-1 truncate">
                 {locationLabel || 'Sin ubicación'}
               </h2>
             </div>
-            {/* V12: status pill with bright LED — high contrast */}
+            {/* V13: status pill — mantener LED pero con bg #2c2c2e/70 */}
             <div
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0"
               style={{
-                background: wsConnected ? 'rgba(255,59,48,0.15)' : 'rgba(255,255,255,0.06)',
-                border: `1px solid ${wsConnected ? 'rgba(255,59,48,0.4)' : 'rgba(255,255,255,0.1)'}`,
+                background: wsConnected ? 'rgba(255,59,48,0.15)' : 'rgba(44, 44, 46, 0.7)',
+                border: `0.5px solid ${wsConnected ? 'rgba(255,59,48,0.4)' : 'rgba(255,255,255,0.08)'}`,
               }}
             >
               <span
@@ -3842,42 +3849,49 @@ export default function TrackerView() {
             </div>
           </div>
 
-          {/* ── ROW 2: GRID 2 COLS — Velocidad + Rumbo (tarjetas con borde sutil) ── */}
-          <div className="grid grid-cols-2 gap-2 mb-2.5">
-            {/* Velocidad — primary readout, card style */}
+          {/* ── ROW 2: GRID 2 COLS — Velocidad + Rumbo (V13 premium cards) ── */}
+          {/* V13: gap-2 → gap-3, mb-2.5 → mb-3 (más respiración) */}
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            {/* V13 Velocidad — card bg #2c2c2e/70 (Apple surface), rounded-2xl */}
             <div
-              className="flex flex-col justify-center items-start px-2.5 py-2 rounded-xl"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+              className="flex flex-col justify-center items-start px-3 py-2.5 rounded-2xl"
+              style={{ background: 'rgba(44, 44, 46, 0.7)' }}
             >
-              <span className="font-bold uppercase tracking-wider text-zinc-400" style={{ fontSize: 9, letterSpacing: '0.1em' }}>Velocidad</span>
-              <span className="font-bold tabular-nums text-white" style={{ fontSize: 18, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+              {/* V13: label text-[10px] font-semibold uppercase tracking-[0.05em] mb-1 */}
+              <span className="text-zinc-400 font-semibold uppercase mb-1" style={{ fontSize: 10, letterSpacing: '0.05em' }}>Velocidad</span>
+              {/* V13: número REY VISUAL — text-2xl (24px) font-bold tracking-tight tabular-nums */}
+              <span className="font-bold text-white text-2xl tracking-tight tabular-nums leading-none">
                 {movement.speedKmh == null ? '--' : movement.speedKmh.toFixed(1)}
-                <span className="text-zinc-400 font-medium ml-1" style={{ fontSize: 10 }}>km/h</span>
+                {/* V13: unidad text-sm text-zinc-500 font-medium ml-1 */}
+                <span className="text-zinc-500 font-medium ml-1 text-sm">km/h</span>
               </span>
             </div>
-            {/* Rumbo — secondary readout, card style */}
+            {/* V13 Rumbo — misma card style */}
             <div
-              className="flex flex-col justify-center items-start px-2.5 py-2 rounded-xl"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+              className="flex flex-col justify-center items-start px-3 py-2.5 rounded-2xl"
+              style={{ background: 'rgba(44, 44, 46, 0.7)' }}
             >
-              <span className="font-bold uppercase tracking-wider text-zinc-400" style={{ fontSize: 9, letterSpacing: '0.1em' }}>Rumbo</span>
-              <span className="font-bold tabular-nums text-white" style={{ fontSize: 18, lineHeight: 1.2 }}>
+              <span className="text-zinc-400 font-semibold uppercase mb-1" style={{ fontSize: 10, letterSpacing: '0.05em' }}>Rumbo</span>
+              <span className="font-bold text-white text-2xl tracking-tight tabular-nums leading-none">
                 {effectiveHeading != null ? `${Math.round(effectiveHeading)}°` : '--'}
               </span>
             </div>
           </div>
 
           {/* ── ROW 3: LIVE TOGGLE (V11 isLiveMode) + COMPACT PILLS ── */}
-          <div className="flex items-center gap-2 mb-2.5">
-            {/* V12: LIVE FAB with high-contrast state — red when live, gray when paused */}
+          <div className="flex items-center gap-3 mb-3">
+            {/* V13: LIVE FAB — bg #ff3b30 sólido cuando activo (no translúcido).
+                Era rgba(255,59,48,0.2) que se veía desactivado. Ahora es el
+                botón de acción principal robusto que pide el protocolo. */}
             <button
               aria-label={isLiveMode ? 'Pausar modo live' : 'Activar modo live'}
               className="flex items-center justify-center w-11 h-11 rounded-full cursor-pointer flex-shrink-0 transition-all active:scale-95"
               style={{
-                background: isLiveMode ? 'rgba(255,59,48,0.2)' : 'rgba(255,255,255,0.05)',
-                border: `1px solid ${isLiveMode ? 'rgba(255,59,48,0.6)' : 'rgba(255,255,255,0.12)'}`,
-                color: isLiveMode ? '#ff3b30' : 'rgba(255,255,255,0.5)',
-                boxShadow: isLiveMode ? '0 0 12px rgba(255,59,48,0.3)' : 'none',
+                background: isLiveMode ? '#ff3b30' : 'rgba(44, 44, 46, 0.7)',
+                border: `0.5px solid ${isLiveMode ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.08)'}`,
+                color: isLiveMode ? '#ffffff' : 'rgba(255,255,255,0.5)',
+                fontWeight: 600,
+                boxShadow: isLiveMode ? '0 4px 12px rgba(255,59,48,0.4)' : 'none',
               }}
               onClick={() => setIsLiveMode(!isLiveMode)}
             >
