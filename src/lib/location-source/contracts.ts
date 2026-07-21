@@ -11,6 +11,7 @@ export type SharedSessionState =
   | 'rejected'
   | 'upstream-error'
 export type CameraMode = 'overview' | 'follow' | 'stationary' | 'manual'
+export type BasemapMode = 'vector-3d' | 'satellite' | 'hybrid'
 
 export interface GeoPoint {
   lat: number
