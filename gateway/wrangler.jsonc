@@ -1,0 +1,20 @@
+{
+  "name": "stracker-private-gateway-poc",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-07-21",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "https://stracker-poc.cloudflareaccess.com",
+    "ACCESS_AUD": "POC_AUDIENCE_NOT_REAL"
+  },
+  "services": [
+    {
+      "binding": "STRACKER_BACKEND",
+      "service": "stracker-backend-mock-poc"
+    }
+  ]
+}

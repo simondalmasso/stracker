@@ -4,6 +4,8 @@ import type {
   SharedSessionStatus,
 } from './contracts'
 
+const PRIVATE_GATEWAY_MARKER = 'private-poc-v1'
+
 class SessionApiError extends Error {
   constructor(
     message: string,
@@ -15,7 +17,18 @@ class SessionApiError extends Error {
   }
 }
 
+function assertPrivateGateway(response: Response): void {
+  if (response.headers.get('X-Stracker-Gateway') !== PRIVATE_GATEWAY_MARKER) {
+    throw new SessionApiError(
+      'La ubicación compartida requiere el gateway privado de STRACKER.',
+      503,
+      'PRIVATE_GATEWAY_REQUIRED',
+    )
+  }
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
+  assertPrivateGateway(response)
   const payload = (await response.json().catch(() => null)) as
     | (T & { error?: string; message?: string })
     | null
