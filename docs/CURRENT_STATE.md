@@ -3,126 +3,109 @@
 ## Canonical baseline
 
 ```text
-P0_BASE_SHA=923cac9c9bcc0b7e05701dd1018e61a454d0f478
 P0_BRANCH=fix/stracker-p0-security-canonical-state
 P0_HEAD_SHA=fa919edad57937481f97e74ac96f09697bf03642
-MOBILE_BASE_BRANCH=feat/stracker-mobile-session-product-v1
-MOBILE_BASE_SHA=166bf8e316cabd4806ade4fb4c21a20d2ad2040a
-CURRENT_BRANCH=feat/stracker-cloudflare-private-gateway-poc
-CURRENT_HEAD_SHA=SEE_DRAFT_PR_4_HEAD
-PR_BASE=feat/stracker-mobile-session-product-v1
-DRAFT_PR=4
+MOBILE_BRANCH=feat/stracker-mobile-session-product-v1
+MOBILE_HEAD_SHA=166bf8e316cabd4806ade4fb4c21a20d2ad2040a
+GATEWAY_POC_BRANCH=feat/stracker-cloudflare-private-gateway-poc
+GATEWAY_POC_HEAD_SHA=77a937b4b157c2ec2c47940d6fe6891cf10b74c9
+CURRENT_BRANCH=feat/stracker-cloudflare-nonprod-live-v1
+CURRENT_HEAD_SHA=SEE_CURRENT_DRAFT_PR_HEAD
+PR_BASE=feat/stracker-cloudflare-private-gateway-poc
+DRAFT_PR=PENDING_GITHUB_ASSIGNMENT
 PRODUCTION_MODIFIED=NO
-DEPLOYMENT_EXECUTED=NO
-VERSION_UPLOAD_EXECUTED=NO
+RENDER_MODIFIED=NO
+DNS_MODIFIED=NO
 PRODUCTION_TRAFFIC=0%
-ROLLBACK=NOT_APPLICABLE
 ```
 
-## Current runtime state
+PR #4 is frozen as the validated code PoC. This branch is the fourth stacked engineering PR and may modify only non-production Cloudflare staging resources.
 
-- `CURRENT_RENDER_STATE`: production remains on Render and was not modified.
-- `CURRENT_PRODUCTION_STATE`: unchanged; P0, mobile V1 and gateway PoC remain branch-only.
-- `CURRENT_UI_SOURCE`: `src/components/mobile/MobileLocationApp.tsx` from frozen PR #2 baseline.
-- `CURRENT_STATIC_ARTIFACT`: direct `BUILD_EXPORT=1` Next.js export.
-- `CURRENT_BACKEND`: `tracker_map.py`; `nextjs-ui/tracker_map.py` remains byte-identical.
-- `AUTH_MODEL`: Cloudflare Access assertion at the edge plus server-only STRACKER service token at the gateway boundary.
-- `GATEWAY_MODEL`: exact route/method allowlist, fixed backend service binding, no client-selected upstream, no open proxy and no SSRF path.
-- `HEADER_MODEL`: browser headers are discarded; `X-Stracker-Service-Token` is constructed only inside the Worker.
-- `CACHE_MODEL`: all gateway and sensitive backend responses are returned with `Cache-Control: no-store` and defensive response headers.
-- `LOCATION_SOURCE_MODEL`: strict `my-device | google-shared` contract remains canonical.
-- `MY_LOCATION_MODEL`: browser-local `navigator.geolocation.watchPosition()` remains independent from Access and the gateway.
-- `SHARED_LOCATION_MODEL`: same-origin requests require `X-Stracker-Gateway: private-poc-v1`; missing Access, Worker or attestation remains fail-closed.
-- `COOKIE_MODEL`: no real cookie, session or Google data is used by the PoC or its tests.
-- `MOCK_BACKEND_MODEL`: in-memory test binding validates token injection and header stripping.
-- `GHOSTRAIL_MODEL`: unchanged from PR #2; no canonical-history migration in this phase.
-- `STORAGE_MODEL`: unchanged; Render filesystem persistence remains an open operational risk.
-
-## Cloudflare private gateway PoC implemented
-
-- Manual RS256 Cloudflare Access JWT validation using Web Crypto.
-- Exact issuer and audience checks.
-- JWKS retrieval restricted to the configured HTTPS Cloudflare Access team origin.
-- Exact route and method allowlist:
-  - `GET /api/session/status`
-  - `POST /api/session/import`
-  - `POST /api/session/delete`
-  - `GET /points`
-- Query strings, unknown routes and unsupported methods rejected.
-- Request and response size limits.
-- JSON-only protected backend responses.
-- Full reconstruction of upstream and downstream headers.
-- Server-side service-token injection through the Worker binding.
-- Client service-token spoofing overwritten and never forwarded.
-- Mock backend E2E with generated Access key pair and synthetic session text only.
-- Non-routable Wrangler configuration: no `workers.dev`, preview URL, route, custom domain or traffic.
-- No `wrangler deploy`; only an isolated `versions upload --dry-run` build gate.
-
-## Build and validation
+## Architecture boundary
 
 ```text
-PACKAGE_MANAGER=Bun 1.3.4
-LOCKFILE=bun.lock
-STACKED_BASE_CHECK=SEE_DRAFT_PR_4_CHECKS
-BUN_FROZEN_INSTALL=SEE_DRAFT_PR_4_CHECKS
-PYTHON_COMPILE=SEE_DRAFT_PR_4_CHECKS
-BACKEND_TESTS=SEE_DRAFT_PR_4_CHECKS
-TRACKER_DUPLICATE_PARITY=SEE_DRAFT_PR_4_CHECKS
-ESLINT=SEE_DRAFT_PR_4_CHECKS
-TYPECHECK=SEE_DRAFT_PR_4_CHECKS
-STATIC_EXPORT_BUILD=SEE_DRAFT_PR_4_CHECKS
-GATEWAY_TESTS=SEE_DRAFT_PR_4_CHECKS
-ACCESS_JWT_VALIDATION=SEE_DRAFT_PR_4_CHECKS
-OPEN_PROXY=SEE_DRAFT_PR_4_CHECKS
-SSRF=SEE_DRAFT_PR_4_CHECKS
-SERVICE_TOKEN_IN_BUNDLE=SEE_DRAFT_PR_4_CHECKS
-MOCK_E2E=SEE_DRAFT_PR_4_CHECKS
-MY_LOCATION_INDEPENDENT=SEE_DRAFT_PR_4_CHECKS
-SHARED_LOCATION_FAIL_CLOSED=SEE_DRAFT_PR_4_CHECKS
-WRANGLER_DRY_RUN=SEE_DRAFT_PR_4_CHECKS
-MOBILE_BROWSER_QA=SEE_DRAFT_PR_4_CHECKS
-CI_FINAL=SEE_DRAFT_PR_4_CHECKS
+SERVICE_BINDING=WORKER_TO_WORKER_ONLY
+SERVICE_BINDING_TARGET=stracker-backend-mock-staging
+GATEWAY_WORKER=stracker-gateway-staging
+RENDER_INTEGRATION=NOT_PART_OF_THIS_PHASE
 ```
 
-The newest `STRACKER Cloudflare Private Gateway PoC` workflow run associated with the current Draft PR #4 head is authoritative.
+The staging Service Binding does not connect to Render. Any later Render integration requires a fixed fetch to an allowlisted HTTPS origin or a dedicated origin-adapter Worker.
 
-## Cloudflare resource and deployment state
+## Candidate state
+
+- Mobile static export is compiled with `NEXT_PUBLIC_STRACKER_STAGING_MOCK=1`.
+- The staging UI is visibly labeled synthetic and does not present the real Google-cookie importer.
+- `MI UBICACIÓN` remains browser-local and independent from the shared backend.
+- `UBICACIÓN COMPARTIDA` accepts only the synthetic marker `MOCK_SESSION_ONLY` in staging.
+- The mock backend stores nothing and uses only the synthetic Null Island fixture.
+- The gateway protects both assets and APIs with Access JWT validation.
+- API requests use an exact route/method allowlist and fixed Service Binding.
+- Browser headers are discarded and the staging token is injected only inside the gateway.
+- Backend response redirects and `Set-Cookie` are blocked or stripped.
+
+## Planned Cloudflare resources
 
 ```text
-CLOUDFLARE_ACCESS_APPLICATION=NOT_CREATED
-CLOUDFLARE_WORKER=NOT_CREATED_OR_MODIFIED
-CLOUDFLARE_VERSION_ID=NONE
-CLOUDFLARE_DEPLOYMENT_ID=NONE
-CLOUDFLARE_BINDINGS=NOT_PROVISIONED
-CLOUDFLARE_SECRETS=NOT_PROVISIONED
-CLOUDFLARE_DNS_CHANGED=NO
-CLOUDFLARE_ROUTES_CHANGED=NO
-CLOUDFLARE_TRAFFIC_CHANGED=NO
-RENDER_CHANGED=NO
+BACKEND_WORKER=stracker-backend-mock-staging
+BACKEND_WORKERS_DEV=false
+BACKEND_PREVIEW_URLS=false
+BACKEND_ROUTES=none
+GATEWAY_WORKER=stracker-gateway-staging
+GATEWAY_PREVIEW_URLS=false
+GATEWAY_SURFACE=single Access-protected workers.dev URL
+ACCESS_SCOPE=entire staging Worker
+ACCESS_DEFAULT=deny
+ACCESS_ALLOW=exact authorized operator only
 ```
 
-## Known security findings and limitations
+## Validation state
 
-- Repository remains public.
-- Historical `.env`, private coordinates and sharing material still require separately authorized remediation and potential rotation.
-- Production does not enforce P0, mobile V1 or the gateway PoC because no deploy occurred.
-- Render filesystem persistence remains unsafe.
-- The PoC uses a mock service binding and does not prove browser → real Access app → live Worker → Render.
-- A future isolated candidate requires a non-production Access application, non-production service token and isolated backend binding.
-- The Google Location Sharing endpoint is undocumented and may change; health parsing must remain fail-closed.
-- A code rollback would not automatically revert future KV, D1, R2, Durable Objects or external backend state.
+```text
+STACKED_BASE_CHECK=PENDING_CURRENT_HEAD_CI
+FROZEN_INSTALL=PENDING_CURRENT_HEAD_CI
+ESLINT=PENDING_CURRENT_HEAD_CI
+TYPECHECK=PENDING_CURRENT_HEAD_CI
+STATIC_EXPORT_BUILD=PENDING_CURRENT_HEAD_CI
+BACKEND_TESTS=PENDING_CURRENT_HEAD_CI
+GATEWAY_TESTS=PENDING_CURRENT_HEAD_CI
+WRANGLER_DRY_RUN=PENDING_CURRENT_HEAD_CI
+MOCK_BACKEND_VERSION=PENDING_LIVE_WORKFLOW
+MOCK_BACKEND_DEPLOYMENT=PENDING_LIVE_WORKFLOW
+GATEWAY_VERSION=PENDING_LIVE_WORKFLOW
+GATEWAY_DEPLOYMENT=PENDING_LIVE_WORKFLOW
+ACCESS_APPLICATION=PENDING_LIVE_WORKFLOW
+ACCESS_DEFAULT_DENY=PENDING_LIVE_WORKFLOW
+UNAUTHENTICATED_BLOCKED=PENDING_LIVE_WORKFLOW
+AUTHENTICATED_BROWSER=PENDING_LIVE_WORKFLOW
+SERVICE_BINDING_LIVE=PENDING_LIVE_WORKFLOW
+MOBILE_LIVE_QA=PENDING_LIVE_WORKFLOW
+CI_FINAL=PENDING_CURRENT_HEAD_CI
+```
+
+The newest `STRACKER Cloudflare Nonprod Live V1` workflow associated with the current Draft PR head is authoritative. A green local job does not imply that Cloudflare resources exist; the separate live-staging job must provide Version, Deployment and Access evidence.
+
+## Security and operational risks
+
+- The repository remains public and historical sensitive material still requires separate remediation and potential rotation.
+- A GitHub Actions Cloudflare credential with Workers and Access permissions must already exist; the workflow will not create or print a broad permanent token.
+- An exact operator identity must be supplied or safely resolved as the sole active account member.
+- Authenticated browser QA requires an existing short-lived Access session. Absence or expiry is an external blocker and must not cause Access to be weakened.
+- Render filesystem persistence and the undocumented Google Location Sharing endpoint remain unrelated open risks.
+- Code rollback is not data rollback. This staging phase intentionally creates no KV, D1, R2 or Durable Object data.
 
 ## Release posture
 
 ```text
 FULL_CLOUDFLARE_CUTOVER=NO_GO
-HYBRID_CLOUDFLARE_EDGE_PLUS_RENDER=POC_CODE_READY_PENDING_ISOLATED_INFRA
+RENDER_PRODUCTION=UNCHANGED
 PR_1_MERGE=NO
 PR_2_MERGE=NO
 PR_4_MERGE=NO
+CURRENT_PR_MERGE=NO
 PRODUCTION_DEPLOY=NO
 ```
 
 ## Next exact step
 
-Review Draft PR #4 and its current-head CI evidence. After explicit authorization for isolated non-production Cloudflare resources, create a dedicated Access application, private Worker candidate and mock backend binding; upload a Version without deployment or traffic, then execute browser-to-preview E2E. Do not connect Render or production secrets in that step.
+Publish the fourth stacked Draft PR and run its current-head workflow. If the remote credential, exact operator identity and authenticated Access session are available, complete live staging and reconcile this file with sanitized IDs. If any is unavailable, record the exact external blocker while keeping production untouched and any created staging surface Access-protected.
