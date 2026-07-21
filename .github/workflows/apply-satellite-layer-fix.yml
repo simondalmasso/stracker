@@ -1,0 +1,85 @@
+name: Apply satellite layer placement fix
+
+on:
+  push:
+    branches: [feat/stracker-vector-map-engine-v1]
+    paths:
+      - .github/workflows/apply-satellite-layer-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/stracker-vector-map-engine-v1
+          fetch-depth: 1
+      - name: Verify exact parent
+        run: test "$(git rev-parse HEAD)" = "4c503592a6d4522638f4963cab8271a3a0dbb2e9"
+      - name: Apply exact source fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/lib/location-source/map-engine/maplibre-adapter.ts')
+          text = path.read_text()
+          old_layer = """    const firstLayer = map.getStyle().layers?.[0]?.id
+    map.addLayer({
+      id: SATELLITE_LAYER_ID,
+      type: 'raster',
+      source: SATELLITE_SOURCE_ID,
+      layout: { visibility: 'none' },
+      paint: {
+        'raster-opacity': 1,
+        'raster-fade-duration': 0,
+        'raster-resampling': 'linear',
+      },
+    }, firstLayer)
+"""
+          new_layer = """    const firstNonBackgroundLayer = map.getStyle().layers?.find((layer) => layer.type !== 'background')?.id
+    map.addLayer({
+      id: SATELLITE_LAYER_ID,
+      type: 'raster',
+      source: SATELLITE_SOURCE_ID,
+      layout: { visibility: 'none' },
+      paint: {
+        'raster-opacity': 1,
+        'raster-fade-duration': 0,
+        'raster-resampling': 'linear',
+      },
+    }, firstNonBackgroundLayer)
+"""
+          old_error = """        const errorStatus = candidate.error?.status ?? 0
+        const satelliteModeActive = Boolean(latestState && usesSatelliteImagery(latestState.basemapMode))
+        const satelliteError = satelliteModeActive && (
+          candidate.sourceId === SATELLITE_SOURCE_ID ||
+          message.includes(SATELLITE_PROVIDER.host) ||
+          errorUrl.includes(SATELLITE_PROVIDER.host) ||
+          errorStatus >= 400
+        )
+"""
+          new_error = """        const satelliteModeActive = Boolean(latestState && usesSatelliteImagery(latestState.basemapMode))
+        const satelliteError = satelliteModeActive && (
+          candidate.sourceId === SATELLITE_SOURCE_ID ||
+          message.includes(SATELLITE_PROVIDER.host) ||
+          errorUrl.includes(SATELLITE_PROVIDER.host)
+        )
+"""
+          if text.count(old_layer) != 1:
+              raise SystemExit('satellite layer placement target not found exactly once')
+          if text.count(old_error) != 1:
+              raise SystemExit('satellite error boundary target not found exactly once')
+          text = text.replace(old_layer, new_layer).replace(old_error, new_error)
+          path.write_text(text)
+          PY
+          git diff --check
+          git diff -- src/lib/location-source/map-engine/maplibre-adapter.ts
+      - name: Commit exact fix
+        run: |
+          git config user.name "stracker-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/lib/location-source/map-engine/maplibre-adapter.ts
+          git commit -m "fix(map): render satellite layer above background"
+          git push origin HEAD:feat/stracker-vector-map-engine-v1
