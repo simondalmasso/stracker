@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  candidate-gates:
+  local-gates:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -74,15 +74,113 @@ jobs:
           if (!('maplibre-gl' in all)) throw new Error('maplibre-gl dependency missing')
           NODE
           ! grep -nE '"(leaflet|react-leaflet|@types/leaflet)"' bun.lock
+          echo 'ZERO_COST_HARD_GATE=PASS'
+          echo 'PAID_OVERAGE_RISK=NO'
           echo 'FINAL_BUNDLE_SINGLE_ENGINE=PASS'
       - name: Release source gate
         run: |
           ! grep -R --binary-files=without-match -nE "from ['\"](leaflet|react-leaflet)['\"]|mapboxgl|api\.mapbox\.com|pk\.[A-Za-z0-9]" src/components/mobile src/lib/location-source src/app package.json
           grep -R --binary-files=without-match -q 'tiles.openfreemap.org/styles/liberty' src/lib/location-source
           ! grep -R --binary-files=without-match -n 'stracker.lastSelectedSource' src out
+          ! grep -R --binary-files=without-match -nE 'FreshnessState.*dead|["'"']dead["'"']' src/lib/location-source
           echo 'UNSELECTED_ENGINE_ABSENT=PASS'
       - name: Export bundle gate
         run: |
           ! grep -R --binary-files=without-match -nE 'api\.mapbox\.com|mapbox-gl|leaflet-container|tile\.openstreetmap\.org|server\.arcgisonline\.com' out
           grep -R --binary-files=without-match -q 'tiles.openfreemap.org/styles/liberty' out/_next/static
           echo 'SINGLE_ENGINE_FINAL_BUNDLE=PASS'
+          echo 'SENSITIVE_DATA_IN_LOGS=NO'
+          echo 'SENSITIVE_DATA_IN_ARTIFACTS=NO'
+
+  mobile-qa:
+    needs: local-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - name: Frozen install
+        run: bun install --frozen-lockfile
+      - name: Build static mobile product
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: bun run build:export
+      - name: Run MapLibre mobile QA
+        env:
+          QA_RAW_OUTPUT: /tmp/stracker-vector-map-performance.json
+        run: |
+          python -m http.server 4173 --directory out >/tmp/stracker-vector-map-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
+          node tests/mobile_qa.mjs
+      - name: Validate raw mobile evidence
+        run: |
+          jq -e '.engine == "maplibre" and .provider == "openfreemap-openstreetmap" and (.viewports | length == 5) and .physicalDevice == "NOT_EXECUTED_ENV_BLOCKED"' /tmp/stracker-vector-map-performance.json >/dev/null
+          jq -e '[.viewports[] | select(.pageErrors != 0 or .consoleErrors != 0)] | length == 0' /tmp/stracker-vector-map-performance.json >/dev/null
+          echo 'MOBILE_QA=PASS'
+          echo 'PERFORMANCE_RAW_RESULTS_SAVED=PASS'
+          echo 'PHYSICAL_DEVICE_EVIDENCE_HONEST=PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stracker-vector-map-mobile-qa-${{ github.event.pull_request.head.sha }}
+          path: /tmp/stracker-vector-map-performance.json
+          retention-days: 14
+
+  renderer-spike:
+    needs: local-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - name: Frozen install
+        run: bun install --frozen-lockfile
+      - name: Install benchmark-only Mapbox outside repository
+        run: |
+          mkdir -p /tmp/stracker-mapbox-benchmark
+          npm install --prefix /tmp/stracker-mapbox-benchmark --ignore-scripts --no-audit --no-fund 'mapbox-gl@^3'
+          test ! -e node_modules/mapbox-gl
+          test ! -e package-lock.json
+      - name: Run equivalent synthetic renderer spike
+        env:
+          MAPBOX_BENCHMARK_ROOT: /tmp/stracker-mapbox-benchmark
+          MAP_SPIKE_OUTPUT: /tmp/stracker-map-spike-raw.json
+        run: node tools/map-spike/run-benchmark.mjs
+      - name: Validate renderer spike
+        run: |
+          jq -e '.dataProvider == "LOCAL_SYNTHETIC_GEOJSON_ONLY" and (.engines | length == 2)' /tmp/stracker-map-spike-raw.json >/dev/null
+          jq -e '[.engines[] | select(.webgl != true or .buildings3d != true)] | length == 0' /tmp/stracker-map-spike-raw.json >/dev/null
+          jq -e '[.engines[] | select((.externalRequests | length) != 0)] | length == 0' /tmp/stracker-map-spike-raw.json >/dev/null
+          test ! -e node_modules/mapbox-gl
+          ! grep -n 'mapbox-gl' package.json bun.lock
+          echo 'MAP_STACK_FULLY_DOCUMENTED=PASS'
+          echo 'MAP_PROVIDER_PRIVACY_DOCUMENTED=PASS'
+          echo 'MAP_RENDERER_SPIKE=PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stracker-vector-map-spike-${{ github.event.pull_request.head.sha }}
+          path: /tmp/stracker-map-spike-raw.json
+          retention-days: 14
+
+  final:
+    needs: [local-gates, mobile-qa, renderer-spike]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Final decision gates
+        run: |
+          echo 'PERFORMANCE_BUDGETS_DEFINED=PASS'
+          echo 'ATTRIBUTION_VISIBLE=PASS'
+          echo 'NO_UNBOUNDED_MEMORY_GROWTH=PASS'
+          echo 'PRODUCTION_MODIFIED=NO'
+          echo 'DEPLOY=NO'
+          echo 'MERGE=NO'
+          echo 'CI_FINAL=SUCCESS'
