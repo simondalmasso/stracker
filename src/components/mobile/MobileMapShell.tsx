@@ -2,12 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Building2, LocateFixed, Route, X } from 'lucide-react'
-import type {
-  CameraMode,
-  GhostRailSegment,
-  LocationSnapshot,
-  LocationSource,
-} from '@/lib/location-source/contracts'
+import type { CameraMode, GhostRailSegment, LocationSnapshot, LocationSource } from '@/lib/location-source/contracts'
 import { initialCameraControllerState, planCamera, type CameraControllerState } from '@/lib/location-source/camera-controller'
 import { createMapLibreAdapter } from '@/lib/location-source/map-engine/maplibre-adapter'
 import type { MapEngineAdapter, MapPerformanceSnapshot, MapRenderState } from '@/lib/location-source/map-engine/contracts'
@@ -81,15 +76,7 @@ function PublicAttribution() {
   )
 }
 
-export default function MobileMapShell({
-  source,
-  snapshot,
-  ghostrail,
-  onChangeSource,
-  onStop,
-  onReplaceSession,
-  onDeleteSession,
-}: MobileMapShellProps) {
+export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSource, onStop, onReplaceSession, onDeleteSession }: MobileMapShellProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const adapterRef = useRef<MapEngineAdapter | null>(null)
   const cameraRef = useRef<CameraControllerState>(initialCameraControllerState())
@@ -112,6 +99,8 @@ export default function MobileMapShell({
     () => renderState(source, snapshot, ghostrail, railVisible, buildings3d, reducedMotion),
     [buildings3d, ghostrail, railVisible, reducedMotion, snapshot, source],
   )
+  const renderStateRef = useRef(currentRenderState)
+  renderStateRef.current = currentRenderState
 
   const applyCamera = useCallback((options: { userInteracted?: boolean; recenter?: boolean } = {}) => {
     const currentSnapshot = snapshotRef.current
@@ -157,15 +146,13 @@ export default function MobileMapShell({
     if (!containerRef.current) return
     const adapter = createMapLibreAdapter()
     adapterRef.current = adapter
-    adapter.mount(containerRef.current, currentRenderState, {
+    adapter.mount(containerRef.current, renderStateRef.current, {
       onManualInteraction: enterManualMode,
       onWebglContextLost: () => {
         setContextRecovery((value) => Math.min(4, value + 1))
         setBuildings3d(false)
       },
-      onWebglContextRestored: () => {
-        setContextRecovery((value) => Math.min(4, value + 1))
-      },
+      onWebglContextRestored: () => setContextRecovery((value) => Math.min(4, value + 1)),
       onPerformance: setPerformance,
     })
     applyCamera({ recenter: true })
@@ -174,7 +161,7 @@ export default function MobileMapShell({
       adapterRef.current = null
       cameraRef.current = initialCameraControllerState()
     }
-  }, [applyCamera, currentRenderState, enterManualMode, source])
+  }, [applyCamera, enterManualMode, source])
 
   useEffect(() => {
     adapterRef.current?.render(currentRenderState)
@@ -183,9 +170,7 @@ export default function MobileMapShell({
 
   useEffect(() => {
     const resize = () => adapterRef.current?.resize()
-    const visibility = () => {
-      if (document.visibilityState === 'visible') resize()
-    }
+    const visibility = () => { if (document.visibilityState === 'visible') resize() }
     window.addEventListener('orientationchange', resize)
     window.addEventListener('resize', resize)
     document.addEventListener('visibilitychange', visibility)
@@ -197,13 +182,7 @@ export default function MobileMapShell({
   }, [])
 
   const sourceTitle = source === 'my-device' ? 'MI UBICACIÓN' : 'UBICACIÓN COMPARTIDA'
-  const stateText = snapshot.health === 'receiving'
-    ? 'RECIBIENDO'
-    : snapshot.health === 'degraded'
-      ? 'DEGRADADA'
-      : snapshot.health === 'unreachable'
-        ? 'INALCANZABLE'
-        : 'DESCONOCIDA'
+  const stateText = snapshot.health === 'receiving' ? 'RECIBIENDO' : snapshot.health === 'degraded' ? 'DEGRADADA' : snapshot.health === 'unreachable' ? 'INALCANZABLE' : 'DESCONOCIDA'
 
   return (
     <main
@@ -219,33 +198,20 @@ export default function MobileMapShell({
       data-webgl-recovery={contextRecovery}
     >
       <div ref={containerRef} className="h-full w-full" aria-label="Mapa vectorial de ubicación" />
-
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] flex justify-center px-3 pt-[max(12px,env(safe-area-inset-top))]">
-        <div className="max-w-[calc(100vw-24px)] truncate rounded-full border border-white/10 bg-black/85 px-4 py-2 text-sm font-semibold shadow-lg backdrop-blur-xl">
-          {sourceTitle} · {freshnessText(snapshot)}
-        </div>
+        <div className="max-w-[calc(100vw-24px)] truncate rounded-full border border-white/10 bg-black/85 px-4 py-2 text-sm font-semibold shadow-lg backdrop-blur-xl">{sourceTitle} · {freshnessText(snapshot)}</div>
       </div>
-
       <div className="absolute right-3 top-[calc(max(12px,env(safe-area-inset-top))+58px)] z-[500] flex flex-col gap-2">
         <button type="button" aria-label="Activar o desactivar edificios 3D" aria-pressed={buildings3d} onClick={() => setBuildings3d((value) => !value)} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95"><Building2 size={20} /></button>
         <button type="button" aria-label="Recentrar mapa" onClick={() => applyCamera({ recenter: true })} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95"><LocateFixed size={20} /></button>
         <button type="button" aria-label="Mostrar u ocultar GhostRail" aria-pressed={railVisible} onClick={() => setRailVisible((value) => !value)} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95"><Route size={20} /></button>
       </div>
-
       <PublicAttribution />
-
       <section className="absolute inset-x-2 bottom-[max(8px,env(safe-area-inset-bottom))] z-[500] rounded-[24px] border border-white/10 bg-black/90 shadow-2xl backdrop-blur-2xl" aria-label="Estado de ubicación">
         <button type="button" onClick={() => setExpanded((value) => !value)} className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-3 text-left" aria-expanded={expanded}>
-          <div className="min-w-0">
-            <p className="truncate text-[11px] font-semibold tracking-[0.14em] text-white/55">{sourceTitle}</p>
-            <p className="truncate text-base font-semibold">{cameraMode.toUpperCase()}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-right text-xs">
-            <span className="text-white/45">PRECISIÓN</span><span>{snapshot.accuracyM ? `${Math.round(snapshot.accuracyM)} m` : '—'}</span>
-            <span className="text-white/45">ESTADO</span><span>{stateText}</span>
-          </div>
+          <div className="min-w-0"><p className="truncate text-[11px] font-semibold tracking-[0.14em] text-white/55">{sourceTitle}</p><p className="truncate text-base font-semibold">{cameraMode.toUpperCase()}</p></div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-right text-xs"><span className="text-white/45">PRECISIÓN</span><span>{snapshot.accuracyM ? `${Math.round(snapshot.accuracyM)} m` : '—'}</span><span className="text-white/45">ESTADO</span><span>{stateText}</span></div>
         </button>
-
         {expanded ? (
           <div className="max-h-[46dvh] overflow-y-auto border-t border-white/10 px-4 pb-4 pt-3">
             <div className="grid grid-cols-2 gap-2 text-xs">
@@ -266,7 +232,6 @@ export default function MobileMapShell({
           </div>
         ) : null}
       </section>
-
       {expanded ? <button type="button" aria-label="Cerrar panel" onClick={() => setExpanded(false)} className="absolute left-3 top-[calc(max(12px,env(safe-area-inset-top))+58px)] z-[500] grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl"><X size={20} /></button> : null}
     </main>
   )
