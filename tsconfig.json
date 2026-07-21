@@ -31,12 +31,18 @@
   },
   "include": [
     "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "src/components/mobile/**/*.ts",
+    "src/components/mobile/**/*.tsx",
+    "src/lib/location-source/**/*.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "skills",
+    "tool-results",
+    "src/components/tracker"
   ]
 }

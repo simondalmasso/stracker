@@ -37,6 +37,9 @@ class AuthDecision:
 _PROTECTED_EXACT = {
     "/points",
     "/api/cookies",
+    "/api/session/status",
+    "/api/session/import",
+    "/api/session/delete",
     "/cookies",
     "/cookies.html",
     "/predict",
@@ -49,6 +52,7 @@ _PROTECTED_EXACT = {
 _PROTECTED_PREFIXES = (
     "/points/",
     "/api/cookies/",
+    "/api/session/",
     "/cookies/",
     "/predict/",
     "/api/archive/",
