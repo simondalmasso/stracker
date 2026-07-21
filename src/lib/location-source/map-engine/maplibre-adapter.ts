@@ -150,6 +150,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
   let callbacks: MapEngineCallbacks | null = null
   let latestState: MapRenderState | null = null
   let loaded = false
+  let contextLostActive = false
   let createdAtMs = 0
   let firstMapVisibleMs: number | null = null
   let firstInteractiveMs: number | null = null
@@ -177,6 +178,30 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     ))
   }
 
+  const handleContextLost = (event?: Event) => {
+    event?.preventDefault()
+    if (contextLostActive) return
+    contextLostActive = true
+    webglContextLosses += 1
+    callbacks?.onProviderState('degraded')
+    callbacks?.onWebglContextLost()
+    emitPerformance()
+  }
+
+  const handleContextRestored = () => {
+    if (!contextLostActive) return
+    contextLostActive = false
+    webglContextRestores += 1
+    callbacks?.onWebglContextRestored()
+    if (map && latestState) {
+      addRuntimeLayers(map, latestState)
+      configureBuildings3d(map, { enabled: latestState.buildings3d, density: 'reduced' })
+      adapter.render(latestState)
+      callbacks?.onProviderState('available')
+    }
+    emitPerformance()
+  }
+
   const adapter: MapEngineAdapter = {
     id: 'maplibre',
     mount(container, initial, nextCallbacks) {
@@ -185,6 +210,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       callbacks.onProviderState('loading')
       latestState = initial
       loaded = false
+      contextLostActive = false
       createdAtMs = performance.now()
       fpsWindowStart = createdAtMs
       performance.clearResourceTimings()
@@ -233,23 +259,11 @@ export function createMapLibreAdapter(): MapEngineAdapter {
         })
       }
 
-      map.on('webglcontextlost', () => {
-        webglContextLosses += 1
-        callbacks?.onProviderState('degraded')
-        callbacks?.onWebglContextLost()
-        emitPerformance()
-      })
-      map.on('webglcontextrestored', () => {
-        webglContextRestores += 1
-        callbacks?.onWebglContextRestored()
-        if (map && latestState) {
-          addRuntimeLayers(map, latestState)
-          configureBuildings3d(map, { enabled: latestState.buildings3d, density: 'reduced' })
-          adapter.render(latestState)
-          callbacks?.onProviderState('available')
-        }
-        emitPerformance()
-      })
+      map.on('webglcontextlost', handleContextLost)
+      map.on('webglcontextrestored', handleContextRestored)
+      const canvas = map.getCanvas()
+      canvas.addEventListener('webglcontextlost', handleContextLost, { capture: true })
+      canvas.addEventListener('webglcontextrestored', handleContextRestored, { capture: true })
 
       if ('PerformanceObserver' in window) {
         try {
@@ -268,7 +282,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     },
     render(state) {
       latestState = state
-      if (!map || !loaded) return
+      if (!map || !loaded || contextLostActive) return
       setSourceData(map, SOURCE_MARKER, markerData(state))
       setSourceData(map, SOURCE_ACCURACY, accuracyData(state))
       setSourceData(map, SOURCE_RAIL, railData(state))
@@ -278,7 +292,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       configureBuildings3d(map, { enabled: state.buildings3d, density: state.reducedMotion ? 'reduced' : 'full' })
     },
     updateCamera(update: CameraUpdate) {
-      if (!map || !update.shouldMove) return
+      if (!map || !update.shouldMove || contextLostActive) return
       const offsetY = Math.round(map.getContainer().clientHeight * update.offsetYRatio)
       const options = {
         center: [update.center.lng, update.center.lat] as [number, number],
@@ -304,6 +318,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       callbacks = null
       latestState = null
       loaded = false
+      contextLostActive = false
     },
   }
   return adapter
