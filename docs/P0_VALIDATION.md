@@ -23,10 +23,10 @@ DEPLOYMENT_EXECUTED=NO
 
 | Checkout | Command | Exit | Classification | Missing entries | Invalid entries |
 |---|---|---:|---|---:|---:|
-| Base | `npm ci --ignore-scripts` | 1 | NPM_CI_EUSAGE | 0 | 0 |
-| Candidate | `npm ci --ignore-scripts` | 1 | NPM_CI_EUSAGE | 0 | 0 |
+| Base | `npm ci --ignore-scripts` | 1 | NPM_CI_EUSAGE_NO_NPM_LOCKFILE | 0 | 0 |
+| Candidate | `npm ci --ignore-scripts` | 1 | NPM_CI_EUSAGE_NO_NPM_LOCKFILE | 0 | 0 |
 
-Package names and raw logs are intentionally omitted. Matching base/candidate classification and counts identify the failure as preexisting.
+`npm ci` fails with EUSAGE because neither `package-lock.json` nor `npm-shrinkwrap.json` exists; the only committed JavaScript lockfile is `bun.lock`. Base and candidate have the same files and exit code, so this is a preexisting package-manager mismatch rather than a P0 regression. Package names and raw logs are omitted.
 
 ## Ephemeral frontend comparison
 

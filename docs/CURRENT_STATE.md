@@ -16,7 +16,7 @@ Initial SHA-256 fingerprints:
 TRACKER_MAP_SHA256=a2aaeea5af27badad54f7cb4a6a359fb103f5f7ce52d374137ec19ad36d72f68
 STATIC_INDEX_SHA256=36e0d578a57ac723ce0087feb334cb1cf1438a2268630812db62cdb1a784c269
 TRACKER_VIEW_SHA256=a963352ccc0bcbb55b032c2d286f27f1173c6666daf758e496a001e459a2b31f
-LOCKFILES=package-lock.json,bun.lock
+LOCKFILES=bun.lock
 ```
 
 ## Current runtime state
