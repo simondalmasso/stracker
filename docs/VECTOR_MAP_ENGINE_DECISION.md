@@ -1,19 +1,52 @@
-# STRACKER — Vector Map Engine Decision V1
+# STRACKER — Map Engine and Basemap Decision V2
 
-## Decision
+## Release decision
 
 ```text
-SELECTED_RENDERER=MapLibre GL JS
-SELECTED_STYLE_PROVIDER=OpenFreeMap
-SELECTED_BASE_DATA=OpenStreetMap/OpenMapTiles-compatible vector data
+RENDERER=MapLibre GL JS
+DEFAULT_BASEMAP_MODE=vector-3d
+BASEMAP_MODES=vector-3d|satellite|hybrid
+VECTOR_STYLE_PROVIDER=OpenFreeMap
+VECTOR_BASE_DATA=OpenStreetMap/OpenMapTiles-compatible
+SATELLITE_PROVIDER=eox-s2cloudless-2016
 MAPBOX_ROLE=BENCHMARK_ONLY
-ZERO_COST_HARD_GATE=PASS
-PAID_OVERAGE_RISK=NO
+FINAL_BUNDLE_SINGLE_ENGINE=PASS_REQUIRED
 ```
 
-The release uses one renderer only. Mapbox GL JS is not a dependency, route, token source or runtime provider in the final product bundle.
+The release contains one renderer. Basemap changes toggle sources and layers inside the existing MapLibre instance; they do not create another map, change `LocationSource`, restart a watcher/poll, clear product layers or mutate camera state.
 
-## Product constraints
+## Independent state contract
+
+```ts
+type BasemapMode = 'vector-3d' | 'satellite' | 'hybrid'
+```
+
+`BasemapMode` is independent of location source, motion, freshness, source health, shared-session state and camera mode. It lives only for the current document lifetime. No localStorage, cookie, backend field or hidden URL parameter is used. A new document starts at `vector-3d`.
+
+## Modes
+
+### VECTOR_3D
+
+- OpenFreeMap Liberty vector style;
+- dark style adjustments;
+- OpenStreetMap/OpenMapTiles-compatible streets and buildings;
+- optional building extrusion;
+- normal follow, stationary, overview and manual camera behavior.
+
+### SATELLITE
+
+- EOxCloudless 2016 raster WMTS tiles;
+- no extruded buildings;
+- no vector street or label overlay;
+- marker, connection halo, accuracy circle and GhostRail remain above the raster.
+
+### HYBRID
+
+- the same EOxCloudless raster source;
+- OpenFreeMap line and symbol layers above the raster for streets, boundaries and place labels;
+- all STRACKER product layers remain above both basemap groups.
+
+## Zero-cost hard gate
 
 ```text
 RECURRING_INFRASTRUCTURE_COST_USD=0
@@ -23,95 +56,71 @@ AUTOMATIC_UPGRADE_TO_PAID=NO
 BILLING_DEPENDENCY=NO
 ```
 
-A provider that offers a free allowance followed by metered charges does not satisfy the STRACKER hard gate.
+A free allowance followed by metered billing is ineligible.
 
-## Candidate A — Mapbox GL JS v3 with Mapbox data/style
+## Satellite provider evaluation
 
-Renderer capabilities are strong: GPU vector rendering, camera control, terrain/buildings and mature styles. The isolated CI spike uses only local synthetic GeoJSON and no Mapbox token or data request, so it benchmarks renderer behavior without exposing STRACKER data.
+### A. IGN Argenmap Híbrido
 
-Mapbox is not selected because its documented pay-as-you-go model permits billable usage after the included allowance and does not provide the required project-level hard spending cap before charges. Performance or style quality cannot override this economic failure.
+IGN publishes TMS/WMTS endpoints. It is not selected for STRACKER satellite imagery because the current public geoservice description does not provide sufficiently explicit imagery provenance and licensing for this product, while historical official Argenmap documentation identifies Google imagery. STRACKER does not silently treat that endpoint as an independently licensed satellite source.
 
 ```text
-MAPBOX_RENDERER_BENCHMARK=ALLOWED
-MAPBOX_PRODUCTION_ELIGIBILITY=FAIL_ZERO_COST_HARD_GATE
-MAPBOX_TOKEN_IN_RELEASE=NO
-MAPBOX_DATA_REQUEST_IN_RELEASE=NO
+IGN_ARGENMAP_HYBRID=BLOCKED_BY_IMAGERY_PROVENANCE_AND_LICENSE_AMBIGUITY
+COMPLETE_COVERAGE_CLAIMED=NO
 ```
 
-## Candidate B — MapLibre GL JS with OpenFreeMap and OpenStreetMap
+### B. IGN public orthomosaics
 
-MapLibre provides the required WebGL vector renderer, camera APIs, GeoJSON sources, custom layers and 3D fill extrusion without a proprietary renderer account or token.
-
-OpenFreeMap currently provides public vector styles and tiles without registration or API keys and documents no usage billing. The selected style endpoint is:
+IGN publishes public aerial-photography and VANT orthomosaic geoservices. They remain candidates for a future coverage-aware high-resolution overlay. This release does not claim that one stable layer covers all of Santa Fe, nor that capture date, resolution or availability are uniform.
 
 ```text
-https://tiles.openfreemap.org/styles/liberty
+IGN_ORTHOMOSAICS=PARTIAL_COVERAGE_CANDIDATE_NOT_SELECTED
+COMPLETE_SANTA_FE_COVERAGE_CLAIMED=NO
 ```
 
-The runtime displays visible attribution to OpenFreeMap, OpenMapTiles and OpenStreetMap.
+### C. EOxCloudless 2016
 
-## Coverage and 3D
-
-The selected OpenFreeMap style is based on OpenMapTiles-compatible vector data derived from OpenStreetMap. Santa Fe street coverage is evaluated by live CI requests and the physical-device checklist. Building extrusion uses the `building` source layer and height fields when available, with a conservative fallback height only for rendered building footprints; this does not invent location samples or movement.
-
-Building completeness and height accuracy depend on upstream OpenStreetMap/OpenMapTiles coverage. Missing height metadata is a map-data limitation and must not be presented as authoritative building height.
-
-## Renderer spike
-
-The CI benchmark routes are isolated from the release:
+Selected as the authorized open fallback:
 
 ```text
-/maplibre → MapLibre UMD bundle
-/mapbox   → transient /tmp Mapbox UMD bundle
+ENDPOINT=https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857/default/g/{z}/{y}/{x}.jpg
+API_KEY_REQUIRED=NO
+COST_USD=0
+PAID_OVERAGE_ALLOWED=NO
+BILLING_DEPENDENCY=NO
+LICENSE=CC BY 4.0
+RESOLUTION=10 m
+MAX_ZOOM=14
+IMAGERY_PERIOD=2016-2017 mosaic
+RECENT_IMAGERY_CLAIM=NO
+COMPLETE_COVERAGE_CLAIMED=NO
 ```
 
-Both receive the same local synthetic GeoJSON fixture:
+Required attribution is retained in policy and displayed in satellite/hybrid UI. The imagery is explicitly historical; STRACKER does not call it current or recent.
+
+## Failure behavior
+
+Raster source errors produce the visible state:
 
 ```text
-STRACKER_SYNTHETIC_SANTA_FE_RENDERER_FIXTURE
+SATÉLITE NO DISPONIBLE EN ESTA ZONA
 ```
 
-The benchmark records:
+Location tracking remains active and isolated. Empty or failed tiles are not hidden as success. No automatic substitution to Google, Mapbox, paid ArcGIS or MapTiler occurs.
 
-- renderer package version;
-- JavaScript and CSS bytes;
-- first load and idle time;
-- WebGL availability and renderer string;
-- 3D fill-extrusion availability;
-- camera result;
-- estimated FPS;
-- long tasks;
-- optional heap metrics;
-- unexpected external requests.
+## Benchmark boundary
 
-Mapbox is installed transiently during the benchmark job and is absent from `package.json`, `bun.lock`, application source and exported assets.
+Mapbox is installed only under `/tmp` in the CI renderer benchmark and receives local synthetic GeoJSON. It remains absent from package metadata, lockfile, source runtime and exported assets.
 
-## Availability and operational risk
-
-The public OpenFreeMap service is provided as-is and without a contractual SLA. It may change or become unavailable. STRACKER therefore keeps renderer, provider URL and application layers behind an adapter.
-
-Fail-closed does not mean hiding the product if tiles fail. Source and privacy controls remain active while the map presents an explicit unavailable/degraded state. A later migration can target self-hosted OpenFreeMap-compatible tiles or PMTiles without changing motion, freshness, GhostRail or camera logic.
-
-## PMTiles preparation
-
-PMTiles is not implemented in this PR. The adapter boundary reserves the migration point:
+## Release assertions
 
 ```text
-MapEngineAdapter
-→ style/provider configuration
-→ source/layer contracts
-```
-
-No source classifier or location pipeline imports MapLibre, OpenFreeMap or a tile URL.
-
-## Final release assertions
-
-```text
-FINAL_BUNDLE_SINGLE_ENGINE=PASS
-UNSELECTED_ENGINE_ABSENT=PASS
-MAPBOX_DEPENDENCY=ABSENT
-LEAFLET_DEPENDENCY=ABSENT
-MAP_PROVIDER_TOKEN=ABSENT
-ATTRIBUTION_REQUIRED=YES
-NEXT_PHASE=stracker-zero-cost-cloudflare-runtime-poc
+RENDERER=MapLibre GL JS
+NO_SECOND_RENDERER=PASS_REQUIRED
+UNSELECTED_ENGINE_ABSENT=PASS_REQUIRED
+ZERO_COST_SATELLITE_GATE=PASS_REQUIRED
+SATELLITE_ATTRIBUTION_VISIBLE=PASS_REQUIRED
+PROVIDER_FAILURE_EXPLICIT=PASS_REQUIRED
+DEPLOY=NO
+MERGE=NO
 ```
