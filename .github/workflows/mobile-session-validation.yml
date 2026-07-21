@@ -1,0 +1,79 @@
+name: STRACKER Mobile Session Validation
+
+on:
+  pull_request:
+    branches:
+      - fix/stracker-p0-security-canonical-state
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-final-candidate:
+    if: github.actor == 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      STRACKER_ENV: test
+      STRACKER_API_TOKEN: test-service-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      SECRET_KEY: test-secret-key-ssssssssssssssssssssssssssssssssssssssssssssssss
+      STRACKER_ALLOW_DEV_APP_SESSION: '1'
+      TRACKER_SKIP_PLAYWRIGHT: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/stracker-mobile-session-onboarding
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Backend security and session gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py tests/test_p0_security.py tests/test_session_contract.py tests/test_mobile_session_integration.py
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          ! grep -R "COOKIES_PATH.write_text" tracker_map.py nextjs-ui/tracker_map.py
+          ! grep -R "Debe ser array" tracker_map.py nextjs-ui/tracker_map.py
+          git diff --check origin/fix/stracker-p0-security-canonical-state...HEAD
+
+      - name: Frozen frontend install and changed-file checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bunx eslint src/app/page.tsx src/components/tracker/SessionGate.tsx src/lib/session-client.ts
+          set +e
+          bunx tsc --noEmit --pretty false > /tmp/typecheck.log 2>&1
+          TSC_EXIT=$?
+          BUILD_EXPORT=1 bunx next build > /tmp/build.log 2>&1
+          BUILD_EXIT=$?
+          set -e
+          if grep -E "SessionGate|session-client|src/app/page.tsx" /tmp/typecheck.log; then
+            echo "Candidate-owned TypeScript error detected"
+            exit 1
+          fi
+          printf 'TYPECHECK_EXIT=%s\nBUILD_EXIT=%s\n' "$TSC_EXIT" "$BUILD_EXIT"
+
+      - name: Mobile browser QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx next dev -p 3000 > /tmp/stracker-mobile-dev.log 2>&1 &
+          DEV_PID=$!
+          trap 'kill $DEV_PID 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3000/ >/dev/null
+          node tests/mobile_session_qa.mjs
