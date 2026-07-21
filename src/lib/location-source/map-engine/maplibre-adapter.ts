@@ -233,15 +233,13 @@ export function createMapLibreAdapter(): MapEngineAdapter {
         })
       }
 
-      const canvas = map.getCanvas()
-      canvas.addEventListener('webglcontextlost', (event) => {
-        event.preventDefault()
+      map.on('webglcontextlost', () => {
         webglContextLosses += 1
         callbacks?.onProviderState('degraded')
         callbacks?.onWebglContextLost()
         emitPerformance()
       })
-      canvas.addEventListener('webglcontextrestored', () => {
+      map.on('webglcontextrestored', () => {
         webglContextRestores += 1
         callbacks?.onWebglContextRestored()
         if (map && latestState) {
