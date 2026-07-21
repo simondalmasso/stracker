@@ -174,7 +174,7 @@ jobs:
         run: bun run build:export
 
       - name: Provision and validate isolated nonprod staging
-        run: scripts/cloudflare-nonprod-live.sh
+        run: bash scripts/cloudflare-nonprod-live.sh
 
       - name: Upload sanitized staging evidence
         if: always()
