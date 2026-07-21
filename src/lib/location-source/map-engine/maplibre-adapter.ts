@@ -204,6 +204,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
   let loaded = false
   let contextLostActive = false
   let satelliteFailureActive = false
+  let satelliteAvailabilityTimer: ReturnType<typeof setTimeout> | null = null
   let createdAtMs = 0
   let firstMapVisibleMs: number | null = null
   let firstInteractiveMs: number | null = null
@@ -216,6 +217,23 @@ export function createMapLibreAdapter(): MapEngineAdapter {
   let performanceObserver: PerformanceObserver | null = null
   let performanceTimer: ReturnType<typeof setInterval> | null = null
   const baseLayerVisibility = new Map<string, 'visible' | 'none'>()
+
+  const clearSatelliteAvailabilityTimer = () => {
+    if (satelliteAvailabilityTimer) clearTimeout(satelliteAvailabilityTimer)
+    satelliteAvailabilityTimer = null
+  }
+
+  const markSatelliteUnavailable = () => {
+    clearSatelliteAvailabilityTimer()
+    satelliteFailureActive = true
+    callbacks?.onBasemapProviderState('unavailable')
+  }
+
+  const markSatelliteAvailable = () => {
+    clearSatelliteAvailabilityTimer()
+    if (satelliteFailureActive) return
+    callbacks?.onBasemapProviderState('available')
+  }
 
   const emitPerformance = () => {
     if (!callbacks) return
@@ -256,10 +274,14 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       map.setLayoutProperty(layer.id, 'visibility', visibility)
     }
 
+    clearSatelliteAvailabilityTimer()
     if (satelliteVisible) {
       satelliteFailureActive = false
       callbacks?.onBasemapProviderState('loading')
-      if (map.isSourceLoaded(SATELLITE_SOURCE_ID)) callbacks?.onBasemapProviderState('available')
+      satelliteAvailabilityTimer = setTimeout(() => {
+        if (latestState && usesSatelliteImagery(latestState.basemapMode) && !satelliteFailureActive) markSatelliteUnavailable()
+      }, 8_000)
+      if (map.isSourceLoaded(SATELLITE_SOURCE_ID)) markSatelliteAvailable()
     } else {
       satelliteFailureActive = false
       callbacks?.onBasemapProviderState('idle')
@@ -308,6 +330,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       loaded = false
       contextLostActive = false
       satelliteFailureActive = false
+      clearSatelliteAvailabilityTimer()
       createdAtMs = performance.now()
       fpsWindowStart = createdAtMs
       performance.clearResourceTimings()
@@ -329,19 +352,30 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: OPENFREEMAP_ATTRIBUTION }), 'bottom-left')
 
       map.on('error', (event) => {
-        const candidate = event as { sourceId?: string; error?: Error }
+        const candidate = event as {
+          sourceId?: string
+          error?: Error & { status?: number; url?: string }
+          tile?: { request?: { url?: string } }
+        }
         const message = candidate.error?.message ?? ''
-        const satelliteError = candidate.sourceId === SATELLITE_SOURCE_ID || message.includes(SATELLITE_PROVIDER.host)
-        if (satelliteError && latestState && usesSatelliteImagery(latestState.basemapMode)) {
-          satelliteFailureActive = true
-          callbacks?.onBasemapProviderState('unavailable')
+        const errorUrl = candidate.error?.url ?? candidate.tile?.request?.url ?? ''
+        const errorStatus = candidate.error?.status ?? 0
+        const satelliteModeActive = Boolean(latestState && usesSatelliteImagery(latestState.basemapMode))
+        const satelliteError = satelliteModeActive && (
+          candidate.sourceId === SATELLITE_SOURCE_ID ||
+          message.includes(SATELLITE_PROVIDER.host) ||
+          errorUrl.includes(SATELLITE_PROVIDER.host) ||
+          errorStatus >= 400
+        )
+        if (satelliteError) {
+          markSatelliteUnavailable()
           return
         }
         callbacks?.onProviderState('degraded')
       })
       map.on('sourcedata', (event) => {
         if (event.sourceId !== SATELLITE_SOURCE_ID || !event.isSourceLoaded || satelliteFailureActive) return
-        if (latestState && usesSatelliteImagery(latestState.basemapMode)) callbacks?.onBasemapProviderState('available')
+        if (latestState && usesSatelliteImagery(latestState.basemapMode)) markSatelliteAvailable()
       })
       map.once('style.load', () => {
         if (!map || !latestState) return
@@ -362,7 +396,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
         firstInteractiveMs = performance.now() - createdAtMs
         callbacks?.onProviderState('available')
         if (latestState && usesSatelliteImagery(latestState.basemapMode) && !satelliteFailureActive && map?.isSourceLoaded(SATELLITE_SOURCE_ID)) {
-          callbacks?.onBasemapProviderState('available')
+          markSatelliteAvailable()
         }
         emitPerformance()
       })
@@ -427,6 +461,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     },
     resize() { map?.resize() },
     destroy() {
+      clearSatelliteAvailabilityTimer()
       if (performanceTimer) clearInterval(performanceTimer)
       performanceTimer = null
       performanceObserver?.disconnect()
