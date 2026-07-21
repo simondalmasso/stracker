@@ -1,0 +1,147 @@
+name: STRACKER Mobile Session Bootstrap
+
+on:
+  pull_request:
+    branches:
+      - fix/stracker-p0-security-canonical-state
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: stracker-mobile-session-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  implement-test-and-publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      BASE_SHA: fa919edad57937481f97e74ac96f09697bf03642
+      BRANCH_NAME: feat/stracker-mobile-session-onboarding
+      STRACKER_ENV: test
+      STRACKER_API_TOKEN: test-service-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      SECRET_KEY: test-secret-key-ssssssssssssssssssssssssssssssssssssssssssssssss
+      STRACKER_ALLOW_DEV_APP_SESSION: '1'
+      TRACKER_SKIP_PLAYWRIGHT: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/stracker-mobile-session-onboarding
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify stacked base and apply bounded patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune origin fix/stracker-p0-security-canonical-state
+          test "$(git rev-parse origin/fix/stracker-p0-security-canonical-state)" = "$BASE_SHA"
+          test "$(git merge-base HEAD origin/fix/stracker-p0-security-canonical-state)" = "$BASE_SHA"
+          python scripts/apply_mobile_session_backend.py
+          test ! -e google_session.enc
+          test ! -e cookies.json
+
+      - name: Backend tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py tests/test_p0_security.py tests/test_session_contract.py tests/test_mobile_session_integration.py
+          python -m unittest discover -s tests -p 'test_*.py' -v | tee /tmp/python-tests.log
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          ! grep -R "COOKIES_PATH.write_text" tracker_map.py nextjs-ui/tracker_map.py
+          ! grep -R "Debe ser array" tracker_map.py nextjs-ui/tracker_map.py
+          git diff --check
+
+      - name: Frontend changed-file checks and build classification
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bunx eslint src/app/page.tsx src/components/tracker/SessionGate.tsx src/lib/session-client.ts
+          set +e
+          bunx tsc --noEmit --pretty false > /tmp/typecheck.log 2>&1
+          TSC_EXIT=$?
+          BUILD_EXPORT=1 bunx next build > /tmp/build.log 2>&1
+          BUILD_EXIT=$?
+          set -e
+          if grep -E "SessionGate|session-client|src/app/page.tsx" /tmp/typecheck.log; then
+            cat /tmp/typecheck.log
+            exit 1
+          fi
+          printf '%s' "$TSC_EXIT" > /tmp/typecheck.exit
+          printf '%s' "$BUILD_EXIT" > /tmp/build.exit
+
+      - name: Browser QA at required mobile sizes
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx next dev -p 3000 > /tmp/stracker-mobile-dev.log 2>&1 &
+          DEV_PID=$!
+          trap 'kill $DEV_PID 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3000/ >/dev/null
+          node tests/mobile_session_qa.mjs | tee /tmp/mobile-qa.json
+
+      - name: Write sanitized validation evidence and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          TSC_EXIT=$(cat /tmp/typecheck.exit)
+          BUILD_EXIT=$(cat /tmp/build.exit)
+          QA_RESULT=$(cat /tmp/mobile-qa.json)
+          cat > docs/MOBILE_SESSION_VALIDATION.md <<EOF
+          # Mobile Session Validation
+
+          ```text
+          STACKED_BASE_SHA=$BASE_SHA
+          BRANCH=$BRANCH_NAME
+          PRODUCTION_MODIFIED=NO
+          DEPLOYMENT_EXECUTED=NO
+          ```
+
+          ## Backend
+
+          - Python compile: PASS.
+          - Full unittest discovery: PASS.
+          - Root and duplicate backend parity: PASS.
+          - Plaintext cookie writer absent: PASS.
+          - Legacy `Debe ser array` response absent: PASS.
+          - Static diff check: PASS.
+
+          ## Frontend
+
+          - Bun frozen install: PASS.
+          - ESLint for changed frontend files: PASS.
+          - Full repository typecheck exit: $TSC_EXIT. Candidate-owned TypeScript errors: 0.
+          - Next export build exit: $BUILD_EXIT. This remains a release gate if non-zero.
+
+          ## Mobile browser QA
+
+          ```json
+          $QA_RESULT
+          ```
+
+          Tested: 320x568, 360x640, 375x812, 390x844, 412x915; onboarding, import, map lock/unlock, reload, textarea focus, rotation, stale, no-location, session sheet, logout, expired-session error, horizontal overflow, page errors, and console errors.
+          EOF
+          rm -f scripts/apply_mobile_session_backend.py .github/workflows/mobile-session-bootstrap.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: implement mobile-first authorized session onboarding'
+          git push origin HEAD:$BRANCH_NAME
