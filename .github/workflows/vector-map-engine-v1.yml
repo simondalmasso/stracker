@@ -65,6 +65,7 @@ jobs:
           node --check tools/map-spike/validate-satellite-providers.mjs
           node --check tools/map-spike/prepare-artifact.mjs
           node --check tools/map-spike/release-source-gate.mjs
+          node --check tools/map-spike/release-bundle-gate.mjs
           echo 'VECTOR_MAP_TESTS=PASS'
       - name: STATIC_EXPORT_BUILD
         env:
@@ -92,15 +93,7 @@ jobs:
           node tools/map-spike/release-source-gate.mjs
           echo 'UNSELECTED_ENGINE_ABSENT=PASS'
       - name: EXPORT_BUNDLE_GATE
-        run: |
-          ! grep -R --binary-files=without-match -nE 'api\.mapbox\.com|mapbox-gl|leaflet-container|tile\.openstreetmap\.org|server\.arcgisonline\.com|googleapis\.com.*satellite|mt[0-9]+\.google\.com|maptiler\.com.*satellite' out
-          grep -R --binary-files=without-match -q 'tiles.openfreemap.org/styles/liberty' out/_next/static
-          grep -R --binary-files=without-match -q 'tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857' out/_next/static
-          ! grep -R --binary-files=without-match -nE 'STRACKER_SERVICE_TOKEN|X-Stracker-Service-Token|CF_Authorization|SAPISID=|Authorization: Bearer' out
-          echo 'SINGLE_ENGINE_FINAL_BUNDLE=PASS'
-          echo 'SATELLITE_SINGLE_RENDERER_BUNDLE=PASS'
-          echo 'SENSITIVE_DATA_IN_LOGS=NO'
-          echo 'SENSITIVE_DATA_IN_ARTIFACTS=NO'
+        run: node tools/map-spike/release-bundle-gate.mjs
 
   mobile-browser-qa:
     needs: local-gates
@@ -270,6 +263,7 @@ jobs:
           test ! -e .github/workflows/vector-map-lint-diagnostic.yml
           test ! -e .github/workflows/vector-map-source-diagnostic.yml
           test ! -e .github/workflows/vector-map-runtime-diagnostic.yml
+          test ! -e .github/workflows/basemap-type-diagnostic.yml
           ! grep -R --include='*.yml' --include='*.yaml' -n 'contents: write' .github/workflows
           test -n '${{ needs.mobile-browser-qa.outputs.artifact-id }}'
           test -n '${{ needs.mobile-browser-qa.outputs.artifact-digest }}'
