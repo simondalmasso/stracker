@@ -19,7 +19,7 @@ RASTER_REQUESTS
 RASTER_TRANSFERRED_BYTES
 ```
 
-The current CI budgets are:
+The CI budgets are:
 
 ```text
 VECTOR_PROVIDER_REQUESTS_FIRST_VIEWPORT_MAX=90
@@ -32,11 +32,16 @@ These are CI Chromium guardrails, not physical-device performance claims or prov
 
 ## Exact-head evidence
 
-CI produces two sanitized artifacts:
+The completed validation set is:
 
 ```text
-stracker-vector-map-mobile-qa-<SHA>
-stracker-vector-map-spike-<SHA>
+VALIDATED_FEATURE_HEAD=2faa42dc127099d97acc28a9404c9cd75a0e9efc
+WORKFLOW_RUN_ID=29855942179
+WORKFLOW_CONCLUSION=success
+MOBILE_ARTIFACT_ID=8505326097
+MOBILE_ARTIFACT_DIGEST=sha256:276648e98f5b0fa044592d4fb12f7abf90b4b745303b53f6d373ea936d8ca7c2
+PROVIDER_ARTIFACT_ID=8505304475
+PROVIDER_ARTIFACT_DIGEST=sha256:18e94400cfc5568db95374865948ad16758bbe77e111706861b3286bd2bd5174
 ```
 
 The mobile artifact contains:
@@ -57,23 +62,33 @@ The renderer/provider artifact contains:
 - zero-cost/license/CORS/provider-policy gates;
 - explicit non-claims for complete IGN orthomosaic coverage.
 
-No artifact may contain cookies, authorization headers, service tokens, source archives or retained coordinate values.
+No artifact contains cookies, authorization headers, service tokens, source archives or retained coordinate values.
 
 ## Basemap transitions
 
 The QA sequence validates:
 
 ```text
-VECTOR_TO_SATELLITE
-SATELLITE_TO_HYBRID
-HYBRID_TO_VECTOR
+VECTOR_TO_SATELLITE=PASS
+SATELLITE_TO_HYBRID=PASS
+HYBRID_TO_VECTOR=PASS
+LOCATION_SOURCE_UNCHANGED=PASS
+MARKER_PRESERVED=PASS
+GHOSTRAIL_PRESERVED=PASS
+CAMERA_MANUAL_PRESERVED=PASS
+NO_NEW_GEOLOCATION_REQUEST=PASS
+NO_NEW_SESSION_REQUEST=PASS
+NO_SECOND_RENDERER=PASS
+SATELLITE_ATTRIBUTION_VISIBLE=PASS
+PROVIDER_FAILURE_EXPLICIT=PASS
+ZERO_COST_SATELLITE_GATE=PASS
 ```
 
-The same MapLibre canvas must survive every transition. Location source, accepted marker, GhostRail count, capture timestamp, watcher count, session-request count and manual camera mode must remain unchanged.
+The same MapLibre canvas survives every transition. Location source, accepted marker, GhostRail count, capture timestamp, watcher count, session-request count and manual camera mode remain unchanged.
 
 ## Raster failure and fallback
 
-Raster failures must become visible as `SATÉLITE NO DISPONIBLE EN ESTA ZONA`. A failed raster tile is not treated as a successful empty view. No paid or unauthorized provider is loaded automatically.
+Raster failures become visible as `SATÉLITE NO DISPONIBLE EN ESTA ZONA`. A failed raster tile is not treated as a successful empty view. No paid or unauthorized provider is loaded automatically.
 
 ## Memory and WebGL
 
@@ -92,7 +107,7 @@ The WebGL fallback sequence remains:
 
 ```text
 A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
-PHYSICAL_DEVICE_EVIDENCE_HONEST=PASS_REQUIRED
+PHYSICAL_DEVICE_EVIDENCE_HONEST=PASS
 ```
 
-CI and emulation results may not be relabeled as physical A22 evidence.
+CI and emulation results are not relabeled as physical A22 evidence.
