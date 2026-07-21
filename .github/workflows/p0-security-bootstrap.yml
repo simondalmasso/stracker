@@ -1,0 +1,205 @@
+name: STRACKER P0 Security Bootstrap
+
+on:
+  push:
+    branches:
+      - fix/stracker-p0-security-canonical-state
+    paths:
+      - .github/workflows/p0-security-bootstrap.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stracker-p0-security-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  implement-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASE_SHA: 923cac9c9bcc0b7e05701dd1018e61a454d0f478
+      BRANCH_NAME: fix/stracker-p0-security-canonical-state
+      STRACKER_ENV: test
+      STRACKER_API_TOKEN: test-service-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      SECRET_KEY: test-secret-key-ssssssssssssssssssssssssssssssssssssssssssssssss
+      TRACKER_SKIP_PLAYWRIGHT: '1'
+
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/stracker-p0-security-canonical-state
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify exact remote baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune origin main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+          test -z "$(git status --porcelain)"
+          git worktree add --detach /tmp/stracker-base "$BASE_SHA"
+          printf 'BASE_SHA=%s\n' "$BASE_SHA"
+          printf 'BOOTSTRAP_HEAD=%s\n' "$(git rev-parse HEAD)"
+
+      - name: Apply P0 security changes and sanitized audit
+        run: python scripts/p0_security_bootstrap.py
+
+      - name: Install Python dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Validate Python syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py tests/test_p0_security.py 2>&1 | tee /tmp/python-syntax.log
+          echo 0 > /tmp/python-syntax.code
+
+      - name: Run focused backend security tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee /tmp/python-tests.log
+          echo 0 > /tmp/python-tests.code
+
+      - name: Run base and candidate frontend checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          capture() {
+            local name="$1"
+            shift
+            set +e
+            "$@" >"/tmp/${name}.log" 2>&1
+            local code=$?
+            set -e
+            echo "$code" >"/tmp/${name}.code"
+            printf '%s=%s\n' "$name" "$code"
+          }
+
+          capture base_npm_ci bash -lc 'cd /tmp/stracker-base && npm ci'
+          if [ "$(cat /tmp/base_npm_ci.code)" = "0" ]; then
+            capture base_lint bash -lc 'cd /tmp/stracker-base && npx eslint .'
+            capture base_typecheck bash -lc 'cd /tmp/stracker-base && npx tsc --noEmit'
+            capture base_build bash -lc 'cd /tmp/stracker-base && npx next build'
+          else
+            echo 125 > /tmp/base_lint.code
+            echo 125 > /tmp/base_typecheck.code
+            echo 125 > /tmp/base_build.code
+          fi
+
+          capture candidate_npm_ci npm ci
+          if [ "$(cat /tmp/candidate_npm_ci.code)" = "0" ]; then
+            capture candidate_lint npx eslint .
+            capture candidate_typecheck npx tsc --noEmit
+            capture candidate_build npx next build
+          else
+            echo 125 > /tmp/candidate_lint.code
+            echo 125 > /tmp/candidate_typecheck.code
+            echo 125 > /tmp/candidate_build.code
+          fi
+
+          for check in npm_ci lint typecheck build; do
+            base_code="$(cat "/tmp/base_${check}.code")"
+            candidate_code="$(cat "/tmp/candidate_${check}.code")"
+            if [ "$base_code" = "0" ] && [ "$candidate_code" != "0" ]; then
+              echo "Frontend regression in ${check}: base=0 candidate=${candidate_code}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Generate validation evidence
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          def code(name):
+              return int(Path(f"/tmp/{name}.code").read_text().strip())
+
+          def classify(base_name, candidate_name):
+              base = code(base_name)
+              candidate = code(candidate_name)
+              if candidate == 0:
+                  return "PASS", base, candidate
+              if base != 0:
+                  return "PREEXISTING_FAIL", base, candidate
+              return "REGRESSION", base, candidate
+
+          tests_output = Path('/tmp/python-tests.log').read_text(encoding='utf-8', errors='replace')
+          ran = re.search(r"Ran (\d+) tests?", tests_output)
+          test_count = int(ran.group(1)) if ran else None
+
+          rows = []
+          for label in ('npm_ci', 'lint', 'typecheck', 'build'):
+              state, base, candidate = classify(f'base_{label}', f'candidate_{label}')
+              rows.append((label, state, base, candidate))
+
+          lines = [
+              '# P0 Validation Evidence',
+              '',
+              'Validation ran in a clean GitHub Actions checkout. No production endpoint, deployment or secret store was modified.',
+              '',
+              '## Backend gates',
+              '',
+              '| Command | Result | Exact status |',
+              '|---|---|---|',
+              '| `python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py tests/test_p0_security.py` | PASS | exit 0 |',
+              f'| `python -m unittest discover -s tests -p test_*.py -v` | PASS | exit 0; tests={test_count if test_count is not None else "unparsed"} |',
+              '',
+              '## Frontend comparison against BASE_SHA',
+              '',
+              '| Check | Classification | Base exit | Candidate exit |',
+              '|---|---|---:|---:|',
+          ]
+          for label, state, base, candidate in rows:
+              lines.append(f'| `{label}` | {state} | {base} | {candidate} |')
+
+          lines.extend([
+              '',
+              'A candidate failure is classified as `PREEXISTING_FAIL` only when the same clean-environment check also failed on the exact base SHA. Raw logs are retained only in the ephemeral Actions runner and are not committed because they may contain noisy source excerpts.',
+              '',
+              '## Integrity checks',
+              '',
+              '- `tracker_map.py` and `nextjs-ui/tracker_map.py`: byte-identical after patch.',
+              '- `git diff --check`: required before commit.',
+              '- Production impact: none.',
+              '- Deployment: not executed.',
+          ])
+          Path('docs/P0_VALIDATION.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+      - name: Verify final tree and publish implementation commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          git diff --check
+
+          rm -f .github/workflows/p0-security-bootstrap.yml scripts/p0_security_bootstrap.py
+          rmdir scripts 2>/dev/null || true
+
+          git status --short
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .gitignore .env.example tracker_map.py nextjs-ui/tracker_map.py stracker_security.py tests docs .github/workflows/p0-security-bootstrap.yml scripts/p0_security_bootstrap.py
+          git commit -m 'security: enforce P0 containment baseline'
+          git push origin HEAD:fix/stracker-p0-security-canonical-state
+
+          printf 'FINAL_HEAD=%s\n' "$(git rev-parse HEAD)"
