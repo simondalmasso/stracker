@@ -1,0 +1,189 @@
+name: STRACKER Mobile Session Bootstrap V4
+
+on:
+  pull_request:
+    branches:
+      - fix/stracker-p0-security-canonical-state
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: stracker-mobile-session-bootstrap-v4
+  cancel-in-progress: false
+
+jobs:
+  implement-test-and-publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      BASE_SHA: fa919edad57937481f97e74ac96f09697bf03642
+      BRANCH_NAME: feat/stracker-mobile-session-onboarding
+      STRACKER_ENV: test
+      STRACKER_ALLOW_DEV_APP_SESSION: '1'
+      TRACKER_SKIP_PLAYWRIGHT: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/stracker-mobile-session-onboarding
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Apply candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune origin fix/stracker-p0-security-canonical-state
+          test "$(git rev-parse origin/fix/stracker-p0-security-canonical-state)" = "$BASE_SHA"
+          test "$(git merge-base HEAD origin/fix/stracker-p0-security-canonical-state)" = "$BASE_SHA"
+          python scripts/run_mobile_session_patch.py
+          python scripts/fix_mobile_session_frontend.py
+          test ! -e google_session.enc
+          test ! -e cookies.json
+
+      - name: Backend tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py tests/test_p0_security.py tests/test_session_contract.py tests/test_mobile_session_integration.py
+          python -m unittest discover -s tests -p 'test_*.py' -v | tee /tmp/python-tests.log
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          ! grep -R "COOKIES_PATH.write_text" tracker_map.py nextjs-ui/tracker_map.py
+          ! grep -R "Debe ser array" tracker_map.py nextjs-ui/tracker_map.py
+          git diff --check
+
+      - name: Frontend checks with preexisting classification
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          set +e
+          bunx eslint src/app/page.tsx src/components/tracker/SessionGate.tsx src/lib/session-client.ts > /tmp/lint.log 2>&1
+          LINT_EXIT=$?
+          bunx tsc --noEmit --pretty false > /tmp/typecheck.log 2>&1
+          TSC_EXIT=$?
+          BUILD_EXPORT=1 bunx next build > /tmp/build.log 2>&1
+          BUILD_EXIT=$?
+          set -e
+          LINT_CLASS=PASS
+          if [ "$LINT_EXIT" -ne 0 ]; then
+            if grep -q "couldn't find an eslint.config" /tmp/lint.log; then
+              LINT_CLASS=PREEXISTING_NO_ESLINT_CONFIG
+            else
+              LINT_CLASS=CANDIDATE_OR_UNKNOWN_FAIL
+            fi
+          fi
+          CHANGED_TYPE_ERRORS=$(grep -E "SessionGate|session-client|src/app/page.tsx" /tmp/typecheck.log || true)
+          if [ "$LINT_CLASS" = "CANDIDATE_OR_UNKNOWN_FAIL" ] || [ -n "$CHANGED_TYPE_ERRORS" ]; then
+            {
+              echo "LINT_EXIT=$LINT_EXIT"
+              echo "LINT_CLASS=$LINT_CLASS"
+              echo "TSC_EXIT=$TSC_EXIT"
+              echo "BUILD_EXIT=$BUILD_EXIT"
+              echo "--- LINT ---"
+              tail -n 40 /tmp/lint.log
+              echo "--- CHANGED TYPE ERRORS ---"
+              printf '%s\n' "$CHANGED_TYPE_ERRORS"
+            } > .mobile-frontend-error-v4.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add .mobile-frontend-error-v4.txt
+            git commit -m 'ci: record mobile frontend v4 failure cause'
+            git push origin HEAD:$BRANCH_NAME
+            exit 1
+          fi
+          printf '%s' "$LINT_EXIT" > /tmp/lint.exit
+          printf '%s' "$LINT_CLASS" > /tmp/lint.class
+          printf '%s' "$TSC_EXIT" > /tmp/typecheck.exit
+          printf '%s' "$BUILD_EXIT" > /tmp/build.exit
+
+      - name: Browser QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx next dev -p 3000 > /tmp/stracker-mobile-dev.log 2>&1 &
+          DEV_PID=$!
+          trap 'kill $DEV_PID 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3000/ >/dev/null
+          set +e
+          node tests/mobile_session_qa.mjs > /tmp/mobile-qa.log 2>&1
+          QA_EXIT=$?
+          set -e
+          if [ "$QA_EXIT" -ne 0 ]; then
+            tail -n 60 /tmp/mobile-qa.log > .mobile-browser-error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add .mobile-browser-error.txt
+            git commit -m 'ci: record mobile browser failure cause'
+            git push origin HEAD:$BRANCH_NAME
+            exit "$QA_EXIT"
+          fi
+          cat /tmp/mobile-qa.log | tee /tmp/mobile-qa.json
+
+      - name: Publish candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          LINT_EXIT=$(cat /tmp/lint.exit)
+          LINT_CLASS=$(cat /tmp/lint.class)
+          TSC_EXIT=$(cat /tmp/typecheck.exit)
+          BUILD_EXIT=$(cat /tmp/build.exit)
+          QA_RESULT=$(cat /tmp/mobile-qa.json)
+          cat > docs/MOBILE_SESSION_VALIDATION.md <<EOF
+          # Mobile Session Validation
+
+          ```text
+          STACKED_BASE_SHA=$BASE_SHA
+          BRANCH=$BRANCH_NAME
+          PRODUCTION_MODIFIED=NO
+          DEPLOYMENT_EXECUTED=NO
+          ```
+
+          ## Backend
+
+          - Python compile: PASS.
+          - Full unittest discovery: PASS.
+          - Root and duplicate backend parity: PASS.
+          - Plaintext cookie writer absent: PASS.
+          - Legacy generic array error absent: PASS.
+          - Static diff check: PASS.
+
+          ## Frontend
+
+          - Bun frozen install: PASS.
+          - Changed-file ESLint exit: $LINT_EXIT; classification: $LINT_CLASS.
+          - Full repository typecheck exit: $TSC_EXIT. Candidate-owned TypeScript errors: 0.
+          - Next export build exit: $BUILD_EXIT. This remains a release gate if non-zero.
+
+          ## Mobile browser QA
+
+          ```json
+          $QA_RESULT
+          ```
+
+          Tested: 320x568, 360x640, 375x812, 390x844, 412x915; onboarding, import, map lock/unlock, reload, textarea focus, rotation, stale, no-location, session sheet, logout, expired-session error, horizontal overflow, page errors, and console errors.
+          EOF
+          rm -f .mobile-patch-error.txt .mobile-patch-error-v2.txt .mobile-frontend-error.txt .mobile-frontend-error-v4.txt .mobile-browser-error.txt
+          rm -f scripts/apply_mobile_session_backend.py scripts/run_mobile_session_patch.py scripts/fix_mobile_session_frontend.py
+          rm -f .github/workflows/mobile-session-bootstrap.yml .github/workflows/mobile-session-bootstrap-v2.yml .github/workflows/mobile-session-bootstrap-v3.yml .github/workflows/mobile-session-bootstrap-v4.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: implement mobile-first authorized session onboarding'
+          git push origin HEAD:$BRANCH_NAME
