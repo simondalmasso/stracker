@@ -1,0 +1,21 @@
+name: STRACKER Vector Map Source Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-cloudflare-private-gateway-poc
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  source-gate-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Run structured release source gate
+        run: node tools/map-spike/release-source-gate.mjs
