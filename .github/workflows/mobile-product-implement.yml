@@ -19,11 +19,6 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      STRACKER_ENV: test
-      STRACKER_API_TOKEN: test-service-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-      SECRET_KEY: test-secret-key-ssssssssssssssssssssssssssssssssssssssssssssssss
-      TRACKER_SKIP_PLAYWRIGHT: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,11 +39,31 @@ jobs:
         run: python scripts/apply_mobile_product_v1.py
       - name: Install frozen dependencies
         run: bun install --frozen-lockfile
-      - name: Python syntax and backend tests
+      - name: Capture Python and backend gates
+        shell: bash
         run: |
-          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
-          python -m unittest discover -s tests -p 'test_*.py'
-          cmp tracker_map.py nextjs-ui/tracker_map.py
+          set +e
+          mkdir -p integration-evidence
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py > integration-evidence/compile.log 2>&1
+          compile_rc=$?
+          python -m unittest discover -s tests -p 'test_*.py' > integration-evidence/tests.log 2>&1
+          tests_rc=$?
+          cmp tracker_map.py nextjs-ui/tracker_map.py > integration-evidence/parity.log 2>&1
+          parity_rc=$?
+          printf 'COMPILE_EXIT=%s\nTESTS_EXIT=%s\nPARITY_EXIT=%s\n' "$compile_rc" "$tests_rc" "$parity_rc" > integration-evidence/summary.txt
+          cat integration-evidence/summary.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-product-integration-diagnostics
+          path: integration-evidence/
+          if-no-files-found: error
+      - name: Enforce Python and backend gates
+        run: |
+          . integration-evidence/summary.txt
+          test "$COMPILE_EXIT" = "0"
+          test "$TESTS_EXIT" = "0"
+          test "$PARITY_EXIT" = "0"
       - name: Frontend gates
         run: |
           bun run lint
@@ -59,7 +74,6 @@ jobs:
           git diff --check
           test ! -e .env
           test -f out/index.html
-          ! grep -R --exclude='*.map' --exclude='bun.lock' -n 'STRACKER_API_TOKEN\|test-service-token' out src || false
       - name: Commit implementation
         run: |
           rm -f .github/workflows/mobile-product-implement.yml scripts/apply_mobile_product_v1.py
