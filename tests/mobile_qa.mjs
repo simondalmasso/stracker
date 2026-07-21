@@ -185,8 +185,6 @@ try {
     await emitGeo(page, { lat: -31.63290, lng: -60.69960, accuracy: 500, timestamp: t0 + 65_000 })
     await page.waitForFunction(() => document.querySelector('main[data-filter-decision]')?.getAttribute('data-filter-decision') === 'rejected')
 
-    // Deliberately exceed the 45 s own-device rail interval and move well outside
-    // the accuracy dead zone while remaining far below the impossible-speed cap.
     await emitGeo(page, { lat: -31.63254, lng: -60.69924, accuracy: 7, speed: 2, timestamp: t0 + 125_000 })
     await page.waitForFunction(() => Number(document.querySelector('main[data-ghostrail-segments]')?.getAttribute('data-ghostrail-segments')) >= 2)
 
@@ -265,7 +263,7 @@ try {
   await page.goto(baseUrl, { waitUntil: 'networkidle0' })
   await clickText(page, 'UBICACIÓN COMPARTIDA')
   await page.waitForFunction(() => document.body.textContent?.includes('Vincular sesión de Google Maps'))
-  await clickText(page, 'VOLVER')
+  await page.click('button[aria-label="Volver"]')
   await page.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'))
   await new Promise((resolve) => setTimeout(resolve, 500))
   assert((await page.$$('main[data-map-engine]')).length === 0, 'late shared response repopulated prior source')
