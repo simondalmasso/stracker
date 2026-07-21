@@ -73,7 +73,7 @@ function html(engineName) {
   const engine = engines[engineName]
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="/${engineName}.css"><style>html,body,#map{margin:0;width:100%;height:100%;background:#050505}</style></head>
+<link rel="icon" href="data:,"><link rel="stylesheet" href="/${engineName}.css"><style>html,body,#map{margin:0;width:100%;height:100%;background:#050505}</style></head>
 <body><div id="map"></div><script src="/${engineName}.js"></script><script>
 const started = performance.now();
 const longTasks = [];
@@ -131,6 +131,11 @@ const servedBytes = { maplibre: 0, mapbox: 0 }
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, 'http://127.0.0.1')
+    if (url.pathname === '/favicon.ico') {
+      response.statusCode = 204
+      response.end()
+      return
+    }
     if (url.pathname === '/maplibre' || url.pathname === '/mapbox') {
       response.setHeader('Content-Type', 'text/html; charset=utf-8')
       response.end(html(url.pathname.slice(1)))
@@ -170,10 +175,13 @@ try {
     await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true })
     const consoleErrors = []
     const externalHosts = new Set()
-    page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
-    page.on('request', request => {
+    page.on('console', (message) => {
+      if (message.type() === 'error' && !message.text().includes('Failed to load resource')) consoleErrors.push(message.text())
+    })
+    page.on('request', (request) => {
       const requestUrl = new URL(request.url())
-      if (requestUrl.hostname !== '127.0.0.1') externalHosts.add(requestUrl.hostname)
+      const externalHttp = ['http:', 'https:'].includes(requestUrl.protocol) && !['127.0.0.1', 'localhost'].includes(requestUrl.hostname)
+      if (externalHttp) externalHosts.add(requestUrl.hostname)
     })
     await page.goto(`http://127.0.0.1:${port}/${name}`, { waitUntil: 'load' })
     const result = await page.evaluate(() => window.__benchmark)
@@ -217,7 +225,8 @@ const raw = {
 await writeFile(output, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 })
 for (const result of results) {
   if (!result.webgl || !result.buildings3d) throw new Error(`${result.engine} renderer benchmark failed`)
-  if (result.externalHosts.length > 0) throw new Error(`${result.engine} benchmark made external requests`)
+  if (result.externalHosts.length > 0) throw new Error(`${result.engine} benchmark made external HTTP requests`)
+  if (result.consoleErrorCount > 0) throw new Error(`${result.engine} benchmark emitted relevant console errors`)
 }
 console.log(`MAP_SPIKE_RAW_RESULTS=${output}`)
 console.log('RENDERER_BENCHMARK=PASS')
