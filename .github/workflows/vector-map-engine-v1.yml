@@ -59,8 +59,10 @@ jobs:
           node --check tests/mobile_qa.mjs
           node --check tests/vector_map_extended_qa.mjs
           node --check tests/vector_map_performance_gate.mjs
+          node --check tests/basemap_modes_qa.mjs
           node --check tools/map-spike/run-benchmark.mjs
           node --check tools/map-spike/validate-openfreemap-live.mjs
+          node --check tools/map-spike/validate-satellite-providers.mjs
           node --check tools/map-spike/prepare-artifact.mjs
           node --check tools/map-spike/release-source-gate.mjs
           echo 'VECTOR_MAP_TESTS=PASS'
@@ -91,17 +93,19 @@ jobs:
           echo 'UNSELECTED_ENGINE_ABSENT=PASS'
       - name: EXPORT_BUNDLE_GATE
         run: |
-          ! grep -R --binary-files=without-match -nE 'api\.mapbox\.com|mapbox-gl|leaflet-container|tile\.openstreetmap\.org|server\.arcgisonline\.com' out
+          ! grep -R --binary-files=without-match -nE 'api\.mapbox\.com|mapbox-gl|leaflet-container|tile\.openstreetmap\.org|server\.arcgisonline\.com|googleapis\.com.*satellite|mt[0-9]+\.google\.com|maptiler\.com.*satellite' out
           grep -R --binary-files=without-match -q 'tiles.openfreemap.org/styles/liberty' out/_next/static
+          grep -R --binary-files=without-match -q 'tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857' out/_next/static
           ! grep -R --binary-files=without-match -nE 'STRACKER_SERVICE_TOKEN|X-Stracker-Service-Token|CF_Authorization|SAPISID=|Authorization: Bearer' out
           echo 'SINGLE_ENGINE_FINAL_BUNDLE=PASS'
+          echo 'SATELLITE_SINGLE_RENDERER_BUNDLE=PASS'
           echo 'SENSITIVE_DATA_IN_LOGS=NO'
           echo 'SENSITIVE_DATA_IN_ARTIFACTS=NO'
 
   mobile-browser-qa:
     needs: local-gates
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
@@ -123,6 +127,7 @@ jobs:
           QA_RAW_OUTPUT: /tmp/mobile-results.json
           QA_EXTENDED_OUTPUT: /tmp/mobile-extended-results.json
           QA_PERFORMANCE_OUTPUT: /tmp/mobile-performance-results.json
+          QA_BASEMAP_OUTPUT: /tmp/basemap-modes-results.json
         run: |
           python -m http.server 4173 --directory out >/tmp/stracker-vector-map-http.log 2>&1 &
           server_pid=$!
@@ -135,13 +140,17 @@ jobs:
           node tests/mobile_qa.mjs
           node tests/vector_map_extended_qa.mjs
           node tests/vector_map_performance_gate.mjs
+          node tests/basemap_modes_qa.mjs
           echo 'MOBILE_QA=PASS'
-      - name: PERFORMANCE_BUDGET_GATE
+      - name: BASEMAP_AND_PERFORMANCE_GATES
         run: |
           jq -e '.engine == "maplibre" and .provider == "openfreemap-openstreetmap" and (.viewports | length == 5) and .physicalDevice == "NOT_EXECUTED_ENV_BLOCKED"' /tmp/mobile-results.json >/dev/null
           jq -e '[.viewports[] | select(.pageErrors != 0 or .consoleErrors != 0)] | length == 0' /tmp/mobile-results.json >/dev/null
           jq -e '.gates.NO_UNBOUNDED_MEMORY_GROWTH == "PASS" and .gates.SHARED_POLLING_NO_INTERPOLATION == "PASS" and .gates.PROVIDER_FAILURE_DEGRADES_HONESTLY == "PASS" and .gates.REDUCED_MOTION == "PASS"' /tmp/mobile-extended-results.json >/dev/null
-          jq -e '.gates.PERFORMANCE_BUDGETS == "PASS"' /tmp/mobile-performance-results.json >/dev/null
+          jq -e '.gates.PERFORMANCE_BUDGETS == "PASS" and .gates.RASTER_PROVIDER_REQUESTS == "PASS" and .gates.RASTER_PROVIDER_BYTES == "PASS"' /tmp/mobile-performance-results.json >/dev/null
+          jq -e '.renderer == "maplibre" and .gates.VECTOR_TO_SATELLITE == "PASS" and .gates.SATELLITE_TO_HYBRID == "PASS" and .gates.HYBRID_TO_VECTOR == "PASS" and .gates.LOCATION_SOURCE_UNCHANGED == "PASS" and .gates.MARKER_PRESERVED == "PASS" and .gates.GHOSTRAIL_PRESERVED == "PASS" and .gates.CAMERA_MANUAL_PRESERVED == "PASS" and .gates.NO_NEW_GEOLOCATION_REQUEST == "PASS" and .gates.NO_NEW_SESSION_REQUEST == "PASS" and .gates.NO_SECOND_RENDERER == "PASS" and .gates.SATELLITE_ATTRIBUTION_VISIBLE == "PASS" and .gates.PROVIDER_FAILURE_EXPLICIT == "PASS" and .gates.ZERO_COST_SATELLITE_GATE == "PASS"' /tmp/basemap-modes-results.json >/dev/null
+          echo 'BASEMAP_TRANSITIONS=PASS'
+          echo 'RASTER_TRANSFER_BUDGETS=PASS'
           echo 'PERFORMANCE_BUDGETS=PASS'
           echo 'PHYSICAL_DEVICE_EVIDENCE_HONEST=PASS'
       - name: SECURITY_ARTIFACT_SCAN
@@ -150,9 +159,9 @@ jobs:
           ARTIFACT_DIR: /tmp/stracker-vector-map-mobile-qa-${{ github.event.pull_request.head.sha }}
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
-          SOURCE_FILES_JSON: '["/tmp/mobile-results.json","/tmp/mobile-extended-results.json","/tmp/mobile-performance-results.json"]'
-          COMMANDS_JSON: '["bun install --frozen-lockfile","bun run build:export","node tests/mobile_qa.mjs","node tests/vector_map_extended_qa.mjs","node tests/vector_map_performance_gate.mjs"]'
-          GATES_JSON: '{"MOBILE_BROWSER_QA":"PASS","PERFORMANCE_BUDGET_GATE":"PASS","SECURITY_ARTIFACT_SCAN":"PASS","A22_PHYSICAL_VALIDATION":"NOT_EXECUTED_ENV_BLOCKED"}'
+          SOURCE_FILES_JSON: '["/tmp/mobile-results.json","/tmp/mobile-extended-results.json","/tmp/mobile-performance-results.json","/tmp/basemap-modes-results.json"]'
+          COMMANDS_JSON: '["bun install --frozen-lockfile","bun run build:export","node tests/mobile_qa.mjs","node tests/vector_map_extended_qa.mjs","node tests/vector_map_performance_gate.mjs","node tests/basemap_modes_qa.mjs"]'
+          GATES_JSON: '{"MOBILE_BROWSER_QA":"PASS","BASEMAP_TRANSITIONS":"PASS","PERFORMANCE_BUDGET_GATE":"PASS","RASTER_TRANSFER_BUDGETS":"PASS","SECURITY_ARTIFACT_SCAN":"PASS","A22_PHYSICAL_VALIDATION":"NOT_EXECUTED_ENV_BLOCKED"}'
         run: node tools/map-spike/prepare-artifact.mjs
       - name: Upload current-head mobile QA artifact
         id: upload
@@ -172,7 +181,7 @@ jobs:
   renderer-and-provider-validation:
     needs: local-gates
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
@@ -207,20 +216,28 @@ jobs:
           node tools/map-spike/validate-openfreemap-live.mjs
           jq -e '.fixture.classification == "PUBLIC_GENERIC_NON_PRIVATE" and .fixture.coordinateValuesRetained == false and .gates.STYLE_ACCESSIBLE == "PASS" and .gates.TILES_ACCESSIBLE == "PASS" and .gates.SANTA_FE_STREETS_PRESENT == "PASS" and .gates.BUILDING_FOOTPRINTS_PRESENT == "PASS" and .gates.BUILDING_HEIGHTS_AVAILABLE_WHERE_PRESENT == "PASS" and .vectorTiles.completeCoverageClaimed == false and .vectorTiles.completeHeightCoverageClaimed == false' /tmp/openfreemap-live-results.json >/dev/null
           echo 'OPENFREEMAP_LIVE_VALIDATION=PASS'
+      - name: SATELLITE_PROVIDER_LIVE_VALIDATION
+        env:
+          SATELLITE_PROVIDER_OUTPUT: /tmp/satellite-provider-results.json
+        run: |
+          node tools/map-spike/validate-satellite-providers.mjs
+          jq -e '.coordinateValuesRetained == false and .selectedProvider.id == "eox-s2cloudless-2016" and .selectedProvider.costUsd == 0 and .selectedProvider.apiKeyRequired == false and .selectedProvider.paidOverageAllowed == false and .selectedProvider.billingDependency == false and .selectedProvider.recentClaimAllowed == false and .selectedProvider.completeCoverageClaimed == false and .gates.ZERO_COST_SATELLITE_GATE == "PASS" and .gates.COMPLETE_IGN_ORTHOMOSAIC_COVERAGE_NOT_CLAIMED == "PASS" and .gates.FORBIDDEN_PROVIDERS_ABSENT == "PASS"' /tmp/satellite-provider-results.json >/dev/null
+          echo 'ZERO_COST_SATELLITE_GATE=PASS'
       - name: RELEASE_ABSENCE_RECHECK
         run: |
           test ! -e node_modules/mapbox-gl
           ! grep -n 'mapbox-gl' package.json bun.lock
           echo 'UNSELECTED_ENGINE_ABSENT=PASS'
+          echo 'NO_SECOND_RENDERER=PASS'
       - name: SECURITY_ARTIFACT_SCAN
         env:
           ARTIFACT_KIND: renderer-spike
           ARTIFACT_DIR: /tmp/stracker-vector-map-spike-${{ github.event.pull_request.head.sha }}
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
-          SOURCE_FILES_JSON: '["/tmp/renderer-results.json","/tmp/openfreemap-live-results.json"]'
-          COMMANDS_JSON: '["bun install --frozen-lockfile","npm install --prefix /tmp/stracker-mapbox-benchmark mapbox-gl@3.26.0","node tools/map-spike/run-benchmark.mjs","node tools/map-spike/validate-openfreemap-live.mjs"]'
-          GATES_JSON: '{"RENDERER_BENCHMARK":"PASS","FULL_STACK_PARITY_CLAIMED":"NO","OPENFREEMAP_LIVE_VALIDATION":"PASS","ZERO_COST_HARD_GATE":"PASS","UNSELECTED_ENGINE_ABSENT":"PASS","SECURITY_ARTIFACT_SCAN":"PASS"}'
+          SOURCE_FILES_JSON: '["/tmp/renderer-results.json","/tmp/openfreemap-live-results.json","/tmp/satellite-provider-results.json"]'
+          COMMANDS_JSON: '["bun install --frozen-lockfile","npm install --prefix /tmp/stracker-mapbox-benchmark mapbox-gl@3.26.0","node tools/map-spike/run-benchmark.mjs","node tools/map-spike/validate-openfreemap-live.mjs","node tools/map-spike/validate-satellite-providers.mjs"]'
+          GATES_JSON: '{"RENDERER_BENCHMARK":"PASS","FULL_STACK_PARITY_CLAIMED":"NO","OPENFREEMAP_LIVE_VALIDATION":"PASS","ZERO_COST_SATELLITE_GATE":"PASS","UNSELECTED_ENGINE_ABSENT":"PASS","NO_SECOND_RENDERER":"PASS","SECURITY_ARTIFACT_SCAN":"PASS"}'
         run: node tools/map-spike/prepare-artifact.mjs
       - name: Upload current-head renderer and provider artifact
         id: upload
@@ -251,13 +268,21 @@ jobs:
           git diff --check
           test ! -e .github/workflows/vector-map-snapshot.yml
           test ! -e .github/workflows/vector-map-lint-diagnostic.yml
+          test ! -e .github/workflows/vector-map-source-diagnostic.yml
+          test ! -e .github/workflows/vector-map-runtime-diagnostic.yml
           ! grep -R --include='*.yml' --include='*.yaml' -n 'contents: write' .github/workflows
           test -n '${{ needs.mobile-browser-qa.outputs.artifact-id }}'
           test -n '${{ needs.mobile-browser-qa.outputs.artifact-digest }}'
           test -n '${{ needs.renderer-and-provider-validation.outputs.artifact-id }}'
           test -n '${{ needs.renderer-and-provider-validation.outputs.artifact-digest }}'
+          echo 'THREE_BASEMAP_MODES_EXACT_HEAD=PASS'
           echo 'TEMPORARY_WORKFLOWS_REMOVED=PASS'
           echo 'ARTIFACTS_CURRENT_HEAD=PASS'
+          echo 'RENDERER=MapLibre GL JS'
+          echo 'DEFAULT_BASEMAP_MODE=vector-3d'
+          echo 'MAP_PROVIDER_COST_USD=0'
+          echo 'PAID_OVERAGE_ALLOWED=NO'
+          echo 'BILLING_DEPENDENCY=NO'
           echo 'PRODUCTION_MODIFIED=NO'
           echo 'DEPLOY=NO'
           echo 'MERGE=NO'
