@@ -38,7 +38,9 @@ jobs:
       - name: Apply deterministic integration
         run: python scripts/apply_mobile_product_v1.py
       - name: Install frozen dependencies
-        run: bun install --frozen-lockfile
+        run: |
+          bun install --frozen-lockfile
+          python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Capture Python and backend gates
         shell: bash
         run: |
