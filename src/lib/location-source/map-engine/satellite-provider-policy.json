@@ -1,0 +1,48 @@
+{
+  "schema": "stracker.satellite-provider-policy.v1",
+  "selectedProvider": {
+    "id": "eox-s2cloudless-2016",
+    "role": "AUTHORIZED_OPEN_FALLBACK",
+    "host": "tiles.maps.eox.at",
+    "tileTemplate": "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857/default/g/{z}/{y}/{x}.jpg",
+    "capabilitiesUrl": "https://tiles.maps.eox.at/wmts/1.0.0/WMTSCapabilities.xml",
+    "apiKeyRequired": false,
+    "costUsd": 0,
+    "paidOverageAllowed": false,
+    "automaticUpgradeToPaid": false,
+    "billingDependency": false,
+    "license": "CC BY 4.0",
+    "attribution": "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017)",
+    "imageryPeriod": "2016-2017 mosaic",
+    "recentClaimAllowed": false,
+    "coverage": "GLOBAL_LAND_MOSAIC_WITH_PROVIDER_LIMITS",
+    "completeCoverageClaimed": false,
+    "maxZoom": 14,
+    "resolutionMeters": 10
+  },
+  "evaluatedCandidates": [
+    {
+      "id": "ign-argenmap-hybrid",
+      "endpoint": "https://wms.ign.gob.ar/geoserver/gwc/service/tms/1.0.0/mapabase_hibrido@EPSG%3A3857@png/{z}/{x}/{-y}.png",
+      "status": "BLOCKED_BY_IMAGERY_PROVENANCE_AND_LICENSE_AMBIGUITY",
+      "selected": false,
+      "completeCoverageClaimed": false,
+      "reason": "The current official geoservice page publishes the endpoint but not sufficient imagery provenance and licensing for STRACKER; historical official Argenmap documentation identifies Google imagery."
+    },
+    {
+      "id": "ign-public-orthomosaics",
+      "capabilitiesUrl": "https://imagenes.ign.gob.ar/geoserver/gwc/service/wmts?REQUEST=GetCapabilities",
+      "status": "PARTIAL_COVERAGE_CANDIDATE_NOT_SELECTED",
+      "selected": false,
+      "completeCoverageClaimed": false,
+      "reason": "IGN publishes public aerial orthomosaics, but coverage, capture date, resolution and a stable layer covering the full Santa Fe product area are not guaranteed as one complete basemap."
+    },
+    {
+      "id": "eox-s2cloudless-2016",
+      "status": "SELECTED_AS_AUTHORIZED_OPEN_FALLBACK",
+      "selected": true,
+      "completeCoverageClaimed": false,
+      "reason": "Global land mosaic, direct WMTS integration, no API key, CC BY 4.0 and no billing dependency; lower 10 m resolution and historical 2016-2017 imagery are disclosed."
+    }
+  ]
+}
