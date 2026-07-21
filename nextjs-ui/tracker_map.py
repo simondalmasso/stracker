@@ -62,6 +62,16 @@ from stracker_security import (
     validate_startup_security,
 )
 
+from stracker_session import (
+    MAX_IMPORT_BYTES,
+    SessionInputError,
+    delete_stored_session,
+    parse_cookie_input,
+    probe_google_location_sharing,
+    session_public_status,
+    write_session_atomic,
+)
+
 # ------------------------------------------------------------
 # CONFIGURACION
 # ------------------------------------------------------------
@@ -2694,6 +2704,10 @@ class TrackerHandler(SimpleHTTPRequestHandler):
             })
             return
 
+        if path in ("/api/session/status", "/api/session/status/"):
+            self._send_json(session_public_status(COOKIES_PATH, LOCATIONSHARING_URL))
+            return
+
         # V6.0 STORAGE_OPTIMIZATION: /api/archive endpoint
         # Reads cold storage (ghostrail_archive.enc) on demand.
         # Supports ?offset=0&limit=500 pagination + ?dry_run=1 to preview
@@ -2928,15 +2942,20 @@ class TrackerHandler(SimpleHTTPRequestHandler):
         return
 
     def do_POST(self):
-        path = self.path.split("?", 1)[0]  # V6.11: strip query string
+        path = self.path.split("?", 1)[0]
         if is_blocked_static_path(path):
             self._send_not_found()
             return
         if is_protected_path(path) and not self._require_authorization(path):
             return
-        if path in ("/api/cookies", "/cookies"):
-            self._handle_cookies_upload(); return
+        if path in ("/api/session/import", "/api/session/import/", "/api/cookies", "/cookies"):
+            self._handle_session_import()
+            return
+        if path in ("/api/session/delete", "/api/session/delete/"):
+            self._handle_session_delete()
+            return
         self._send_not_found()
+
 
     def _serve_cookies_page(self):
         html = """<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cookies - Tracker v6</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;background:#0a0a0a;color:#f5f5f7;padding:20px;max-width:800px;margin:auto}h1{color:#0a84ff;font-size:22px;font-weight:700}ol li{margin:12px 0;line-height:1.6;color:#8a8a8a}strong{color:#fff}a{color:#007aff}textarea{width:100%;height:250px;background:rgba(255,255,255,.04);color:#34c759;border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px;font-family:'SF Mono',Menlo,monospace;font-size:13px}button{background:#007aff;color:#fff;border:none;padding:12px 28px;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;margin-top:10px}button:hover{background:#0056b3}#status{margin-top:12px;padding:10px;border-radius:8px;display:none;font-size:14px}.ok{background:rgba(52,199,89,.1);color:#34c759;border:1px solid rgba(52,199,89,.2)}.err{background:rgba(255,59,48,.1);color:#ff3b30;border:1px solid rgba(255,59,48,.2)}</style></head><body><h1>Refrescar Cookies</h1><p style="color:#8a8a8a;margin-bottom:16px">Las cookies expiran cada ~7 dias.</p><ol><li>Instala <strong><a href="https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm" target="_blank">Cookie-Editor</a></strong></li><li>Anda a <a href="https://www.google.com/maps" target="_blank">Google Maps</a></li><li>Cookie-Editor > <strong>Export</strong> > <strong>JSON</strong></li><li>Pega abajo</li></ol><textarea id="jsonInput" placeholder="Pega el JSON..."></textarea><br><button onclick="enviarCookies()">Enviar</button><div id="status"></div><script>async function enviarCookies(){var s=document.getElementById('status');s.style.display='none';var txt=document.getElementById('jsonInput').value.trim();if(!txt){s.className='err';s.textContent='Pega el JSON';s.style.display='block';return}try{JSON.parse(txt)}catch(e){s.className='err';s.textContent='JSON invalido';s.style.display='block';return}var btn=document.querySelector('button');btn.disabled=true;btn.textContent='Enviando...';try{var r=await fetch('/api/cookies',{method:'POST',headers:{'Content-Type':'application/json'},body:txt});var d=await r.json();if(r.ok){s.className='ok';s.textContent=d.message;document.getElementById('jsonInput').value=''}else{s.className='err';s.textContent=d.error}}catch(e){s.className='err';s.textContent='Error: '+e.message}s.style.display='block';btn.disabled=false;btn.textContent='Enviar'}</script></body></html>"""
@@ -2947,48 +2966,70 @@ class TrackerHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _handle_cookies_upload(self):
+    def _read_json_body(self) -> dict:
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8")
-            cookies = json.loads(body)
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise SessionInputError("INVALID_LENGTH", "El tamaño del contenido no es válido.", "Volvé a intentar la importación.") from exc
+        if length <= 0:
+            raise SessionInputError("EMPTY_INPUT", "No se recibió ninguna sesión.", "Pegá una exportación antes de importar.")
+        if length > MAX_IMPORT_BYTES + 4096:
+            raise SessionInputError("INPUT_TOO_LARGE", "La sesión supera el tamaño permitido.", "Exportá únicamente las cookies necesarias de Google Maps.")
+        raw_body = self.rfile.read(length).decode("utf-8")
+        try:
+            decoded = json.loads(raw_body)
+        except json.JSONDecodeError as exc:
+            raise SessionInputError("MALFORMED_BODY", "El cuerpo de la solicitud no es JSON válido.", "Volvé a intentar la importación.") from exc
+        if isinstance(decoded, dict) and isinstance(decoded.get("raw"), str):
+            return {"raw": decoded["raw"]}
+        return {"raw": json.dumps(decoded)}
 
-            # WEBSOCKET_RESET / PATCH_DATA_PARSER (stracker_v6_emergency_repair):
-            # The frontend (CookiesBlock.tsx + CookieDrawer.tsx) sends a WRAPPED
-            # object: {"format":"auto","data":"[{...}]"} or {"format":"auto","data":[...]}.
-            # The standalone /cookies.html page sends a RAW JSON array directly.
-            # We must accept BOTH formats — previously only the raw array was
-            # accepted, causing the "Debe ser array" TypeError when the Next.js
-            # frontend imported cookies.
-            if isinstance(cookies, dict) and "data" in cookies:
-                # Wrapped format from the Next.js frontend. Extract the data
-                # field — it can be a JSON string or an already-parsed array.
-                raw_data = cookies.get("data", [])
-                if isinstance(raw_data, str):
-                    cookies = json.loads(raw_data)
-                else:
-                    cookies = raw_data
-
-            if not isinstance(cookies, list): raise ValueError("Debe ser array")
-            for c in cookies:
-                if "name" not in c or "value" not in c: raise ValueError("Cada cookie debe tener name y value")
-            COOKIES_PATH.write_text(json.dumps(cookies, indent=2), encoding="utf-8")
-            logger.info("Cookies actualizadas: %d", len(cookies))
-
-            # Return critical-cookie status so the frontend can show which
-            # Google session cookies are present/missing.
-            critical = ["SID", "HSID", "SSID", "SAPISID", "__Secure-1PSID", "__Secure-3PSID"]
-            names = {c.get("name") for c in cookies}
-            missing = [k for k in critical if k not in names]
+    def _handle_session_import(self):
+        parsed = None
+        try:
+            body = self._read_json_body()
+            parsed = parse_cookie_input(body["raw"])
+            health = probe_google_location_sharing(parsed, LOCATIONSHARING_URL)
+            payload = {
+                "status": "ok" if health.configured else "error",
+                "action": "open_map" if health.configured else "replace_session",
+                "appAuthenticated": True,
+                **parsed.public_summary(),
+                **health.public_summary(),
+            }
+            if health.configured:
+                write_session_atomic(COOKIES_PATH, parsed)
+                logger.info("Google shared session validated and stored: format=%s count=%d health=%s", parsed.format_detected, len(parsed.cookies), health.health)
+                self._send_json(payload, status=200)
+            else:
+                logger.warning("Google shared session rejected: format=%s count=%d health=%s", parsed.format_detected, len(parsed.cookies), health.health)
+                self._send_json(payload, status=422)
+        except SessionInputError as exc:
             self._send_json({
-                "status": "ok",
-                "message": f"{len(cookies)} cookies guardadas.",
-                "count": len(cookies),
-                "has_critical": len(missing) == 0,
-                "missing_critical": missing,
-            })
-        except Exception as e:
-            self._send_json({"status": "error", "error": str(e)}, status=400)
+                "status": "error",
+                "error": exc.code,
+                "message": exc.message,
+                "action": exc.action,
+                "appAuthenticated": True,
+                "state": "SHARED_UNCONFIGURED",
+                "health": "INVALID",
+                "configured": False,
+                "formatDetected": parsed.format_detected if parsed else None,
+                "count": len(parsed.cookies) if parsed else 0,
+                "criticalPresent": list(parsed.critical_present) if parsed else [],
+                "criticalMissing": list(parsed.critical_missing) if parsed else [],
+            }, status=400)
+        except Exception:
+            logger.exception("Shared session import failed without exposing cookie values")
+            self._send_json({"status": "error", "error": "internal_error", "message": "No se pudo validar la sesión.", "action": "Reintentá más tarde o reemplazá la sesión."}, status=500)
+
+    def _handle_session_delete(self):
+        try:
+            delete_stored_session(COOKIES_PATH)
+            self._send_json({"status": "ok"})
+        except OSError:
+            logger.exception("Shared session deletion failed")
+            self._send_json({"status": "error", "error": "internal_error"}, status=500)
 
 
 class _ReusableThreadingHTTPServer(ThreadingHTTPServer):
