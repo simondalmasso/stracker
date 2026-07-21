@@ -2,12 +2,23 @@
 
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from 'maplibre-gl'
 import { circlePolygon } from '../geo'
+import type { BasemapMode } from '../contracts'
 import type { CameraUpdate, MapEngineAdapter, MapEngineCallbacks, MapPerformanceSnapshot, MapRenderState } from './contracts'
 import { configureBuildings3d, OPENFREEMAP_ATTRIBUTION, OPENFREEMAP_STYLE_URL, setDarkBaseStyle } from './openfreemap-style'
+import { SATELLITE_LAYER_ID, SATELLITE_PROVIDER, SATELLITE_SOURCE_ID, usesSatelliteImagery } from './satellite-provider'
 
 const SOURCE_MARKER = 'stracker-marker'
 const SOURCE_ACCURACY = 'stracker-accuracy'
 const SOURCE_RAIL = 'stracker-ghostrail'
+const RUNTIME_LAYER_IDS = new Set([
+  'stracker-accuracy-fill',
+  'stracker-accuracy-line',
+  'stracker-ghostrail-line',
+  'stracker-marker-halo',
+  'stracker-marker',
+  'stracker-buildings-3d',
+  SATELLITE_LAYER_ID,
+])
 
 function emptyFeatureCollection(): GeoJSON.FeatureCollection {
   return { type: 'FeatureCollection', features: [] }
@@ -115,7 +126,43 @@ function addRuntimeLayers(map: MapLibreMap, state: MapRenderState): void {
   }
 }
 
+function addSatelliteLayer(map: MapLibreMap): void {
+  if (!map.getSource(SATELLITE_SOURCE_ID)) {
+    map.addSource(SATELLITE_SOURCE_ID, {
+      type: 'raster',
+      tiles: [SATELLITE_PROVIDER.tileTemplate],
+      tileSize: 256,
+      minzoom: 0,
+      maxzoom: SATELLITE_PROVIDER.maxZoom,
+      attribution: SATELLITE_PROVIDER.attribution,
+    })
+  }
+  if (!map.getLayer(SATELLITE_LAYER_ID)) {
+    const firstLayer = map.getStyle().layers?.[0]?.id
+    map.addLayer({
+      id: SATELLITE_LAYER_ID,
+      type: 'raster',
+      source: SATELLITE_SOURCE_ID,
+      layout: { visibility: 'none' },
+      paint: {
+        'raster-opacity': 1,
+        'raster-fade-duration': 0,
+        'raster-resampling': 'linear',
+      },
+    }, firstLayer)
+  }
+}
+
+function resourceHost(name: string): string | null {
+  try {
+    return new URL(name).hostname
+  } catch {
+    return null
+  }
+}
+
 function performanceSnapshot(
+  latestState: MapRenderState | null,
   createdAtMs: number,
   firstMapVisibleMs: number | null,
   firstInteractiveMs: number | null,
@@ -127,10 +174,13 @@ function performanceSnapshot(
   webglContextRestores: number,
 ): MapPerformanceSnapshot {
   const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
-  const transferredBytes = resources.reduce((total, resource) => total + (resource.transferSize || 0), 0)
+  const transferredBytes = resources.reduce((total, resource) => total + (resource.transferSize || resource.encodedBodySize || 0), 0)
+  const rasterResources = resources.filter((resource) => resourceHost(resource.name) === SATELLITE_PROVIDER.host)
+  const rasterTransferredBytes = rasterResources.reduce((total, resource) => total + (resource.transferSize || resource.encodedBodySize || 0), 0)
   const elapsed = Math.max(1, performance.now() - fpsWindowStart)
   return {
     engine: 'maplibre',
+    basemapMode: latestState?.basemapMode ?? 'vector-3d',
     createdAtMs,
     firstMapVisibleMs,
     firstInteractiveMs,
@@ -142,6 +192,8 @@ function performanceSnapshot(
     webglContextRestores,
     resourceCount: resources.length,
     transferredBytes,
+    rasterResourceCount: rasterResources.length,
+    rasterTransferredBytes,
   }
 }
 
@@ -151,6 +203,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
   let latestState: MapRenderState | null = null
   let loaded = false
   let contextLostActive = false
+  let satelliteFailureActive = false
   let createdAtMs = 0
   let firstMapVisibleMs: number | null = null
   let firstInteractiveMs: number | null = null
@@ -162,10 +215,12 @@ export function createMapLibreAdapter(): MapEngineAdapter {
   let webglContextRestores = 0
   let performanceObserver: PerformanceObserver | null = null
   let performanceTimer: ReturnType<typeof setInterval> | null = null
+  const baseLayerVisibility = new Map<string, 'visible' | 'none'>()
 
   const emitPerformance = () => {
     if (!callbacks) return
     callbacks.onPerformance(performanceSnapshot(
+      latestState,
       createdAtMs,
       firstMapVisibleMs,
       firstInteractiveMs,
@@ -176,6 +231,44 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       webglContextLosses,
       webglContextRestores,
     ))
+  }
+
+  const captureBaseVisibility = () => {
+    if (!map || baseLayerVisibility.size > 0) return
+    for (const layer of map.getStyle().layers ?? []) {
+      if (RUNTIME_LAYER_IDS.has(layer.id)) continue
+      const visibility = layer.layout && 'visibility' in layer.layout && layer.layout.visibility === 'none' ? 'none' : 'visible'
+      baseLayerVisibility.set(layer.id, visibility)
+    }
+  }
+
+  const applyBasemapMode = (mode: BasemapMode) => {
+    if (!map) return
+    addSatelliteLayer(map)
+    const satelliteVisible = usesSatelliteImagery(mode)
+    map.setLayoutProperty(SATELLITE_LAYER_ID, 'visibility', satelliteVisible ? 'visible' : 'none')
+
+    for (const layer of map.getStyle().layers ?? []) {
+      if (!baseLayerVisibility.has(layer.id)) continue
+      const original = baseLayerVisibility.get(layer.id) ?? 'visible'
+      const hybridOverlay = mode === 'hybrid' && (layer.type === 'line' || layer.type === 'symbol')
+      const visibility = mode === 'vector-3d' ? original : hybridOverlay ? original : 'none'
+      map.setLayoutProperty(layer.id, 'visibility', visibility)
+    }
+
+    if (satelliteVisible) {
+      satelliteFailureActive = false
+      callbacks?.onBasemapProviderState('loading')
+      if (map.isSourceLoaded(SATELLITE_SOURCE_ID)) callbacks?.onBasemapProviderState('available')
+    } else {
+      satelliteFailureActive = false
+      callbacks?.onBasemapProviderState('idle')
+    }
+
+    configureBuildings3d(map, {
+      enabled: mode === 'vector-3d' && Boolean(latestState?.buildings3d),
+      density: latestState?.reducedMotion ? 'reduced' : 'full',
+    })
   }
 
   const handleContextLost = (event?: Event) => {
@@ -195,7 +288,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     callbacks?.onWebglContextRestored()
     if (map && latestState) {
       addRuntimeLayers(map, latestState)
-      configureBuildings3d(map, { enabled: latestState.buildings3d, density: 'reduced' })
+      applyBasemapMode(latestState.basemapMode)
       adapter.render(latestState)
       callbacks?.onProviderState('available')
     }
@@ -208,9 +301,11 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       if (map) adapter.destroy()
       callbacks = nextCallbacks
       callbacks.onProviderState('loading')
+      callbacks.onBasemapProviderState(initial.basemapMode === 'vector-3d' ? 'idle' : 'loading')
       latestState = initial
       loaded = false
       contextLostActive = false
+      satelliteFailureActive = false
       createdAtMs = performance.now()
       fpsWindowStart = createdAtMs
       performance.clearResourceTimings()
@@ -231,14 +326,28 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       })
       map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: OPENFREEMAP_ATTRIBUTION }), 'bottom-left')
 
-      map.on('error', () => {
+      map.on('error', (event) => {
+        const candidate = event as { sourceId?: string; error?: Error }
+        const message = candidate.error?.message ?? ''
+        const satelliteError = candidate.sourceId === SATELLITE_SOURCE_ID || message.includes(SATELLITE_PROVIDER.host)
+        if (satelliteError && latestState && usesSatelliteImagery(latestState.basemapMode)) {
+          satelliteFailureActive = true
+          callbacks?.onBasemapProviderState('unavailable')
+          return
+        }
         callbacks?.onProviderState('degraded')
+      })
+      map.on('sourcedata', (event) => {
+        if (event.sourceId !== SATELLITE_SOURCE_ID || !event.isSourceLoaded || satelliteFailureActive) return
+        if (latestState && usesSatelliteImagery(latestState.basemapMode)) callbacks?.onBasemapProviderState('available')
       })
       map.once('style.load', () => {
         if (!map || !latestState) return
+        captureBaseVisibility()
         setDarkBaseStyle(map)
+        addSatelliteLayer(map)
         addRuntimeLayers(map, latestState)
-        configureBuildings3d(map, { enabled: latestState.buildings3d, density: 'full' })
+        applyBasemapMode(latestState.basemapMode)
       })
       map.once('load', () => {
         loaded = true
@@ -250,6 +359,9 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       map.once('idle', () => {
         firstInteractiveMs = performance.now() - createdAtMs
         callbacks?.onProviderState('available')
+        if (latestState && usesSatelliteImagery(latestState.basemapMode) && !satelliteFailureActive && map?.isSourceLoaded(SATELLITE_SOURCE_ID)) {
+          callbacks?.onBasemapProviderState('available')
+        }
         emitPerformance()
       })
       map.on('render', () => { renderFrames += 1 })
@@ -281,15 +393,21 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       performanceTimer = setInterval(emitPerformance, 5_000)
     },
     render(state) {
+      const modeChanged = latestState?.basemapMode !== state.basemapMode
       latestState = state
       if (!map || !loaded || contextLostActive) return
+      if (modeChanged) applyBasemapMode(state.basemapMode)
       setSourceData(map, SOURCE_MARKER, markerData(state))
       setSourceData(map, SOURCE_ACCURACY, accuracyData(state))
       setSourceData(map, SOURCE_RAIL, railData(state))
       if (map.getLayer('stracker-ghostrail-line')) {
         map.setLayoutProperty('stracker-ghostrail-line', 'visibility', state.railVisible ? 'visible' : 'none')
       }
-      configureBuildings3d(map, { enabled: state.buildings3d, density: state.reducedMotion ? 'reduced' : 'full' })
+      configureBuildings3d(map, {
+        enabled: state.basemapMode === 'vector-3d' && state.buildings3d,
+        density: state.reducedMotion ? 'reduced' : 'full',
+      })
+      emitPerformance()
     },
     updateCamera(update: CameraUpdate) {
       if (!map || !update.shouldMove || contextLostActive) return
@@ -319,6 +437,8 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       latestState = null
       loaded = false
       contextLostActive = false
+      satelliteFailureActive = false
+      baseLayerVisibility.clear()
     },
   }
   return adapter
