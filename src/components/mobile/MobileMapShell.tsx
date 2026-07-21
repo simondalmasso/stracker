@@ -5,7 +5,7 @@ import { Building2, LocateFixed, Route, X } from 'lucide-react'
 import type { CameraMode, GhostRailSegment, LocationSnapshot, LocationSource } from '@/lib/location-source/contracts'
 import { initialCameraControllerState, planCamera, type CameraControllerState } from '@/lib/location-source/camera-controller'
 import { createMapLibreAdapter } from '@/lib/location-source/map-engine/maplibre-adapter'
-import type { MapEngineAdapter, MapPerformanceSnapshot, MapRenderState } from '@/lib/location-source/map-engine/contracts'
+import type { MapEngineAdapter, MapPerformanceSnapshot, MapProviderState, MapRenderState } from '@/lib/location-source/map-engine/contracts'
 
 interface MobileMapShellProps {
   source: LocationSource
@@ -88,6 +88,7 @@ export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSo
   const [buildings3d, setBuildings3d] = useState(true)
   const [expanded, setExpanded] = useState(false)
   const [contextRecovery, setContextRecovery] = useState(0)
+  const [providerState, setProviderState] = useState<MapProviderState>('loading')
   const [performance, setPerformance] = useState<MapPerformanceSnapshot | null>(null)
   const reducedMotion = useReducedMotion()
 
@@ -148,6 +149,7 @@ export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSo
     if (!containerRef.current) return
     const adapter = createMapLibreAdapter()
     adapterRef.current = adapter
+    setProviderState('loading')
     adapter.mount(containerRef.current, renderStateRef.current, {
       onManualInteraction: enterManualMode,
       onWebglContextLost: () => {
@@ -155,6 +157,7 @@ export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSo
         setBuildings3d(false)
       },
       onWebglContextRestored: () => setContextRecovery((value) => Math.min(4, value + 1)),
+      onProviderState: setProviderState,
       onPerformance: setPerformance,
     })
     applyCamera({ recenter: true })
@@ -191,6 +194,7 @@ export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSo
       className="relative h-[100dvh] w-full overflow-hidden bg-black text-white"
       data-location-source={source}
       data-map-engine="maplibre"
+      data-map-provider={providerState}
       data-camera-mode={cameraMode}
       data-motion={snapshot.motion}
       data-freshness={snapshot.freshness}
@@ -200,6 +204,11 @@ export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSo
       data-webgl-recovery={contextRecovery}
     >
       <div ref={containerRef} className="h-full w-full" aria-label="Mapa vectorial de ubicación" />
+      {providerState === 'degraded' ? (
+        <div role="status" className="absolute inset-x-3 top-[calc(max(12px,env(safe-area-inset-top))+50px)] z-[520] rounded-2xl border border-white/15 bg-black/90 px-4 py-3 text-center text-xs text-white/80 backdrop-blur-xl">
+          MAPA DEGRADADO · LOS DATOS DE UBICACIÓN SIGUEN AISLADOS
+        </div>
+      ) : null}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] flex justify-center px-3 pt-[max(12px,env(safe-area-inset-top))]">
         <div className="max-w-[calc(100vw-24px)] truncate rounded-full border border-white/10 bg-black/85 px-4 py-2 text-sm font-semibold shadow-lg backdrop-blur-xl">{sourceTitle} · {freshnessText(snapshot)}</div>
       </div>
