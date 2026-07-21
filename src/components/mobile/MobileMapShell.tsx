@@ -7,7 +7,6 @@ import type {
   GhostRailSegment,
   LocationSnapshot,
   LocationSource,
-  SharedSessionState,
 } from '@/lib/location-source/contracts'
 import { initialCameraControllerState, planCamera, type CameraControllerState } from '@/lib/location-source/camera-controller'
 import { createMapLibreAdapter } from '@/lib/location-source/map-engine/maplibre-adapter'
@@ -17,7 +16,6 @@ interface MobileMapShellProps {
   source: LocationSource
   snapshot: LocationSnapshot
   ghostrail: GhostRailSegment[]
-  sharedSessionState: SharedSessionState
   onChangeSource: () => void
   onStop?: () => void
   onReplaceSession?: () => void
@@ -87,7 +85,6 @@ export default function MobileMapShell({
   source,
   snapshot,
   ghostrail,
-  sharedSessionState,
   onChangeSource,
   onStop,
   onReplaceSession,
@@ -96,6 +93,9 @@ export default function MobileMapShell({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const adapterRef = useRef<MapEngineAdapter | null>(null)
   const cameraRef = useRef<CameraControllerState>(initialCameraControllerState())
+  const snapshotRef = useRef(snapshot)
+  const reducedMotionRef = useRef(false)
+  const recoveryRef = useRef(0)
   const [cameraMode, setCameraMode] = useState<CameraMode>('overview')
   const [railVisible, setRailVisible] = useState(true)
   const [buildings3d, setBuildings3d] = useState(true)
@@ -104,42 +104,61 @@ export default function MobileMapShell({
   const [performance, setPerformance] = useState<MapPerformanceSnapshot | null>(null)
   const reducedMotion = useReducedMotion()
 
+  snapshotRef.current = snapshot
+  reducedMotionRef.current = reducedMotion
+  recoveryRef.current = contextRecovery
+
   const currentRenderState = useMemo(
     () => renderState(source, snapshot, ghostrail, railVisible, buildings3d, reducedMotion),
     [buildings3d, ghostrail, railVisible, reducedMotion, snapshot, source],
   )
 
   const applyCamera = useCallback((options: { userInteracted?: boolean; recenter?: boolean } = {}) => {
+    const currentSnapshot = snapshotRef.current
     const plan = planCamera({
       current: cameraRef.current,
-      motion: snapshot.motion,
+      motion: currentSnapshot.motion,
       hasPoint: true,
       userInteracted: options.userInteracted,
       recenter: options.recenter,
-      measuredBearingDeg: snapshot.headingDeg,
-      reducedMotion,
+      measuredBearingDeg: currentSnapshot.headingDeg,
+      reducedMotion: reducedMotionRef.current,
     })
     cameraRef.current = plan.state
     setCameraMode(plan.state.mode)
     adapterRef.current?.updateCamera({
       mode: plan.state.mode,
-      center: { lat: snapshot.lat, lng: snapshot.lng },
+      center: { lat: currentSnapshot.lat, lng: currentSnapshot.lng },
       zoom: plan.zoom,
-      pitchDeg: contextRecovery > 0 ? Math.min(plan.pitchDeg, contextRecovery === 1 ? 40 : 0) : plan.pitchDeg,
+      pitchDeg: recoveryRef.current > 0 ? Math.min(plan.pitchDeg, recoveryRef.current === 1 ? 40 : 0) : plan.pitchDeg,
       bearingDeg: plan.state.bearingDeg,
       offsetYRatio: plan.offsetYRatio,
       durationMs: plan.durationMs,
       animate: plan.animate,
       shouldMove: plan.shouldMove,
     })
-  }, [contextRecovery, reducedMotion, snapshot])
+  }, [])
+
+  const enterManualMode = useCallback(() => {
+    const currentSnapshot = snapshotRef.current
+    const plan = planCamera({
+      current: cameraRef.current,
+      motion: currentSnapshot.motion,
+      hasPoint: true,
+      userInteracted: true,
+      measuredBearingDeg: currentSnapshot.headingDeg,
+      reducedMotion: reducedMotionRef.current,
+    })
+    cameraRef.current = plan.state
+    setCameraMode('manual')
+  }, [])
 
   useEffect(() => {
     if (!containerRef.current) return
     const adapter = createMapLibreAdapter()
     adapterRef.current = adapter
     adapter.mount(containerRef.current, currentRenderState, {
-      onManualInteraction: () => applyCamera({ userInteracted: true }),
+      onManualInteraction: enterManualMode,
       onWebglContextLost: () => {
         setContextRecovery((value) => Math.min(4, value + 1))
         setBuildings3d(false)
@@ -153,10 +172,9 @@ export default function MobileMapShell({
     return () => {
       adapter.destroy()
       adapterRef.current = null
+      cameraRef.current = initialCameraControllerState()
     }
-  // The adapter is intentionally mounted once per selected source.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source])
+  }, [applyCamera, currentRenderState, enterManualMode, source])
 
   useEffect(() => {
     adapterRef.current?.render(currentRenderState)
@@ -193,6 +211,11 @@ export default function MobileMapShell({
       data-location-source={source}
       data-map-engine="maplibre"
       data-camera-mode={cameraMode}
+      data-motion={snapshot.motion}
+      data-freshness={snapshot.freshness}
+      data-health={snapshot.health}
+      data-filter-decision={snapshot.filterDecision}
+      data-ghostrail-segments={ghostrail.length}
       data-webgl-recovery={contextRecovery}
     >
       <div ref={containerRef} className="h-full w-full" aria-label="Mapa vectorial de ubicación" />
@@ -227,9 +250,10 @@ export default function MobileMapShell({
           <div className="max-h-[46dvh] overflow-y-auto border-t border-white/10 px-4 pb-4 pt-3">
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="rounded-2xl bg-white/[0.04] p-3"><p className="text-white/45">ACTUALIZACIÓN</p><p className="mt-1 font-medium">{freshnessText(snapshot)}</p></div>
+              <div className="rounded-2xl bg-white/[0.04] p-3"><p className="text-white/45">PRECISIÓN</p><p className="mt-1 font-medium">{snapshot.accuracyM ? `${Math.round(snapshot.accuracyM)} m` : '—'}</p></div>
+              <div className="rounded-2xl bg-white/[0.04] p-3"><p className="text-white/45">ESTADO</p><p className="mt-1 font-medium">{stateText}</p></div>
               <div className="rounded-2xl bg-white/[0.04] p-3"><p className="text-white/45">MOVIMIENTO</p><p className="mt-1 font-medium">{snapshot.motion.toUpperCase()}</p></div>
-              <div className="rounded-2xl bg-white/[0.04] p-3"><p className="text-white/45">FUENTE</p><p className="mt-1 font-medium">{sourceTitle}</p></div>
-              <div className="rounded-2xl bg-white/[0.04] p-3"><p className="text-white/45">SESIÓN</p><p className="mt-1 font-medium">{sharedSessionState.toUpperCase()}</p></div>
+              <div className="col-span-2 rounded-2xl bg-white/[0.04] p-3"><p className="text-white/45">FUENTE</p><p className="mt-1 font-medium">{sourceTitle}</p></div>
             </div>
             <p className="mt-3 text-[10px] leading-4 text-white/35">El proveedor de mapas recibe solicitudes de estilo y tiles correspondientes al viewport. Las coordenadas de MI UBICACIÓN no se envían al backend compartido.</p>
             {performance ? <p className="mt-2 text-[10px] text-white/30" data-performance-summary>MAPLIBRE · {performance.firstInteractiveMs ? `${Math.round(performance.firstInteractiveMs)}ms` : 'cargando'} · {performance.estimatedFps ?? '—'} FPS</p> : null}
