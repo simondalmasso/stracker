@@ -1,100 +1,98 @@
-# STRACKER — Vector Map Performance V1
+# STRACKER — Map Performance V2
 
-## Budgets
-
-The machine-readable budgets live in:
+## Machine-readable budgets
 
 ```text
 docs/performance/VECTOR_MAP_BUDGETS.json
 ```
 
-The budgets cover:
+Budgets cover initial route transfer, map visibility/interactivity, active RAF rate, long tasks, memory growth, GhostRail bounds and separate vector/raster provider traffic.
 
-- transferred bytes;
-- first map visible and interactive times;
-- map-provider request and byte counts;
-- estimated FPS;
-- long tasks;
-- heap growth after repeated synthetic updates;
-- maximum in-memory GhostRail points;
-- WebGL fallback order.
+## Separate provider measurements
 
-Budgets are guardrails, not claims of physical-device performance.
-
-## Raw evidence
-
-CI produces two sanitized artifacts for the exact PR head:
+Vector and satellite traffic are not combined into one opaque total:
 
 ```text
-stracker-vector-map-spike-<SHA>
+VECTOR_REQUESTS
+VECTOR_TRANSFERRED_BYTES
+RASTER_REQUESTS
+RASTER_TRANSFERRED_BYTES
+```
+
+The current CI budgets are:
+
+```text
+VECTOR_PROVIDER_REQUESTS_FIRST_VIEWPORT_MAX=90
+VECTOR_PROVIDER_TRANSFERRED_BYTES_FIRST_VIEWPORT_MAX=10000000
+RASTER_PROVIDER_REQUESTS_FIRST_VIEWPORT_MAX=40
+RASTER_PROVIDER_TRANSFERRED_BYTES_FIRST_VIEWPORT_MAX=12000000
+```
+
+These are CI Chromium guardrails, not physical-device performance claims or provider quotas.
+
+## Exact-head evidence
+
+CI produces two sanitized artifacts:
+
+```text
 stracker-vector-map-mobile-qa-<SHA>
+stracker-vector-map-spike-<SHA>
 ```
 
-The renderer spike contains only local synthetic GeoJSON and package/runtime measurements. The mobile QA artifact contains aggregate performance numbers and request host/count/byte data. Neither artifact may contain cookies, authorization headers, service tokens or real coordinates.
+The mobile artifact contains:
+
+- five required mobile viewports;
+- pageerror, console and overflow evidence;
+- source, marker, GhostRail and manual-camera preservation across all three modes;
+- no-new-geolocation and no-new-session-request checks;
+- provider-failure UI evidence;
+- separate vector/raster transfer measurements;
+- memory and reduced-motion results.
+
+The renderer/provider artifact contains:
+
+- isolated MapLibre/Mapbox renderer benchmark results;
+- OpenFreeMap live style/tile evidence;
+- EOx WMTS capabilities and public Santa Fe tile evidence;
+- zero-cost/license/CORS/provider-policy gates;
+- explicit non-claims for complete IGN orthomosaic coverage.
+
+No artifact may contain cookies, authorization headers, service tokens, source archives or retained coordinate values.
+
+## Basemap transitions
+
+The QA sequence validates:
 
 ```text
-PERFORMANCE_BUDGETS_DEFINED=PASS
-PERFORMANCE_RAW_RESULTS_SAVED=PASS only when both current-head artifacts exist
+VECTOR_TO_SATELLITE
+SATELLITE_TO_HYBRID
+HYBRID_TO_VECTOR
 ```
 
-## Metrics
+The same MapLibre canvas must survive every transition. Location source, accepted marker, GhostRail count, capture timestamp, watcher count, session-request count and manual camera mode must remain unchanged.
 
-### Renderer spike
+## Raster failure and fallback
 
-- package version;
-- JavaScript/CSS file bytes;
-- load and idle time;
-- WebGL renderer availability;
-- 3D fill-extrusion availability;
-- camera result;
-- estimated FPS;
-- long tasks and duration;
-- optional JS heap size;
-- unexpected external requests.
+Raster failures must become visible as `SATÉLITE NO DISPONIBLE EN ESTA ZONA`. A failed raster tile is not treated as a successful empty view. No paid or unauthorized provider is loaded automatically.
 
-### Mobile product QA
+## Memory and WebGL
 
-- required viewport;
-- page and console errors;
-- horizontal overflow;
-- touch targets;
-- provider request count;
-- transferred bytes visible to Resource Timing;
-- selector-to-map elapsed time;
-- source isolation and late-response behavior;
-- WebGL context loss/recovery behavior.
+GhostRail remains bounded to 600 accepted points. Rejected and metadata-only observations do not extend it.
 
-## Memory bound
-
-GhostRail is bounded to 600 accepted points in memory. Rejected points and metadata-only dead-zone observations are not appended. Source changes and shared-session replacement clear the pipeline.
-
-The browser QA emits repeated synthetic readings and compares heap usage when `performance.memory` is available. Absence of that Chromium-only API is recorded honestly rather than converted to PASS.
-
-```text
-NO_UNBOUNDED_MEMORY_GROWTH=PASS
-```
-
-requires both the structural 600-point cap and a current-head browser stress result within the configured heap-growth budget.
-
-## WebGL fallback
-
-The fallback sequence is deterministic:
+The WebGL fallback sequence remains:
 
 1. reduce pitch;
-2. reduce 3D building density;
+2. reduce 3D density;
 3. disable terrain;
 4. simplify effects;
-5. retain MapLibre vector 2D.
+5. retain MapLibre vector 2D;
+6. show explicit satellite unavailability when the raster source fails.
 
-This release does not enable terrain, so step 3 is already satisfied. Context loss disables 3D and reduces pitch before the map is restored. The source selector is not reopened during context recovery.
-
-## Samsung Galaxy A22 4G
-
-No physical Samsung Galaxy A22 4G is connected to the validation environment.
+## Physical Samsung Galaxy A22 4G
 
 ```text
 A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
-PHYSICAL_DEVICE_EVIDENCE_HONEST=PASS
+PHYSICAL_DEVICE_EVIDENCE_HONEST=PASS_REQUIRED
 ```
 
-The CI artifact includes the exact viewport/throttling checklist for later physical execution. Emulator or desktop throttling evidence must not be relabeled as physical A22 evidence.
+CI and emulation results may not be relabeled as physical A22 evidence.
