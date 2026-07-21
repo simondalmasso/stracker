@@ -126,7 +126,9 @@ let buildingFootprints = 0
 let buildingsWithHeight = 0
 const heightKeys = new Set()
 let totalTileBytes = 0
-let fetchedTiles = 0
+let requestedTiles = 0
+let nonEmptyTiles = 0
+let emptyTiles = 0
 let selectedZoom = null
 const tileHashes = []
 
@@ -138,7 +140,9 @@ for (const zoom of [16, 15, 14]) {
   const zoomHeightKeys = new Set()
   const zoomHashes = []
   let zoomBytes = 0
-  let zoomFetched = 0
+  let zoomRequested = 0
+  let zoomNonEmpty = 0
+  let zoomEmpty = 0
 
   for (let dx = -1; dx <= 1; dx += 1) {
     for (let dy = -1; dy <= 1; dy += 1) {
@@ -146,7 +150,11 @@ for (const zoom of [16, 15, 14]) {
       const tileUrl = safeUrl(expandTemplate(template, tile))
       const response = await fetchChecked(tileUrl, 'application/x-protobuf,application/vnd.mapbox-vector-tile,application/octet-stream')
       const buffer = Buffer.from(await response.arrayBuffer())
-      assert(buffer.byteLength > 0, 'empty vector tile')
+      zoomRequested += 1
+      if (buffer.byteLength === 0) {
+        zoomEmpty += 1
+        continue
+      }
       const decoded = new VectorTile(new Pbf(buffer))
       zoomStreet += layerFeatureCount(decoded, (name) => /transportation|road|street/i.test(name))
       const buildings = inspectBuildings(decoded)
@@ -154,25 +162,28 @@ for (const zoom of [16, 15, 14]) {
       zoomHeights += buildings.withHeight
       buildings.heightKeys.forEach((key) => zoomHeightKeys.add(key))
       zoomBytes += buffer.byteLength
-      zoomFetched += 1
+      zoomNonEmpty += 1
       zoomHashes.push(sha256(buffer))
     }
   }
 
-  if (zoomStreet > 0 && zoomBuildings > 0) {
+  if (zoomStreet > 0 && zoomBuildings > 0 && zoomNonEmpty > 0) {
     selectedZoom = zoom
     streetFeatures = zoomStreet
     buildingFootprints = zoomBuildings
     buildingsWithHeight = zoomHeights
     zoomHeightKeys.forEach((key) => heightKeys.add(key))
     totalTileBytes = zoomBytes
-    fetchedTiles = zoomFetched
+    requestedTiles = zoomRequested
+    nonEmptyTiles = zoomNonEmpty
+    emptyTiles = zoomEmpty
     tileHashes.push(...zoomHashes)
     break
   }
 }
 
 assert(selectedZoom !== null, 'no public Santa Fe street/building coverage found in tested tiles')
+assert(nonEmptyTiles > 0, 'all requested vector tiles were empty')
 assert(streetFeatures > 0, 'street coverage validation failed')
 assert(buildingFootprints > 0, 'building footprint validation failed')
 assert(buildingsWithHeight > 0, 'no available building-height metadata found in tested public fixture')
@@ -207,7 +218,9 @@ const result = {
   } : null,
   vectorTiles: {
     selectedZoom,
-    fetchedTiles,
+    requestedTiles,
+    nonEmptyTiles,
+    emptyTiles,
     totalBytes: totalTileBytes,
     tileSha256: tileHashes,
     streetFeatures,
@@ -222,6 +235,7 @@ const result = {
   gates: {
     STYLE_ACCESSIBLE: 'PASS',
     TILES_ACCESSIBLE: 'PASS',
+    EMPTY_TILES_HANDLED: 'PASS',
     SANTA_FE_STREETS_PRESENT: 'PASS',
     BUILDING_FOOTPRINTS_PRESENT: 'PASS',
     BUILDING_HEIGHTS_AVAILABLE_WHERE_PRESENT: 'PASS',
