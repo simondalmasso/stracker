@@ -31,11 +31,29 @@ jobs:
           git diff --check origin/fix/stracker-p0-security-canonical-state...HEAD
       - name: Frozen install
         run: bun install --frozen-lockfile
-      - name: Lint
-        run: bun run lint
-      - name: Typecheck
-        run: bunx tsc --noEmit
-      - name: Build
-        env:
-          BUILD_EXPORT: "1"
-        run: bun run build
+      - name: Capture frontend gates
+        id: gates
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .ci-evidence
+          bun run lint > .ci-evidence/lint.log 2>&1
+          lint_rc=$?
+          bunx tsc --noEmit > .ci-evidence/typecheck.log 2>&1
+          type_rc=$?
+          BUILD_EXPORT=1 bun run build > .ci-evidence/build.log 2>&1
+          build_rc=$?
+          printf 'FROZEN_INSTALL=PASS\nLINT_EXIT=%s\nTYPECHECK_EXIT=%s\nBUILD_EXIT=%s\n' "$lint_rc" "$type_rc" "$build_rc" > .ci-evidence/summary.txt
+          cat .ci-evidence/summary.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-product-baseline-diagnostics
+          path: .ci-evidence
+          if-no-files-found: error
+      - name: Enforce gates
+        run: |
+          . .ci-evidence/summary.txt
+          test "$LINT_EXIT" = "0"
+          test "$TYPECHECK_EXIT" = "0"
+          test "$BUILD_EXIT" = "0"
