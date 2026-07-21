@@ -138,7 +138,7 @@ function addSatelliteLayer(map: MapLibreMap): void {
     })
   }
   if (!map.getLayer(SATELLITE_LAYER_ID)) {
-    const firstLayer = map.getStyle().layers?.[0]?.id
+    const firstNonBackgroundLayer = map.getStyle().layers?.find((layer) => layer.type !== 'background')?.id
     map.addLayer({
       id: SATELLITE_LAYER_ID,
       type: 'raster',
@@ -149,7 +149,7 @@ function addSatelliteLayer(map: MapLibreMap): void {
         'raster-fade-duration': 0,
         'raster-resampling': 'linear',
       },
-    }, firstLayer)
+    }, firstNonBackgroundLayer)
   }
 }
 
@@ -359,13 +359,11 @@ export function createMapLibreAdapter(): MapEngineAdapter {
         }
         const message = candidate.error?.message ?? ''
         const errorUrl = candidate.error?.url ?? candidate.tile?.request?.url ?? ''
-        const errorStatus = candidate.error?.status ?? 0
         const satelliteModeActive = Boolean(latestState && usesSatelliteImagery(latestState.basemapMode))
         const satelliteError = satelliteModeActive && (
           candidate.sourceId === SATELLITE_SOURCE_ID ||
           message.includes(SATELLITE_PROVIDER.host) ||
-          errorUrl.includes(SATELLITE_PROVIDER.host) ||
-          errorStatus >= 400
+          errorUrl.includes(SATELLITE_PROVIDER.host)
         )
         if (satelliteError) {
           markSatelliteUnavailable()
