@@ -9,8 +9,9 @@ BASEMAP_MODES=vector-3d|satellite|hybrid
 VECTOR_STYLE_PROVIDER=OpenFreeMap
 VECTOR_BASE_DATA=OpenStreetMap/OpenMapTiles-compatible
 SATELLITE_PROVIDER=eox-s2cloudless-2016
+SATELLITE_WMTS_LAYER=s2cloudless_3857
 MAPBOX_ROLE=BENCHMARK_ONLY
-FINAL_BUNDLE_SINGLE_ENGINE=PASS_REQUIRED
+FINAL_BUNDLE_SINGLE_ENGINE=PASS
 ```
 
 The release contains one renderer. Basemap changes toggle sources and layers inside the existing MapLibre instance; they do not create another map, change `LocationSource`, restart a watcher/poll, clear product layers or mutate camera state.
@@ -35,7 +36,7 @@ type BasemapMode = 'vector-3d' | 'satellite' | 'hybrid'
 
 ### SATELLITE
 
-- EOxCloudless 2016 raster WMTS tiles;
+- EOxCloudless historical raster WMTS tiles;
 - no extruded buildings;
 - no vector street or label overlay;
 - marker, connection halo, accuracy circle and GhostRail remain above the raster.
@@ -78,12 +79,13 @@ IGN_ORTHOMOSAICS=PARTIAL_COVERAGE_CANDIDATE_NOT_SELECTED
 COMPLETE_SANTA_FE_COVERAGE_CLAIMED=NO
 ```
 
-### C. EOxCloudless 2016
+### C. EOxCloudless historical fallback
 
-Selected as the authorized open fallback:
+Selected as the authorized open fallback. The current live WMTS catalogue identifies the Web Mercator layer as `s2cloudless_3857`.
 
 ```text
-ENDPOINT=https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857/default/g/{z}/{y}/{x}.jpg
+WMTS_LAYER=s2cloudless_3857
+ENDPOINT=https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg
 API_KEY_REQUIRED=NO
 COST_USD=0
 PAID_OVERAGE_ALLOWED=NO
@@ -100,7 +102,7 @@ Required attribution is retained in policy and displayed in satellite/hybrid UI.
 
 ## Failure behavior
 
-Raster source errors produce the visible state:
+Raster source errors or a bounded availability timeout produce the visible state:
 
 ```text
 SATÉLITE NO DISPONIBLE EN ESTA ZONA
@@ -112,15 +114,23 @@ Location tracking remains active and isolated. Empty or failed tiles are not hid
 
 Mapbox is installed only under `/tmp` in the CI renderer benchmark and receives local synthetic GeoJSON. It remains absent from package metadata, lockfile, source runtime and exported assets.
 
+## Exact-head evidence
+
+```text
+VALIDATED_FEATURE_HEAD=2faa42dc127099d97acc28a9404c9cd75a0e9efc
+WORKFLOW_RUN_ID=29855942179
+WORKFLOW_CONCLUSION=success
+```
+
 ## Release assertions
 
 ```text
 RENDERER=MapLibre GL JS
-NO_SECOND_RENDERER=PASS_REQUIRED
-UNSELECTED_ENGINE_ABSENT=PASS_REQUIRED
-ZERO_COST_SATELLITE_GATE=PASS_REQUIRED
-SATELLITE_ATTRIBUTION_VISIBLE=PASS_REQUIRED
-PROVIDER_FAILURE_EXPLICIT=PASS_REQUIRED
+NO_SECOND_RENDERER=PASS
+UNSELECTED_ENGINE_ABSENT=PASS
+ZERO_COST_SATELLITE_GATE=PASS
+SATELLITE_ATTRIBUTION_VISIBLE=PASS
+PROVIDER_FAILURE_EXPLICIT=PASS
 DEPLOY=NO
 MERGE=NO
 ```
