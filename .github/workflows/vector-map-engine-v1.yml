@@ -7,7 +7,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
 
 concurrency:
@@ -21,7 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
@@ -34,64 +33,56 @@ jobs:
           test "$(git merge-base HEAD origin/feat/stracker-cloudflare-private-gateway-poc)" = "77a937b4b157c2ec2c47940d6fe6891cf10b74c9"
           git diff --check origin/feat/stracker-cloudflare-private-gateway-poc...HEAD
           echo 'STACKED_BASE_CHECK=PASS'
-      - name: Materialize lockfile candidate
+      - name: Frozen install
         run: |
-          bun install
-          if ! git diff --quiet -- bun.lock; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add bun.lock
-            git commit -m 'chore: freeze MapLibre-only lockfile'
-            git push origin HEAD:${{ github.event.pull_request.head.ref }}
-          fi
+          bun install --frozen-lockfile
+          echo 'FROZEN_INSTALL=PASS'
       - name: Python dependencies and backend gates
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
           python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
           python -m unittest discover -s tests -p 'test_*.py'
           cmp tracker_map.py nextjs-ui/tracker_map.py
-      - name: ESLint diagnostic
-        continue-on-error: true
+          echo 'BACKEND_TESTS=PASS'
+      - name: ESLint
         run: |
-          set -o pipefail
-          bun run lint 2>&1 | tee /tmp/eslint.log
-      - name: Typecheck diagnostic
-        continue-on-error: true
+          bun run lint
+          echo 'ESLINT=PASS'
+      - name: Typecheck
         run: |
-          set -o pipefail
-          bun run typecheck 2>&1 | tee /tmp/typecheck.log
-      - name: Vector map pure tests diagnostic
-        continue-on-error: true
+          bun run typecheck
+          echo 'TYPECHECK=PASS'
+      - name: Vector map pure tests
         run: |
-          set -o pipefail
-          bun run test:vector-map 2>&1 | tee /tmp/vector-tests.log
-      - name: Static export diagnostic
-        continue-on-error: true
+          bun run test:vector-map
+          echo 'VECTOR_MAP_TESTS=PASS'
+      - name: Static export build
         env:
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
-          set -o pipefail
-          bun run build:export 2>&1 | tee /tmp/build.log
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vector-map-diagnostics-${{ github.event.pull_request.head.sha }}
-          path: |
-            /tmp/eslint.log
-            /tmp/typecheck.log
-            /tmp/vector-tests.log
-            /tmp/build.log
-          if-no-files-found: warn
-          retention-days: 2
-      - name: Enforce candidate gates
-        run: |
-          bun run lint
-          bun run typecheck
-          bun run test:vector-map
+          bun run build:export
           test -f out/index.html
-          ! grep -R --binary-files=without-match -nE 'mapbox-gl|api\.mapbox\.com|pk\.[A-Za-z0-9]' out
-          ! grep -R --binary-files=without-match -nE 'react-leaflet|leaflet-container|tile\.openstreetmap\.org|server\.arcgisonline\.com' out
-          grep -R --binary-files=without-match -q 'maplibre' out/_next/static
-          ! grep -R --binary-files=without-match -n 'stracker.lastSelectedSource' out
-          echo 'PRELIMINARY_SINGLE_ENGINE=PASS'
+          echo 'BUILD=PASS'
+      - name: Release dependency gate
+        run: |
+          node - <<'NODE'
+          const pkg = require('./package.json')
+          const all = {...pkg.dependencies, ...pkg.devDependencies}
+          for (const loser of ['mapbox-gl', 'leaflet', 'react-leaflet', '@types/leaflet']) {
+            if (loser in all) throw new Error(`losing engine dependency remains: ${loser}`)
+          }
+          if (!('maplibre-gl' in all)) throw new Error('maplibre-gl dependency missing')
+          NODE
+          ! grep -nE '"(leaflet|react-leaflet|@types/leaflet)"' bun.lock
+          echo 'FINAL_BUNDLE_SINGLE_ENGINE=PASS'
+      - name: Release source gate
+        run: |
+          ! grep -R --binary-files=without-match -nE "from ['\"](leaflet|react-leaflet)['\"]|mapboxgl|api\.mapbox\.com|pk\.[A-Za-z0-9]" src/components/mobile src/lib/location-source src/app package.json
+          grep -R --binary-files=without-match -q 'tiles.openfreemap.org/styles/liberty' src/lib/location-source
+          ! grep -R --binary-files=without-match -n 'stracker.lastSelectedSource' src out
+          echo 'UNSELECTED_ENGINE_ABSENT=PASS'
+      - name: Export bundle gate
+        run: |
+          ! grep -R --binary-files=without-match -nE 'api\.mapbox\.com|mapbox-gl|leaflet-container|tile\.openstreetmap\.org|server\.arcgisonline\.com' out
+          grep -R --binary-files=without-match -q 'tiles.openfreemap.org/styles/liberty' out/_next/static
+          echo 'SINGLE_ENGINE_FINAL_BUNDLE=PASS'
