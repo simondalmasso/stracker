@@ -1,0 +1,88 @@
+name: STRACKER P0 Syntax Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize]
+    paths:
+      - .github/workflows/p0-syntax-diagnostic.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_SHA: 923cac9c9bcc0b7e05701dd1018e61a454d0f478
+      STRACKER_ENV: test
+      STRACKER_API_TOKEN: test-service-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      SECRET_KEY: test-secret-key-ssssssssssssssssssssssssssssssssssssssssssssssss
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/stracker-p0-security-canonical-state
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Generate candidate and capture syntax errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$BASE_SHA"
+          python scripts/p0_security_bootstrap.py >/tmp/generator-output.json
+          : > /tmp/compile-errors.log
+          failed=0
+          for file in tracker_map.py nextjs-ui/tracker_map.py stracker_security.py tests/test_p0_security.py; do
+            set +e
+            python -m py_compile "$file" 2>"/tmp/${file//\//_}.err"
+            code=$?
+            set -e
+            if [ "$code" != "0" ]; then
+              failed=1
+              printf 'FILE=%s\n' "$file" >> /tmp/compile-errors.log
+              grep -E '^[[:space:]]*File |^(SyntaxError|IndentationError|TabError):' "/tmp/${file//\//_}.err" >> /tmp/compile-errors.log || true
+            fi
+          done
+          git reset --hard HEAD
+          mkdir -p docs
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          raw = Path('/tmp/compile-errors.log').read_text(encoding='utf-8', errors='replace')
+          safe = []
+          for line in raw.splitlines():
+              if line.startswith('FILE='):
+                  safe.append(line)
+                  continue
+              match = re.search(r'File "(?:.*/)?([^"/]+)", line (\d+)', line)
+              if match:
+                  safe.append(f'LOCATION={match.group(1)}:{match.group(2)}')
+                  continue
+              if re.match(r'^(SyntaxError|IndentationError|TabError):', line):
+                  safe.append('ERROR=' + line.split(':', 1)[0])
+          body = [
+              '# P0 Bootstrap Syntax Diagnostic',
+              '',
+              'Sanitized diagnostic only. No source line, secret, cookie, token, coordinate or private URL is included.',
+              '',
+              '```text',
+              *(safe or ['NO_COMPILE_ERROR_CAPTURED']),
+              '```',
+              '',
+              'PRODUCTION_MODIFIED=NO',
+              'DEPLOYMENT_EXECUTED=NO',
+          ]
+          Path('docs/P0_BOOTSTRAP_DIAGNOSTIC.md').write_text('\n'.join(body) + '\n', encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/P0_BOOTSTRAP_DIAGNOSTIC.md
+          git commit -m 'ci: record sanitized P0 syntax diagnostic'
+          git push origin HEAD:fix/stracker-p0-security-canonical-state
+          test "$failed" = "1"
