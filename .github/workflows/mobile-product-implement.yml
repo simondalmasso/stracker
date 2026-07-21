@@ -41,36 +41,36 @@ jobs:
         run: |
           bun install --frozen-lockfile
           python -m pip install --disable-pip-version-check -r requirements.txt
-      - name: Capture Python and backend gates
+      - name: Python and backend gates
+        run: |
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
+          python -m unittest discover -s tests -p 'test_*.py'
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+      - name: Capture frontend gates
         shell: bash
         run: |
           set +e
-          mkdir -p integration-evidence
-          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py > integration-evidence/compile.log 2>&1
-          compile_rc=$?
-          python -m unittest discover -s tests -p 'test_*.py' > integration-evidence/tests.log 2>&1
-          tests_rc=$?
-          cmp tracker_map.py nextjs-ui/tracker_map.py > integration-evidence/parity.log 2>&1
-          parity_rc=$?
-          printf 'COMPILE_EXIT=%s\nTESTS_EXIT=%s\nPARITY_EXIT=%s\n' "$compile_rc" "$tests_rc" "$parity_rc" > integration-evidence/summary.txt
-          cat integration-evidence/summary.txt
+          mkdir -p frontend-evidence
+          bun run lint > frontend-evidence/lint.log 2>&1
+          lint_rc=$?
+          bun run typecheck > frontend-evidence/typecheck.log 2>&1
+          typecheck_rc=$?
+          BUILD_EXPORT=1 bun run build > frontend-evidence/build.log 2>&1
+          build_rc=$?
+          printf 'LINT_EXIT=%s\nTYPECHECK_EXIT=%s\nBUILD_EXIT=%s\n' "$lint_rc" "$typecheck_rc" "$build_rc" > frontend-evidence/summary.txt
+          cat frontend-evidence/summary.txt
           exit 0
       - uses: actions/upload-artifact@v4
         with:
-          name: mobile-product-integration-diagnostics
-          path: integration-evidence/
+          name: mobile-product-frontend-diagnostics
+          path: frontend-evidence/
           if-no-files-found: error
-      - name: Enforce Python and backend gates
+      - name: Enforce frontend gates
         run: |
-          . integration-evidence/summary.txt
-          test "$COMPILE_EXIT" = "0"
-          test "$TESTS_EXIT" = "0"
-          test "$PARITY_EXIT" = "0"
-      - name: Frontend gates
-        run: |
-          bun run lint
-          bun run typecheck
-          BUILD_EXPORT=1 bun run build
+          . frontend-evidence/summary.txt
+          test "$LINT_EXIT" = "0"
+          test "$TYPECHECK_EXIT" = "0"
+          test "$BUILD_EXIT" = "0"
       - name: Validate generated tree
         run: |
           git diff --check
