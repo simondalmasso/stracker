@@ -1,5 +1,5 @@
 {
-  "schema": "stracker.vector-map-performance-budgets.v1",
+  "schema": "stracker.vector-map-performance-budgets.v2",
   "scope": "mobile static export on CI Chromium; physical A22 remains separate evidence",
   "budgets": {
     "initialRouteTransferredBytesMax": 1500000,
@@ -7,6 +7,8 @@
     "firstMapInteractiveMsMax": 9000,
     "mapProviderRequestsFirstViewportMax": 90,
     "mapProviderTransferredBytesFirstViewportMax": 10000000,
+    "rasterProviderRequestsFirstViewportMax": 40,
+    "rasterProviderTransferredBytesFirstViewportMax": 12000000,
     "estimatedFpsFloor": 24,
     "longTaskCountMax": 20,
     "longTaskDurationMsMax": 1500,
@@ -19,7 +21,8 @@
     "reduce-3d-density",
     "disable-terrain",
     "simplify-effects",
-    "retain-vector-2d"
+    "retain-vector-2d",
+    "show-satellite-unavailable-explicitly"
   ],
   "physicalDevice": {
     "device": "Samsung Galaxy A22 4G",
