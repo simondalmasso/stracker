@@ -50,7 +50,15 @@ jobs:
           echo 'ESLINT=PASS'
       - name: Typecheck
         run: |
-          bun run typecheck
+          set +e
+          bun run typecheck >/tmp/typecheck.log 2>&1
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo 'TYPECHECK_DIAGNOSTIC_BEGIN'
+            tail -n 120 /tmp/typecheck.log
+            echo 'TYPECHECK_DIAGNOSTIC_END'
+            exit "$code"
+          fi
           echo 'TYPECHECK=PASS'
       - name: Vector map pure tests
         run: |
