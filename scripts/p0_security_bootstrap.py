@@ -170,7 +170,7 @@ def build_security_module() -> str:
 
 
         def _normalize_path(path: str) -> str:
-            decoded = unquote((path or "/").split("?", 1)[0]).replace("\\", "/")
+            decoded = unquote((path or "/").split("?", 1)[0]).replace("\\\\", "/")
             if not decoded.startswith("/"):
                 decoded = "/" + decoded
             normalized = "/" + str(PurePosixPath(decoded)).lstrip("/")
@@ -295,7 +295,7 @@ def build_tests() -> str:
                 (base / "README.md").write_text("must-not-be-public", encoding="utf-8")
                 (base / ".env").write_text("redacted", encoding="utf-8")
                 (base / "cookies.json").write_text("[]", encoding="utf-8")
-                (base / "historial.csv").write_text("timestamp,lat,lng\n", encoding="utf-8")
+                (base / "historial.csv").write_text("timestamp,lat,lng\\n", encoding="utf-8")
                 (base / "tracker.log").write_text("private", encoding="utf-8")
                 (base / "ghostrail.enc").write_text("{}", encoding="utf-8")
                 (base / "ghostrail_archive.enc").write_text("{}", encoding="utf-8")
