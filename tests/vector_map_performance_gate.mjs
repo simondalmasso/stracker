@@ -12,7 +12,8 @@ function assert(condition, message) {
 
 async function clickText(page, text) {
   await page.$$eval('button', (buttons, expected) => {
-    const target = buttons.find((button) => button.textContent?.toUpperCase().includes(String(expected).toUpperCase()))
+    const target = buttons.find((button) => button.textContent?.trim().toUpperCase() === String(expected).toUpperCase())
+      ?? buttons.find((button) => button.textContent?.toUpperCase().includes(String(expected).toUpperCase()))
     if (!(target instanceof HTMLElement)) throw new Error(`button not found: ${expected}`)
     target.click()
   }, text)
@@ -60,20 +61,27 @@ try {
   })
 
   const providerHosts = new Set()
-  let providerRequests = 0
-  let providerContentLengthBytes = 0
+  let vectorProviderRequests = 0
+  let vectorProviderContentLengthBytes = 0
+  let rasterProviderRequests = 0
+  let rasterProviderContentLengthBytes = 0
   page.on('request', (request) => {
     const url = new URL(request.url())
     if (url.hostname === 'tiles.openfreemap.org') {
       providerHosts.add(url.hostname)
-      providerRequests += 1
+      vectorProviderRequests += 1
+    }
+    if (url.hostname === 'tiles.maps.eox.at') {
+      providerHosts.add(url.hostname)
+      rasterProviderRequests += 1
     }
   })
   page.on('response', (response) => {
     const url = new URL(response.url())
-    if (url.hostname !== 'tiles.openfreemap.org') return
     const length = Number(response.headers()['content-length'] || 0)
-    if (Number.isFinite(length) && length > 0) providerContentLengthBytes += length
+    if (!Number.isFinite(length) || length <= 0) return
+    if (url.hostname === 'tiles.openfreemap.org') vectorProviderContentLengthBytes += length
+    if (url.hostname === 'tiles.maps.eox.at') rasterProviderContentLengthBytes += length
   })
 
   await page.goto(baseUrl, { waitUntil: 'networkidle0' })
@@ -83,7 +91,8 @@ try {
   })))
   const initialRouteTransferredBytes = initialResources.reduce((sum, item) => sum + (item.transferSize || item.encodedBodySize || 0), 0)
   assert(initialRouteTransferredBytes <= budgets.initialRouteTransferredBytesMax, `initial route transfer budget exceeded: ${initialRouteTransferredBytes}`)
-  assert(providerRequests === 0, 'provider requested before source selection')
+  assert(vectorProviderRequests === 0, 'vector provider requested before source selection')
+  assert(rasterProviderRequests === 0, 'raster provider requested before source selection')
 
   await clickText(page, 'MI UBICACIÓN')
   await clickText(page, 'PERMITIR UBICACIÓN')
@@ -113,7 +122,7 @@ try {
     mapRenderRateEstimate: Number(node.getAttribute('data-map-fps')),
     longTasks: Number(node.getAttribute('data-map-long-tasks')),
     longTaskDurationMs: Number(node.getAttribute('data-map-long-task-ms')),
-    resourceTimingTransferredBytes: Number(node.getAttribute('data-map-transferred-bytes')),
+    totalResourceTimingTransferredBytes: Number(node.getAttribute('data-map-transferred-bytes')),
   }))
 
   const activeRafFps = await page.evaluate(async () => {
@@ -135,12 +144,26 @@ try {
   assert(activeRafFps >= budgets.estimatedFpsFloor, `active RAF FPS floor missed: ${activeRafFps}`)
   assert(adapterMetrics.longTasks <= budgets.longTaskCountMax, `long task count exceeded: ${adapterMetrics.longTasks}`)
   assert(adapterMetrics.longTaskDurationMs <= budgets.longTaskDurationMsMax, `long task duration exceeded: ${adapterMetrics.longTaskDurationMs}`)
-  assert(providerRequests <= budgets.mapProviderRequestsFirstViewportMax, `provider request budget exceeded: ${providerRequests}`)
-  const providerBytesObserved = Math.max(providerContentLengthBytes, adapterMetrics.resourceTimingTransferredBytes)
-  assert(providerBytesObserved <= budgets.mapProviderTransferredBytesFirstViewportMax, `provider byte budget exceeded: ${providerBytesObserved}`)
+  assert(vectorProviderRequests <= budgets.mapProviderRequestsFirstViewportMax, `vector provider request budget exceeded: ${vectorProviderRequests}`)
+  const vectorProviderBytesObserved = vectorProviderContentLengthBytes
+  assert(vectorProviderBytesObserved <= budgets.mapProviderTransferredBytesFirstViewportMax, `vector provider byte budget exceeded: ${vectorProviderBytesObserved}`)
+
+  await clickText(page, 'SATÉLITE')
+  await page.waitForFunction(() => document.querySelector('main')?.getAttribute('data-basemap-mode') === 'satellite')
+  await page.waitForFunction(() => document.querySelector('main')?.getAttribute('data-basemap-provider') === 'available', { timeout: 30000 })
+  await new Promise((resolve) => setTimeout(resolve, 1000))
+  const rasterAdapterMetrics = await page.$eval('main[data-map-engine="maplibre"]', (node) => ({
+    rasterResourceCount: Number(node.getAttribute('data-raster-request-count')),
+    rasterTransferredBytes: Number(node.getAttribute('data-raster-transferred-bytes')),
+  }))
+  assert(rasterProviderRequests > 0, 'satellite mode made no raster requests')
+  assert(rasterProviderRequests <= budgets.rasterProviderRequestsFirstViewportMax, `raster provider request budget exceeded: ${rasterProviderRequests}`)
+  const rasterProviderBytesObserved = Math.max(rasterProviderContentLengthBytes, rasterAdapterMetrics.rasterTransferredBytes)
+  assert(rasterProviderBytesObserved > 0, 'satellite raster byte measurement is empty')
+  assert(rasterProviderBytesObserved <= budgets.rasterProviderTransferredBytesFirstViewportMax, `raster provider byte budget exceeded: ${rasterProviderBytesObserved}`)
 
   const result = {
-    schema: 'stracker.vector-map-performance-gate.v1',
+    schema: 'stracker.vector-map-performance-gate.v2',
     generatedAt: new Date().toISOString(),
     viewport: { width: 390, height: 844 },
     coordinateValuesRetained: false,
@@ -149,9 +172,18 @@ try {
       initialRouteTransferredBytes,
       ...adapterMetrics,
       activeRafFps,
-      providerRequests,
-      providerContentLengthBytes,
-      providerBytesObserved,
+      vector: {
+        requests: vectorProviderRequests,
+        contentLengthBytes: vectorProviderContentLengthBytes,
+        bytesObserved: vectorProviderBytesObserved,
+      },
+      raster: {
+        requests: rasterProviderRequests,
+        contentLengthBytes: rasterProviderContentLengthBytes,
+        adapterResourceCount: rasterAdapterMetrics.rasterResourceCount,
+        adapterTransferredBytes: rasterAdapterMetrics.rasterTransferredBytes,
+        bytesObserved: rasterProviderBytesObserved,
+      },
     },
     budgets,
     gates: {
@@ -160,12 +192,15 @@ try {
       FIRST_MAP_INTERACTIVE: 'PASS',
       ACTIVE_RAF_FPS: 'PASS',
       LONG_TASKS: 'PASS',
-      PROVIDER_REQUESTS: 'PASS',
-      PROVIDER_BYTES: 'PASS',
+      VECTOR_PROVIDER_REQUESTS: 'PASS',
+      VECTOR_PROVIDER_BYTES: 'PASS',
+      RASTER_PROVIDER_REQUESTS: 'PASS',
+      RASTER_PROVIDER_BYTES: 'PASS',
       PERFORMANCE_BUDGETS: 'PASS',
     },
   }
   fs.writeFileSync(output, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 })
+  console.log('RASTER_TRANSFER_BUDGETS=PASS')
   console.log('PERFORMANCE_BUDGETS=PASS')
   await context.close()
 } finally {
