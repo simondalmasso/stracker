@@ -1,95 +1,95 @@
-# STRACKER — Map Provider Privacy V1
+# STRACKER — Map Provider Privacy V2
 
-## Selected runtime
+## Runtime providers
 
 ```text
 RENDERER=MapLibre GL JS
-STYLE_AND_TILE_PROVIDER=OpenFreeMap public service
-BASE_DATA=OpenStreetMap/OpenMapTiles-compatible
+VECTOR_PROVIDER=OpenFreeMap public service
+VECTOR_DATA=OpenStreetMap/OpenMapTiles-compatible
+SATELLITE_PROVIDER=EOxCloudless 2016 public WMTS
 ACCOUNT_REQUIRED=NO
 API_TOKEN_REQUIRED=NO
 MAP_PROVIDER_BILLING_ACCOUNT=NO
 ```
 
-## Browser requests
+## Request timing
 
-After and only after the user selects a source and a real accepted location snapshot unlocks the map, the browser requests:
+No style, vector tile, raster tile, glyph or sprite request is allowed before the user selects a location source and an accepted snapshot unlocks the map.
 
-- the OpenFreeMap style document;
-- vector tile resources referenced by that style;
-- glyphs and sprites referenced by the style;
-- attribution links only if the user follows them.
+After unlock, the browser may request:
 
-The provider and its CDN can observe normal HTTP metadata such as requested resources, IP address, user agent, timing and approximate viewport-derived tile coordinates. STRACKER must not claim that all map activity remains only on the device.
+- OpenFreeMap style, vector tiles, glyphs and sprites in `vector-3d` and `hybrid`;
+- EOxCloudless raster tiles in `satellite` and `hybrid`;
+- attribution destinations only when the user follows a link.
 
-No map provider request is permitted before source selection. No provider request contains the STRACKER shared-session cookie material or origin service token.
+Changing the basemap does not request geolocation, call the shared-session API or restart shared polling.
 
-## Cookies and identity
+## Data visible to providers
 
-OpenFreeMap documents that its public service does not require accounts, API keys or cookies. STRACKER does not set a provider cookie and does not send Google cookies, Cloudflare Access assertions or STRACKER service tokens to the map provider.
+The provider/CDN can observe ordinary HTTP metadata including IP address, user agent, requested resources, timing and viewport-derived tile coordinates. In satellite mode, raster tile requests may reveal the approximate viewed area more directly. STRACKER therefore does not claim that all map activity remains only on the device.
 
-Third-party browser or CDN behavior can change independently; CI therefore records request hosts, response headers and cookies observed during QA.
+The application does not intentionally send:
 
-## IP processing and logs
+- Google Location Sharing cookies;
+- Cloudflare Access assertions;
+- STRACKER service tokens;
+- shared-session import material;
+- location API payloads.
 
-OpenFreeMap documents privacy-oriented anonymized operational logging and states that IP addresses are not logged by default. It also reserves temporary IP logging during security incidents, with documented deletion after a limited period. Cloudflare CDN infrastructure may process network metadata while delivering the service.
+## Provider identity and retention
 
-STRACKER treats these statements as provider documentation, not as a technical guarantee controlled by STRACKER.
+Neither selected map provider requires an application account or API key for the configured endpoints. STRACKER sets no map-provider cookie. Provider and CDN retention remains governed by their own published policy and infrastructure and may change independently of STRACKER.
 
-## Telemetry
+CI records allowed hosts, aggregate request counts and transferred bytes. Retained artifacts exclude authorization headers, cookies, tokens and coordinate values.
 
-MapLibre is configured without a Mapbox token or Mapbox telemetry endpoint. The application does not intentionally send location analytics to MapLibre, OpenFreeMap or OpenStreetMap.
+## Selected satellite imagery
 
-The browser still emits ordinary tile/style network traffic. CI records hosts, request counts and transferred bytes but sanitizes query values, cookies, authorization headers and coordinates from retained artifacts.
+```text
+PROVIDER=EOxCloudless
+LAYER=s2cloudless-2016_3857
+LICENSE=CC BY 4.0
+IMAGERY_PERIOD=2016-2017 mosaic
+RESOLUTION=10 m
+RECENT_CLAIM_ALLOWED=NO
+COMPLETE_COVERAGE_CLAIMED=NO
+```
 
-## Retention
+The product displays that the imagery is a 2016–2017 mosaic. It is not presented as live or recent.
 
-STRACKER controls only its own application logs and artifacts. Provider/CDN retention is governed by provider policy and may change. The current decision must be revalidated before release if those terms change.
+## IGN evaluation
+
+- Argenmap hybrid remains blocked because current imagery provenance/licensing is insufficiently explicit for release and historical official documentation identifies Google imagery.
+- Public IGN orthomosaics remain a partial-coverage candidate. STRACKER does not claim complete Santa Fe coverage, uniform resolution or a current capture date.
+- No private API, reverse-engineered URL, token bypass or prohibited Google tile endpoint is used.
 
 ## Source-specific privacy
 
 ### MI UBICACIÓN
 
-- uses `navigator.geolocation.watchPosition()` after explicit action;
-- keeps filter state and GhostRail in memory;
+- starts `watchPosition()` only after explicit action;
+- keeps filter state, stable coordinate and GhostRail in memory;
 - does not call shared-session APIs;
 - does not persist coordinates by default;
-- does expose viewport tile requests to the selected map provider after map unlock.
+- exposes only normal viewport tile requests after map unlock.
 
 ### UBICACIÓN COMPARTIDA
 
 - calls same-origin STRACKER gateway routes only;
-- never sends Google cookie material to the map provider;
-- renders accepted shared points through the same provider requests as `MI UBICACIÓN`;
-- stops polling and aborts pending requests on source change.
+- never sends origin cookies or service tokens to map providers;
+- does not interpolate remote points;
+- keeps polling/session state unchanged during basemap transitions;
+- aborts and invalidates pending requests only on location-source change.
 
-## Attribution
+## Dynamic attribution
 
-Visible attribution is mandatory and may not be hidden or covered:
+Attribution remains visible above the bottom sheet and changes with active layers:
 
 ```text
-OpenFreeMap
-OpenMapTiles
-OpenStreetMap
+VECTOR_3D: OpenFreeMap · OpenMapTiles · OpenStreetMap
+SATELLITE: EOxCloudless · EOX · modified Copernicus Sentinel data 2016 & 2017
+HYBRID: satellite attribution + OpenFreeMap/OpenStreetMap attribution
 ```
 
-The mobile shell includes an accessible attribution region above the bottom sheet. CI verifies that it has a non-zero visible bounding box at every required viewport.
+## Failure behavior
 
-## Self-hosting and migration
-
-OpenFreeMap and compatible OpenMapTiles data can be self-hosted, subject to data and software licenses and infrastructure capacity. This PR does not self-host tiles because that would introduce a runtime/storage phase outside scope.
-
-The adapter isolates provider configuration for a future PMTiles or self-hosted migration. Such a migration requires its own cost, storage, update, attribution and privacy validation.
-
-## Provider comparison summary
-
-| Dimension | Mapbox data/style | OpenFreeMap + OSM |
-|---|---|---|
-| Account/token | Required for normal Mapbox service | Not required for current public service |
-| Billing dependency | Yes | No current billing account |
-| Hard pre-charge cap | Does not meet STRACKER requirement | No billing path in current public service |
-| Browser IP visible | Yes | Yes, through provider/CDN delivery |
-| Cookies/account identity | Provider-account model | No account/cookie requirement documented |
-| Lock-in | Proprietary style/data APIs | Open renderer and compatible style/data schemas |
-| Self-host path | Restricted by selected services/data terms | OpenFreeMap/OpenMapTiles-compatible self-host path |
-| SLA | Commercial service terms | Public service is as-is, no SLA |
+A failed raster provider produces `SATÉLITE NO DISPONIBLE EN ESTA ZONA`. Tracking, marker, accuracy, GhostRail, timestamps and camera state remain available. STRACKER does not silently substitute a paid or unauthorized provider.
