@@ -1,141 +1,63 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { Crosshair, MapPinned, ShieldCheck, Smartphone } from 'lucide-react'
-import type { LocationSource, ProductFlow } from '@/lib/location-source/contracts'
+import dynamic from 'next/dynamic'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, LocateFixed, MapPinned, ShieldCheck } from 'lucide-react'
+import type { LocationSource, ProductFlow, SharedSessionStatus } from '@/lib/location-source/contracts'
+import { isMapUnlocked } from '@/lib/location-source/contracts'
 import { useMyLocation } from '@/lib/location-source/use-my-location'
 import { useSharedLocation } from '@/lib/location-source/use-shared-location'
-import { MobileMapShell } from './MobileMapShell'
 
-const SOURCE_KEY = 'stracker:lastSelectedSource'
+const MobileMapShell = dynamic(() => import('./MobileMapShell'), { ssr: false })
+const SOURCE_KEY = 'stracker.lastSelectedSource'
 
-function SourceSelector({ onSelect }: { onSelect: (source: LocationSource) => void }) {
-  return (
-    <main className="min-h-[100dvh] overflow-x-hidden bg-black px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(28px,env(safe-area-inset-top))] text-white">
-      <div className="mx-auto flex min-h-[calc(100dvh-56px)] w-full max-w-md flex-col justify-center">
-        <p className="text-xs font-semibold tracking-[0.28em] text-white/45">STRACKER</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">¿Qué ubicación querés ver?</h1>
-        <p className="mt-3 max-w-sm text-sm leading-6 text-white/55">Elegí una fuente. No se solicitan permisos ni sesiones hasta que selecciones una opción.</p>
+type DetectedFormat = 'Cookie Editor JSON' | 'JSON envuelto' | 'Cookie Header String' | 'Netscape' | 'Sin detectar'
 
-        <div className="mt-8 grid gap-3">
-          <button type="button" onClick={() => onSelect('my-device')} className="min-h-24 rounded-3xl border border-white/12 bg-white/[0.04] p-5 text-left active:bg-white/[0.08]">
-            <span className="flex items-center gap-3 text-sm font-semibold"><Smartphone size={22} /> MI UBICACIÓN</span>
-            <span className="mt-2 block text-sm leading-5 text-white/50">Usar la ubicación de este teléfono.</span>
-          </button>
-          <button type="button" onClick={() => onSelect('google-shared')} className="min-h-24 rounded-3xl border border-white/12 bg-white/[0.04] p-5 text-left active:bg-white/[0.08]">
-            <span className="flex items-center gap-3 text-sm font-semibold"><MapPinned size={22} /> UBICACIÓN COMPARTIDA</span>
-            <span className="mt-2 block text-sm leading-5 text-white/50">Ver una ubicación que alguien comparte conmigo en Google Maps.</span>
-          </button>
-        </div>
-
-        <p className="mt-6 text-center text-xs leading-5 text-white/35">Podés cambiar de modo más adelante.</p>
-        <p className="mt-3 text-center text-[11px] leading-5 text-white/30">STRACKER sólo debe usarse con ubicaciones propias o compartidas voluntariamente con tu cuenta.</p>
-      </div>
-    </main>
-  )
+function detectFormat(raw: string): DetectedFormat {
+  const value = raw.trim()
+  if (!value) return 'Sin detectar'
+  if (value.startsWith('# Netscape HTTP Cookie File') || value.split('\n').some((line) => line.split('\t').length >= 7)) return 'Netscape'
+  if (value.startsWith('[')) return 'Cookie Editor JSON'
+  if (value.startsWith('{')) return 'JSON envuelto'
+  if (value.includes('=') && value.includes(';')) return 'Cookie Header String'
+  return 'Sin detectar'
 }
 
-function MyLocationPermission({ request, state, onBack }: { request: () => void; state: string; onBack: () => void }) {
-  return (
-    <main className="min-h-[100dvh] overflow-x-hidden bg-black px-5 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(24px,env(safe-area-inset-top))] text-white">
-      <div className="mx-auto flex min-h-[calc(100dvh-48px)] max-w-md flex-col justify-center">
-        <Crosshair size={30} />
-        <h1 className="mt-5 text-2xl font-semibold">Tu ubicación</h1>
-        <p className="mt-3 text-sm leading-6 text-white/55">STRACKER necesita permiso para mostrar tu ubicación actual. La ubicación se usa únicamente dentro del mapa.</p>
-        {state !== 'MY_LOCATION_IDLE' ? <p className="mt-4 text-sm text-white/60">Estado: {state}</p> : null}
-        <button type="button" onClick={request} className="mt-8 min-h-12 rounded-2xl bg-white px-5 text-sm font-semibold text-black">PERMITIR UBICACIÓN</button>
-        <button type="button" onClick={onBack} className="mt-3 min-h-11 rounded-2xl border border-white/10 text-sm text-white/60">VOLVER</button>
-      </div>
-    </main>
-  )
+function BackButton({ onClick }: { onClick: () => void }) {
+  return <button type="button" onClick={onClick} aria-label="Volver" className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04]"><ChevronLeft size={22} /></button>
 }
 
-function SharedOnboarding({ onImport, onBack, status, loading }: { onImport: () => void; onBack: () => void; status: string; loading: boolean }) {
-  return (
-    <main className="min-h-[100dvh] overflow-x-hidden bg-black px-5 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(24px,env(safe-area-inset-top))] text-white">
-      <div className="mx-auto flex min-h-[calc(100dvh-48px)] max-w-md flex-col justify-center">
-        <ShieldCheck size={30} />
-        <h1 className="mt-5 text-2xl font-semibold">Ubicación compartida</h1>
-        <p className="mt-3 text-sm leading-6 text-white/55">Vinculá una sesión autorizada de Google Maps para ver una ubicación que ya comparten con vos.</p>
-        <p className="mt-4 text-sm text-white/45">Estado: {loading ? 'VALIDANDO' : status}</p>
-        <button type="button" onClick={onImport} className="mt-8 min-h-12 rounded-2xl bg-white px-5 text-sm font-semibold text-black">VINCULAR SESIÓN</button>
-        <button type="button" onClick={onBack} className="mt-3 min-h-11 rounded-2xl border border-white/10 text-sm text-white/60">VOLVER</button>
-      </div>
-    </main>
-  )
+function Selector({ onSelect }: { onSelect: (source: LocationSource) => void }) {
+  return <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-black px-4 py-[max(20px,env(safe-area-inset-top))] text-white"><div className="w-full max-w-md"><header className="mb-7 text-center"><p className="text-xs font-semibold tracking-[0.28em] text-white/50">STRACKER</p><h1 className="mt-3 text-2xl font-semibold">¿Qué ubicación querés ver?</h1></header><div className="grid gap-3"><button type="button" onClick={() => onSelect('my-device')} className="flex min-h-[112px] items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.035] p-4 text-left"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-black"><LocateFixed size={24} /></span><span><strong className="block">MI UBICACIÓN</strong><span className="mt-1 block text-sm text-white/55">Usar la ubicación de este teléfono.</span></span></button><button type="button" onClick={() => onSelect('google-shared')} className="flex min-h-[112px] items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.035] p-4 text-left"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/15"><MapPinned size={24} /></span><span><strong className="block">UBICACIÓN COMPARTIDA</strong><span className="mt-1 block text-sm text-white/55">Ver una ubicación compartida conmigo en Google Maps.</span></span></button></div><p className="mt-5 text-center text-xs text-white/40">Podés cambiar de modo más adelante.</p><p className="mt-3 text-center text-[11px] leading-5 text-white/35">Usá STRACKER sólo con ubicaciones propias o compartidas voluntariamente.</p></div></main>
 }
 
-function SharedImporter({ onCancel, onSuccess }: { onCancel: () => void; onSuccess: () => void }) {
-  const shared = useSharedLocation()
+function MyOnboarding({ state, requestPermission, onBack }: { state: string; requestPermission: () => void; onBack: () => void }) {
+  const error = useMemo(() => ({ MY_LOCATION_PERMISSION_DENIED: 'Permiso denegado. Habilitá la ubicación para este sitio.', MY_LOCATION_UNAVAILABLE: 'El teléfono no pudo obtener una ubicación.', MY_LOCATION_TIMEOUT: 'La lectura tardó demasiado. Intentá nuevamente.', MY_LOCATION_ERROR: 'Ocurrió un error al consultar la ubicación.' }[state] || null), [state])
+  return <main className="relative flex min-h-[100dvh] items-center justify-center overflow-x-hidden bg-black px-5 text-white"><BackButton onClick={onBack} /><div className="w-full max-w-sm text-center"><LocateFixed className="mx-auto" size={32} /><h1 className="mt-5 text-2xl font-semibold">Mi ubicación</h1><p className="mt-3 text-sm leading-6 text-white/55">STRACKER necesita permiso para mostrar tu ubicación actual. La lectura queda en este navegador.</p>{error ? <p role="alert" className="mt-5 rounded-2xl border border-white/10 p-4 text-left text-sm">{error}</p> : null}<button type="button" onClick={requestPermission} disabled={state === 'MY_LOCATION_REQUESTING_PERMISSION'} className="mt-6 min-h-12 w-full rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-50">{state === 'MY_LOCATION_REQUESTING_PERMISSION' ? 'SOLICITANDO PERMISO…' : 'PERMITIR UBICACIÓN'}</button><p className="mt-4 text-xs leading-5 text-white/35">El seguimiento puede pausarse en segundo plano o con ahorro de batería.</p></div></main>
+}
+
+function SharedImporter({ status, loading, error, onBack, onImport }: { status: SharedSessionStatus | null; loading: boolean; error: string | null; onBack: () => void; onImport: (raw: string) => Promise<void> }) {
   const [raw, setRaw] = useState('')
-  const [message, setMessage] = useState('Pegá una exportación autorizada de Google Maps.')
-
-  const submit = async () => {
-    const result = await shared.importSession(raw)
-    setMessage(result.message || result.error || 'No se pudo validar la sesión.')
-    if (result.configured) onSuccess()
-  }
-
-  return (
-    <main className="min-h-[100dvh] overflow-x-hidden bg-black px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))] text-white">
-      <div className="mx-auto w-full max-w-md">
-        <h1 className="text-xl font-semibold">Importar sesión autorizada</h1>
-        <p className="mt-2 text-xs leading-5 text-white/45">Cookie Editor JSON, JSON envuelto, Header String o Netscape. Nunca se muestran valores.</p>
-        <textarea value={raw} onChange={(event) => setRaw(event.target.value)} className="mt-4 min-h-[45dvh] w-full resize-none rounded-2xl border border-white/12 bg-white/[0.04] p-4 text-sm outline-none" placeholder="Pegá la sesión acá" />
-        <p className="mt-3 text-xs leading-5 text-white/50">{message}</p>
-        <button type="button" disabled={!raw.trim()} onClick={submit} className="mt-4 min-h-12 w-full rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-40">IMPORTAR Y VALIDAR</button>
-        <button type="button" onClick={onCancel} className="mt-3 min-h-11 w-full rounded-2xl border border-white/10 text-sm text-white/60">CANCELAR</button>
-      </div>
-    </main>
-  )
+  const [localError, setLocalError] = useState<string | null>(null)
+  const ref = useRef<HTMLTextAreaElement | null>(null)
+  const paste = async () => { try { setRaw(await navigator.clipboard.readText()); ref.current?.focus(); setLocalError(null) } catch { setLocalError('No se pudo leer el portapapeles. Pegá manualmente.') } }
+  const submit = async () => { if (!raw.trim()) { setLocalError('Pegá una sesión antes de importar.'); return } setLocalError(null); await onImport(raw) }
+  return <main className="relative min-h-[100dvh] overflow-x-hidden bg-black px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-[max(76px,calc(env(safe-area-inset-top)+64px))] text-white"><BackButton onClick={onBack} /><div className="mx-auto max-w-md"><p className="text-xs font-semibold tracking-[0.18em] text-white/45">UBICACIÓN COMPARTIDA</p><h1 className="mt-2 text-2xl font-semibold">Vincular sesión de Google Maps</h1><p className="mt-3 text-sm leading-6 text-white/55">Importá una sesión autorizada para consultar una ubicación ya compartida con tu cuenta.</p><div className="mt-5 rounded-[22px] border border-white/10 p-3"><div className="mb-2 flex justify-between text-xs"><span className="text-white/45">Formato detectado</span><strong>{detectFormat(raw)}</strong></div><textarea ref={ref} value={raw} onChange={(event) => setRaw(event.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" className="min-h-[180px] w-full resize-y rounded-2xl border border-white/10 bg-black p-3 font-mono text-[13px]" placeholder="Cookie Editor JSON, Header String o Netscape…" /><button type="button" onClick={paste} className="mt-2 min-h-11 w-full rounded-2xl border border-white/15 text-sm font-semibold">PEGAR</button></div>{localError || error ? <div role="alert" className="mt-3 rounded-2xl border border-white/10 p-4 text-sm"><p>{localError || error}</p><p className="mt-2 text-white/50">Revisá el formato o renová la sesión.</p></div> : null}{status ? <div className="mt-3 grid grid-cols-2 gap-2 rounded-2xl border border-white/10 p-3 text-xs"><span className="text-white/45">Cookies válidas</span><strong className="text-right">{status.count}</strong><span className="text-white/45">Críticas presentes</span><strong className="text-right">{status.criticalPresent.length}</strong><span className="text-white/45">Críticas faltantes</span><strong className="text-right">{status.criticalMissing.length}</strong><span className="text-white/45">Validación</span><strong className="text-right">{status.health}</strong></div> : null}<button type="button" disabled={loading || !raw.trim()} onClick={() => void submit()} className="mt-4 min-h-12 w-full rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-40">{loading ? 'VALIDANDO SESIÓN…' : 'IMPORTAR Y VALIDAR'}</button><div className="mt-5 flex gap-3 text-xs leading-5 text-white/40"><ShieldCheck size={16} className="shrink-0" /><p>Los valores quedan en el backend privado y nunca vuelven al navegador.</p></div></div></main>
 }
 
 export default function MobileLocationApp() {
-  const [flow, setFlow] = useState<ProductFlow>('SELECTING_SOURCE')
-  const [source, setSource] = useState<LocationSource | null>(null)
-  const [showSharedImporter, setShowSharedImporter] = useState(false)
-  const myLocation = useMyLocation()
+  const [initialSource] = useState<LocationSource | null>(() => { if (typeof window === 'undefined') return null; const stored = window.localStorage.getItem(SOURCE_KEY); return stored === 'my-device' || stored === 'google-shared' ? stored : null })
+  const [flow, setFlow] = useState<ProductFlow>(() => initialSource === 'my-device' ? 'MY_LOCATION_FLOW' : initialSource === 'google-shared' ? 'SHARED_LOCATION_FLOW' : 'SELECTING_SOURCE')
+  const [source, setSource] = useState<LocationSource | null>(initialSource)
+  const [importing, setImporting] = useState(false)
+  const my = useMyLocation()
   const shared = useSharedLocation()
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const stored = window.localStorage.getItem(SOURCE_KEY)
-      if (stored === 'my-device' || stored === 'google-shared') setSource(stored)
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [])
+  const select = useCallback((next: LocationSource) => { my.stop(); shared.stop(); setSource(next); window.localStorage.setItem(SOURCE_KEY, next); setFlow(next === 'my-device' ? 'MY_LOCATION_FLOW' : 'SHARED_LOCATION_FLOW'); setImporting(false); if (next === 'google-shared') void shared.refreshStatus() }, [my, shared])
+  const reset = useCallback(() => { my.stop(); shared.stop(); setSource(null); setFlow('SELECTING_SOURCE'); setImporting(false) }, [my, shared])
 
-  const selectSource = useCallback((next: LocationSource) => {
-    myLocation.stop()
-    shared.stop()
-    setSource(next)
-    window.localStorage.setItem(SOURCE_KEY, next)
-    if (next === 'my-device') setFlow('MY_LOCATION_FLOW')
-    else {
-      setFlow('SHARED_LOCATION_FLOW')
-      setShowSharedImporter(false)
-      void shared.refreshStatus()
-    }
-  }, [myLocation, shared])
-
-  const returnToSelector = useCallback(() => {
-    myLocation.stop()
-    shared.stop()
-    setFlow('SELECTING_SOURCE')
-    setSource(null)
-    setShowSharedImporter(false)
-  }, [myLocation, shared])
-
-  if (flow === 'SELECTING_SOURCE') return <SourceSelector onSelect={selectSource} />
-
-  if (source === 'my-device') {
-    if (!myLocation.snapshot) return <MyLocationPermission request={myLocation.request} state={myLocation.state} onBack={returnToSelector} />
-    return <MobileMapShell source="my-device" snapshot={myLocation.snapshot} trace={myLocation.trace} onChangeSource={returnToSelector} onStop={myLocation.stop} />
-  }
-
-  if (showSharedImporter) return <SharedImporter onCancel={() => setShowSharedImporter(false)} onSuccess={() => { setShowSharedImporter(false); void shared.refreshStatus() }} />
-  if (shared.snapshot && ['SHARED_READY', 'SHARED_STALE', 'SHARED_NO_LOCATION'].includes(shared.state)) {
-    return <MobileMapShell source="google-shared" snapshot={shared.snapshot} trace={shared.trace} onChangeSource={returnToSelector} onStop={shared.stop} />
-  }
-  return <SharedOnboarding onImport={() => setShowSharedImporter(true)} onBack={returnToSelector} status={shared.state} loading={shared.loading} />
+  if (flow === 'SELECTING_SOURCE' || !source) return <Selector onSelect={select} />
+  if (source === 'my-device') return isMapUnlocked(source, my.state, shared.state) && my.snapshot ? <MobileMapShell source="my-device" snapshot={my.snapshot} ghostrail={[]} trackingLabel={my.tracking ? 'ACTIVA' : 'PAUSADA'} sessionLabel="Local" onChangeSource={reset} onStop={() => { my.stop(); reset() }} /> : <MyOnboarding state={my.state} requestPermission={my.requestPermission} onBack={reset} />
+  if (!importing && isMapUnlocked(source, my.state, shared.state) && shared.snapshot) return <MobileMapShell source="google-shared" snapshot={shared.snapshot} ghostrail={shared.ghostrail} trackingLabel={shared.state === 'SHARED_READY' ? 'ACTIVA' : shared.state === 'SHARED_STALE' ? 'STALE' : 'SIN UBICACIÓN'} sessionLabel={shared.status?.health || 'VALID'} onChangeSource={reset} onReplaceSession={() => setImporting(true)} onDeleteSession={() => void shared.deleteSession().then(reset)} />
+  return <SharedImporter status={shared.status} loading={shared.loading} error={shared.error} onBack={reset} onImport={async (raw) => { const result = await shared.importSession(raw); if (['SHARED_READY', 'SHARED_STALE', 'SHARED_NO_LOCATION'].includes(result.state)) setImporting(false) }} />
 }
