@@ -1,0 +1,38 @@
+.maplibregl-map {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.maplibregl-canvas {
+  outline: none;
+}
+
+.maplibregl-ctrl-attrib {
+  display: block !important;
+  max-width: calc(100vw - 16px);
+  background: rgba(0, 0, 0, 0.78) !important;
+  color: rgba(255, 255, 255, 0.72) !important;
+  font-size: 10px !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: rgba(255, 255, 255, 0.82) !important;
+  text-decoration: underline;
+}
+
+.maplibregl-ctrl-bottom-left {
+  bottom: calc(max(8px, env(safe-area-inset-bottom)) + 86px) !important;
+  left: 6px !important;
+  max-width: calc(100vw - 12px);
+  z-index: 20;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maplibregl-canvas-container,
+  .maplibregl-marker,
+  .maplibregl-popup {
+    transition: none !important;
+    animation: none !important;
+  }
+}
