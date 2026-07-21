@@ -13,6 +13,9 @@ VERIFIED_STACK_BASE_SHA=77a937b4b157c2ec2c47940d6fe6891cf10b74c9
 STACK_BASE_DEVIATION=NO
 CURRENT_BRANCH=feat/stracker-vector-map-engine-v1
 CURRENT_HEAD_SHA=SEE_DRAFT_PR_6_HEAD
+LAST_VALIDATED_FEATURE_HEAD=2faa42dc127099d97acc28a9404c9cd75a0e9efc
+LAST_VALIDATED_WORKFLOW_RUN=29855942179
+LAST_VALIDATED_WORKFLOW_CONCLUSION=success
 PR_BASE=feat/stracker-cloudflare-private-gateway-poc
 DRAFT_PR=6
 PRODUCTION_MODIFIED=NO
@@ -74,7 +77,8 @@ BUILDINGS_3D=OPTIONAL
 
 ```text
 SATELLITE_PROVIDER=eox-s2cloudless-2016
-TILE_ENDPOINT=https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857/default/g/{z}/{y}/{x}.jpg
+WMTS_LAYER=s2cloudless_3857
+TILE_ENDPOINT=https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg
 LICENSE=CC BY 4.0
 IMAGERY_PERIOD=2016-2017 mosaic
 RESOLUTION=10 m
@@ -110,7 +114,7 @@ MAP_PROVIDER_TOKEN=NONE
 
 ## Basemap transition invariants
 
-Switching modes must not:
+Switching modes does not:
 
 - change location source;
 - reopen the source selector;
@@ -126,7 +130,7 @@ The raster source and layer are added once to the existing MapLibre style. Mode 
 
 ## Failure behavior
 
-A raster-provider error produces:
+A raster-provider error or bounded availability timeout produces:
 
 ```text
 SATÉLITE NO DISPONIBLE EN ESTA ZONA
@@ -162,7 +166,7 @@ stationary → stationary
 user interaction → manual
 ```
 
-Manual mode blocks automatic recentering, pitch and bearing changes. Basemap changes preserve manual mode. `RECENTRAR` selects the appropriate automatic mode. Reduced-motion removes automatic animation.
+Manual mode blocks automatic recentering, pitch and bearing changes. Basemap changes preserve manual mode. `RECENTRAR` selects the appropriate automatic mode. Reduced-motion removes automatic animation. Satellite automatic camera pitch is capped to reduce raster deformation.
 
 GhostRail remains segmented and bounded to 600 accepted points. Rejected, stale, expired or metadata-only observations do not extend it.
 
@@ -178,50 +182,54 @@ HYBRID=SATELLITE attribution + OpenFreeMap/OpenStreetMap
 
 Map providers can observe normal HTTP metadata and viewport-derived tile coordinates. No shared-session cookie, Access JWT or STRACKER origin service token is sent to them.
 
-## Performance evidence
-
-Budgets are defined in `docs/performance/VECTOR_MAP_BUDGETS.json`. Vector and raster request/byte totals are measured separately.
+## Exact-head evidence
 
 ```text
-MOBILE_ARTIFACT=stracker-vector-map-mobile-qa-<SHA>
-PROVIDER_ARTIFACT=stracker-vector-map-spike-<SHA>
+VALIDATED_FEATURE_HEAD=2faa42dc127099d97acc28a9404c9cd75a0e9efc
+WORKFLOW_RUN_ID=29855942179
+WORKFLOW_CONCLUSION=success
+MOBILE_ARTIFACT_ID=8505326097
+MOBILE_ARTIFACT_DIGEST=sha256:276648e98f5b0fa044592d4fb12f7abf90b4b745303b53f6d373ea936d8ca7c2
+PROVIDER_ARTIFACT_ID=8505304475
+PROVIDER_ARTIFACT_DIGEST=sha256:18e94400cfc5568db95374865948ad16758bbe77e111706861b3286bd2bd5174
 A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
 ```
 
 ## Validation state
 
-The newest completed `STRACKER Vector Map Engine V1` run associated with the current PR #6 head is authoritative.
-
 ```text
-STACKED_BASE_CHECK=SEE_CURRENT_HEAD_CI
-FROZEN_INSTALL=SEE_CURRENT_HEAD_CI
-BACKEND_TESTS=SEE_CURRENT_HEAD_CI
-ESLINT=SEE_CURRENT_HEAD_CI
-TYPECHECK=SEE_CURRENT_HEAD_CI
-VECTOR_MAP_TESTS=SEE_CURRENT_HEAD_CI
-STATIC_EXPORT_BUILD=SEE_CURRENT_HEAD_CI
-FINAL_BUNDLE_SINGLE_ENGINE=SEE_CURRENT_HEAD_CI
-VECTOR_TO_SATELLITE=SEE_CURRENT_HEAD_CI
-SATELLITE_TO_HYBRID=SEE_CURRENT_HEAD_CI
-HYBRID_TO_VECTOR=SEE_CURRENT_HEAD_CI
-LOCATION_SOURCE_UNCHANGED=SEE_CURRENT_HEAD_CI
-MARKER_PRESERVED=SEE_CURRENT_HEAD_CI
-GHOSTRAIL_PRESERVED=SEE_CURRENT_HEAD_CI
-CAMERA_MANUAL_PRESERVED=SEE_CURRENT_HEAD_CI
-NO_NEW_GEOLOCATION_REQUEST=SEE_CURRENT_HEAD_CI
-NO_NEW_SESSION_REQUEST=SEE_CURRENT_HEAD_CI
-NO_SECOND_RENDERER=SEE_CURRENT_HEAD_CI
-SATELLITE_ATTRIBUTION_VISIBLE=SEE_CURRENT_HEAD_CI
-PROVIDER_FAILURE_EXPLICIT=SEE_CURRENT_HEAD_CI
-ZERO_COST_SATELLITE_GATE=SEE_CURRENT_HEAD_CI
-RASTER_TRANSFER_BUDGETS=SEE_CURRENT_HEAD_CI
-CI_FINAL=SEE_CURRENT_HEAD_CI
+STACKED_BASE_CHECK=PASS
+FROZEN_INSTALL=PASS
+BACKEND_TESTS=PASS
+ESLINT=PASS
+TYPECHECK=PASS
+VECTOR_MAP_TESTS=PASS
+STATIC_EXPORT_BUILD=PASS
+FINAL_BUNDLE_SINGLE_ENGINE=PASS
+VECTOR_TO_SATELLITE=PASS
+SATELLITE_TO_HYBRID=PASS
+HYBRID_TO_VECTOR=PASS
+LOCATION_SOURCE_UNCHANGED=PASS
+MARKER_PRESERVED=PASS
+GHOSTRAIL_PRESERVED=PASS
+CAMERA_MANUAL_PRESERVED=PASS
+NO_NEW_GEOLOCATION_REQUEST=PASS
+NO_NEW_SESSION_REQUEST=PASS
+NO_SECOND_RENDERER=PASS
+SATELLITE_ATTRIBUTION_VISIBLE=PASS
+PROVIDER_FAILURE_EXPLICIT=PASS
+ZERO_COST_SATELLITE_GATE=PASS
+RASTER_TRANSFER_BUDGETS=PASS
+OPENFREEMAP_LIVE_VALIDATION=PASS
+SATELLITE_PROVIDER_LIVE_VALIDATION=PASS
+SECURITY_ARTIFACT_SCAN=PASS
+CI_FINAL=SUCCESS
 ```
 
 ## Known risks
 
 - OpenFreeMap and EOx public services have no STRACKER-controlled SLA.
-- EOxCloudless 2016 is lower-resolution historical imagery, not a current high-resolution orthophoto.
+- EOxCloudless is lower-resolution historical imagery, not a current high-resolution orthophoto.
 - IGN orthomosaic coverage remains partial/variable until a coverage-aware layer catalogue is validated.
 - OpenStreetMap building heights and footprints may be incomplete.
 - Physical Samsung Galaxy A22 performance remains unverified.
@@ -241,4 +249,4 @@ FULL_CLOUDFLARE_CUTOVER=NO_GO
 
 ## Next exact phase
 
-After PR #6 reaches green CI on its final exact SHA, freeze it and continue the separately authorized zero-cost Cloudflare runtime PoC. Do not merge or deploy as part of this phase.
+Freeze PR #6 after its final documentation-only head is green. Continue the separately authorized zero-cost Cloudflare runtime PoC without merging or deploying this PR.
