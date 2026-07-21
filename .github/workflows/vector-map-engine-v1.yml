@@ -48,16 +48,27 @@ jobs:
         run: |
           bun run lint
           echo 'ESLINT=PASS'
-      - name: Typecheck
+      - name: Typecheck diagnostic
+        id: typecheck
+        continue-on-error: true
         run: |
           set +e
           bun run typecheck >/tmp/typecheck.log 2>&1
           code=$?
-          if [ "$code" -ne 0 ]; then
-            echo 'TYPECHECK_DIAGNOSTIC_BEGIN'
-            tail -n 120 /tmp/typecheck.log
-            echo 'TYPECHECK_DIAGNOSTIC_END'
-            exit "$code"
+          cat /tmp/typecheck.log
+          exit "$code"
+      - name: Upload typecheck diagnostic
+        if: steps.typecheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stracker-vector-map-typecheck-${{ github.event.pull_request.head.sha }}
+          path: /tmp/typecheck.log
+          retention-days: 2
+      - name: Enforce typecheck
+        run: |
+          if [ "${{ steps.typecheck.outcome }}" != "success" ]; then
+            echo 'TYPECHECK=FAIL'
+            exit 1
           fi
           echo 'TYPECHECK=PASS'
       - name: Vector map pure tests
