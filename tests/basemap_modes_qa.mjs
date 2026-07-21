@@ -1,10 +1,18 @@
 import fs from 'node:fs'
 import puppeteer from 'puppeteer-core'
+import sharp from 'sharp'
 
 const executablePath = process.env.CHROME_BIN || '/usr/bin/google-chrome'
 const baseUrl = process.env.QA_BASE_URL || 'http://127.0.0.1:4173'
 const output = process.env.QA_BASEMAP_OUTPUT || '/tmp/basemap-modes-results.json'
-const onePixelPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+const rasterTilePng = await sharp({
+  create: {
+    width: 256,
+    height: 256,
+    channels: 4,
+    background: { r: 22, g: 34, b: 46, alpha: 1 },
+  },
+}).png().toBuffer()
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -71,16 +79,16 @@ async function respondRaster(request, counters, fail = false) {
     await request.respond({ status: 503, contentType: 'text/plain', body: 'synthetic satellite failure' })
     return
   }
-  counters.bytes += onePixelPng.byteLength
+  counters.bytes += rasterTilePng.byteLength
   await request.respond({
     status: 200,
     headers: {
       'Content-Type': 'image/png',
-      'Content-Length': String(onePixelPng.byteLength),
+      'Content-Length': String(rasterTilePng.byteLength),
       'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'public, max-age=60',
     },
-    body: onePixelPng,
+    body: rasterTilePng,
   })
 }
 
