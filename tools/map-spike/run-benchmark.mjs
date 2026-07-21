@@ -113,7 +113,7 @@ window.__benchmark = new Promise((resolve, reject) => {
         webgl:Boolean(gl),
         renderer:gl ? gl.getParameter(gl.RENDERER) : null,
         buildings3d:Boolean(layer && layer.type === 'fill-extrusion'),
-        camera:{zoom:map.getZoom(),pitch:map.getPitch(),bearing:map.getBearing(),center:map.getCenter().toArray()},
+        camera:{zoom:map.getZoom(),pitch:map.getPitch(),bearing:map.getBearing(),centerValuesRetained:false},
         frames,
         estimatedFps:Math.round(frames / 1.8),
         longTasks:longTasks.length,
@@ -160,7 +160,7 @@ const port = typeof address === 'object' && address ? address.port : 0
 const browser = await puppeteer.launch({
   executablePath: chrome,
   headless: true,
-  args: ['--no-sandbox', '--enable-webgl', '--ignore-gpu-blocklist', '--use-angle=swiftshader', '--disable-dev-shm-usage'],
+  args: ['--no-sandbox', '--enable-webgl', '--ignore-gpu-blocklist', '--use-angle=swiftshader', '--disable-dev-shm-usage', '--enable-precise-memory-info'],
 })
 
 const results = []
@@ -169,11 +169,11 @@ try {
     const page = await browser.newPage()
     await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true })
     const consoleErrors = []
-    const externalRequests = []
+    const externalHosts = new Set()
     page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
     page.on('request', request => {
       const requestUrl = new URL(request.url())
-      if (requestUrl.hostname !== '127.0.0.1') externalRequests.push(request.url())
+      if (requestUrl.hostname !== '127.0.0.1') externalHosts.add(requestUrl.hostname)
     })
     await page.goto(`http://127.0.0.1:${port}/${name}`, { waitUntil: 'load' })
     const result = await page.evaluate(() => window.__benchmark)
@@ -186,8 +186,8 @@ try {
       jsBytes,
       cssBytes,
       servedBytes: servedBytes[name],
-      consoleErrors,
-      externalRequests,
+      consoleErrorCount: consoleErrors.length,
+      externalHosts: [...externalHosts].sort(),
     })
     await page.close()
   }
@@ -197,8 +197,12 @@ try {
 }
 
 const raw = {
+  schema: 'stracker.renderer-benchmark.v1',
   generatedAt: new Date().toISOString(),
+  benchmarkClassification: 'RENDERER_BENCHMARK_ONLY',
+  fullStackParityClaimed: false,
   fixture: fixture.name,
+  fixtureCoordinateValuesRetained: false,
   viewport: { width: 390, height: 844 },
   dataProvider: 'LOCAL_SYNTHETIC_GEOJSON_ONLY',
   engines: results,
@@ -213,6 +217,8 @@ const raw = {
 await writeFile(output, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 })
 for (const result of results) {
   if (!result.webgl || !result.buildings3d) throw new Error(`${result.engine} renderer benchmark failed`)
+  if (result.externalHosts.length > 0) throw new Error(`${result.engine} benchmark made external requests`)
 }
 console.log(`MAP_SPIKE_RAW_RESULTS=${output}`)
-console.log('MAP_RENDERER_EQUIVALENT_FIXTURE=PASS')
+console.log('RENDERER_BENCHMARK=PASS')
+console.log('FULL_STACK_PARITY_CLAIMED=NO')
