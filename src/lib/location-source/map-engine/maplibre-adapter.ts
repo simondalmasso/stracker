@@ -200,7 +200,6 @@ export function createMapLibreAdapter(): MapEngineAdapter {
         maxZoom: 20,
         maxPitch: 65,
         attributionControl: false,
-        antialias: true,
         cooperativeGestures: false,
         fadeDuration: initial.reducedMotion ? 0 : 180,
       })
