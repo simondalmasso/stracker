@@ -29,20 +29,16 @@ PR_2=FROZEN_UNMODIFIED
 PR_4=FROZEN_UNMODIFIED
 ```
 
-No commit, body, base, Draft state, merge or deployment mutation was made to those pull requests during this phase.
+## Product entry contract
 
-## Product model
-
-Every new page load, reload, new tab and navigation to `/` begins at:
+Every open, reload, new tab and navigation to `/` begins at:
 
 ```text
 ¿QUÉ UBICACIÓN QUERÉS VER?
 MI UBICACIÓN | UBICACIÓN COMPARTIDA
 ```
 
-Selection is React memory only. It is not persisted. The selector is not reopened by re-render, orientation change, visibility change, background recovery, bottom-sheet interaction or WebGL restoration.
-
-Before selection:
+Selection is memory-only. Before choosing a source:
 
 ```text
 MAP_REQUEST=NO
@@ -51,22 +47,57 @@ SESSION_REQUEST=NO
 POINTS_REQUEST=NO
 ```
 
-## Selected map stack
+## Renderer and basemap modes
 
 ```text
 RENDERER=MapLibre GL JS
+DEFAULT_BASEMAP_MODE=vector-3d
+BASEMAP_MODES=vector-3d|satellite|hybrid
+UI_LABELS=MAPA 3D|SATÉLITE|HÍBRIDO
+SECOND_RENDERER=ABSENT
+```
+
+`BasemapMode` is independent from `LocationSource`, `MotionState`, `FreshnessState`, `SourceHealth`, `SharedSessionState` and `CameraMode`.
+
+Basemap state is held only in React memory for the current document. It is not written to localStorage, cookies, backend state or the URL. A new document starts in `vector-3d`.
+
+### VECTOR_3D
+
+```text
 STYLE_PROVIDER=OpenFreeMap
 BASE_DATA=OpenStreetMap/OpenMapTiles-compatible
 STYLE=https://tiles.openfreemap.org/styles/liberty
-MAP_PROVIDER_TOKEN=NONE
-MAP_PROVIDER_BILLING_ACCOUNT=NONE
-MAPBOX_RUNTIME=ABSENT
-LEAFLET_RUNTIME=ABSENT
+BUILDINGS_3D=OPTIONAL
 ```
 
-Mapbox is benchmark-only. Its package is installed transiently under `/tmp` in the isolated renderer-spike job and never enters `package.json`, `bun.lock`, source runtime or exported assets.
+### SATELLITE and HYBRID
 
-## Zero-cost decision
+```text
+SATELLITE_PROVIDER=eox-s2cloudless-2016
+TILE_ENDPOINT=https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857/default/g/{z}/{y}/{x}.jpg
+LICENSE=CC BY 4.0
+IMAGERY_PERIOD=2016-2017 mosaic
+RESOLUTION=10 m
+MAX_ZOOM=14
+RECENT_CLAIM_ALLOWED=NO
+COMPLETE_COVERAGE_CLAIMED=NO
+```
+
+`SATELLITE` shows raster imagery without vector labels or extruded buildings. `HYBRID` adds OpenFreeMap line and symbol layers. Marker, connection halo, accuracy and segmented GhostRail remain above every basemap.
+
+## Satellite provider decision
+
+```text
+IGN_ARGENMAP_HYBRID=BLOCKED_BY_IMAGERY_PROVENANCE_AND_LICENSE_AMBIGUITY
+IGN_PUBLIC_ORTHOMOSAICS=PARTIAL_COVERAGE_CANDIDATE_NOT_SELECTED
+EOXCLOUDLESS_2016=SELECTED_AS_AUTHORIZED_OPEN_FALLBACK
+```
+
+No Google Satellite, Mapbox Satellite, paid/authenticated ArcGIS imagery, billable MapTiler imagery, private API or reverse-engineered endpoint is used.
+
+The product does not claim that EOx imagery is recent. It does not claim complete IGN orthomosaic coverage.
+
+## Zero-cost policy
 
 ```text
 RECURRING_INFRASTRUCTURE_COST_USD=0
@@ -74,57 +105,55 @@ MAP_PROVIDER_COST_USD=0
 PAID_OVERAGE_ALLOWED=NO
 AUTOMATIC_UPGRADE_TO_PAID=NO
 BILLING_DEPENDENCY=NO
-ZERO_COST_HARD_GATE=PASS
-PAID_OVERAGE_RISK=NO
+MAP_PROVIDER_TOKEN=NONE
 ```
 
-Mapbox fails the strict production eligibility gate because its normal hosted service has a metered billing path after included usage and does not satisfy the required pre-charge hard-cap condition. OpenFreeMap is selected with explicit availability/no-SLA risk and an adapter path toward self-hosted compatible data or PMTiles.
+## Basemap transition invariants
 
-## Architecture
+Switching modes must not:
+
+- change location source;
+- reopen the source selector;
+- request geolocation again;
+- call session routes or restart polling;
+- clear marker or GhostRail;
+- alter accepted timestamps;
+- exit manual camera mode;
+- accept a stale response;
+- recreate the MapLibre canvas.
+
+The raster source and layer are added once to the existing MapLibre style. Mode changes alter layer visibility only.
+
+## Failure behavior
+
+A raster-provider error produces:
 
 ```text
-map engine adapter
-camera controller
-motion classifier
-accuracy filter
-source contracts
-marker/accuracy/GhostRail layers
-source selector
-mobile bottom sheet
+SATÉLITE NO DISPONIBLE EN ESTA ZONA
 ```
 
-Motion, freshness, source health, shared-session state and camera mode are independent. No `dead` state or aggregate status is canonical.
+Location tracking and product overlays remain active. There is no silent fallback to a paid or unauthorized provider.
 
-## Source behavior
+## Location behavior
 
 ### MI UBICACIÓN
 
-- starts `watchPosition()` only after explicit permission action;
-- uses accuracy, plausible speed and heading evidence;
-- maintains filtered stable point and segmented GhostRail in memory;
-- does not call shared APIs;
-- stops and clears on source change.
+- starts `watchPosition()` only after explicit user action;
+- uses accuracy and plausible speed/heading evidence;
+- maintains stable coordinate and segmented GhostRail in memory;
+- never calls shared-session APIs;
+- clears watcher and pipeline on source change.
 
 ### UBICACIÓN COMPARTIDA
 
 - starts status/polling only after selecting shared mode;
 - requires same-origin private-gateway attestation;
 - uses remote timestamps without interpolation;
-- may keep movement `unknown`;
-- aborts requests and invalidates late responses on source change;
-- replaces the full pipeline on session replacement.
+- invalidates late responses;
+- does not restart polling during basemap changes;
+- replaces the full pipeline only when the shared session is replaced.
 
-## Filtering and GhostRail
-
-- Haversine distance and elapsed time are renderer-independent;
-- dead-zone readings update precision/timestamps/freshness/health without moving the visual point;
-- invalid coordinates, low accuracy, out-of-order timestamps and impossible speeds are rejected;
-- rejected or stale/expired points do not extend GhostRail;
-- excessive intervals, source changes and session replacement create discontinuities;
-- discontinuities are represented as separate solid segments;
-- GhostRail is bounded to 600 points in memory.
-
-## Camera
+## Camera and GhostRail
 
 ```text
 unknown → overview
@@ -133,32 +162,35 @@ stationary → stationary
 user interaction → manual
 ```
 
-Manual mode blocks automatic recentering and pitch/bearing changes. `RECENTRAR` exits manual and chooses the appropriate automatic mode. Reduced-motion removes automatic animation.
+Manual mode blocks automatic recentering, pitch and bearing changes. Basemap changes preserve manual mode. `RECENTRAR` selects the appropriate automatic mode. Reduced-motion removes automatic animation.
 
-## Performance and WebGL
+GhostRail remains segmented and bounded to 600 accepted points. Rejected, stale, expired or metadata-only observations do not extend it.
 
-Budgets are defined in `docs/performance/VECTOR_MAP_BUDGETS.json`. Raw current-head evidence is produced by:
+## Attribution and privacy
+
+Attribution changes with active layers and remains visible above the bottom sheet:
 
 ```text
-stracker-vector-map-mobile-qa-<SHA>
-stracker-vector-map-spike-<SHA>
+VECTOR_3D=OpenFreeMap|OpenMapTiles|OpenStreetMap
+SATELLITE=EOxCloudless|EOX|modified Copernicus Sentinel data 2016 & 2017
+HYBRID=SATELLITE attribution + OpenFreeMap/OpenStreetMap
 ```
 
-WebGL fallback order:
+Map providers can observe normal HTTP metadata and viewport-derived tile coordinates. No shared-session cookie, Access JWT or STRACKER origin service token is sent to them.
 
-1. reduce pitch;
-2. reduce 3D density;
-3. disable terrain;
-4. simplify effects;
-5. retain vector 2D.
+## Performance evidence
+
+Budgets are defined in `docs/performance/VECTOR_MAP_BUDGETS.json`. Vector and raster request/byte totals are measured separately.
 
 ```text
+MOBILE_ARTIFACT=stracker-vector-map-mobile-qa-<SHA>
+PROVIDER_ARTIFACT=stracker-vector-map-spike-<SHA>
 A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
 ```
 
 ## Validation state
 
-The newest workflow run named `STRACKER Vector Map Engine V1` associated with the current Draft PR #6 head is authoritative.
+The newest completed `STRACKER Vector Map Engine V1` run associated with the current PR #6 head is authoritative.
 
 ```text
 STACKED_BASE_CHECK=SEE_CURRENT_HEAD_CI
@@ -167,29 +199,34 @@ BACKEND_TESTS=SEE_CURRENT_HEAD_CI
 ESLINT=SEE_CURRENT_HEAD_CI
 TYPECHECK=SEE_CURRENT_HEAD_CI
 VECTOR_MAP_TESTS=SEE_CURRENT_HEAD_CI
-BUILD=SEE_CURRENT_HEAD_CI
-SINGLE_ENGINE_FINAL_BUNDLE=SEE_CURRENT_HEAD_CI
-UNSELECTED_ENGINE_ABSENT=SEE_CURRENT_HEAD_CI
-MOBILE_QA=SEE_CURRENT_HEAD_CI
-RENDERER_SPIKE=SEE_CURRENT_HEAD_CI
-PERFORMANCE_RAW_RESULTS_SAVED=SEE_CURRENT_HEAD_CI
+STATIC_EXPORT_BUILD=SEE_CURRENT_HEAD_CI
+FINAL_BUNDLE_SINGLE_ENGINE=SEE_CURRENT_HEAD_CI
+VECTOR_TO_SATELLITE=SEE_CURRENT_HEAD_CI
+SATELLITE_TO_HYBRID=SEE_CURRENT_HEAD_CI
+HYBRID_TO_VECTOR=SEE_CURRENT_HEAD_CI
+LOCATION_SOURCE_UNCHANGED=SEE_CURRENT_HEAD_CI
+MARKER_PRESERVED=SEE_CURRENT_HEAD_CI
+GHOSTRAIL_PRESERVED=SEE_CURRENT_HEAD_CI
+CAMERA_MANUAL_PRESERVED=SEE_CURRENT_HEAD_CI
+NO_NEW_GEOLOCATION_REQUEST=SEE_CURRENT_HEAD_CI
+NO_NEW_SESSION_REQUEST=SEE_CURRENT_HEAD_CI
+NO_SECOND_RENDERER=SEE_CURRENT_HEAD_CI
+SATELLITE_ATTRIBUTION_VISIBLE=SEE_CURRENT_HEAD_CI
+PROVIDER_FAILURE_EXPLICIT=SEE_CURRENT_HEAD_CI
+ZERO_COST_SATELLITE_GATE=SEE_CURRENT_HEAD_CI
+RASTER_TRANSFER_BUDGETS=SEE_CURRENT_HEAD_CI
 CI_FINAL=SEE_CURRENT_HEAD_CI
 ```
 
-## Provider privacy
-
-The browser sends style, glyph, sprite and tile requests after map unlock. The provider/CDN can observe IP, user agent, requested resources and viewport-derived tile coordinates. No Google cookie, Access JWT or STRACKER service token is sent to the map provider.
-
-Attribution is visible and accessible above the mobile sheet.
-
 ## Known risks
 
-- OpenFreeMap public service has no contractual SLA and may change or become unavailable.
-- OpenStreetMap building heights and footprints may be incomplete or inaccurate.
-- Physical A22 performance remains unverified.
-- Repository history still contains separately tracked sensitive-material risks.
-- Production remains on the previous Render runtime because this PR does not deploy.
-- The Google Location Sharing endpoint remains undocumented and must stay fail-closed.
+- OpenFreeMap and EOx public services have no STRACKER-controlled SLA.
+- EOxCloudless 2016 is lower-resolution historical imagery, not a current high-resolution orthophoto.
+- IGN orthomosaic coverage remains partial/variable until a coverage-aware layer catalogue is validated.
+- OpenStreetMap building heights and footprints may be incomplete.
+- Physical Samsung Galaxy A22 performance remains unverified.
+- Production remains on the previous runtime because PR #6 does not deploy.
+- Google Location Sharing remains undocumented and must stay fail-closed.
 
 ## Release posture
 
@@ -204,8 +241,4 @@ FULL_CLOUDFLARE_CUTOVER=NO_GO
 
 ## Next exact phase
 
-```text
-NEXT_PHASE=stracker-zero-cost-cloudflare-runtime-poc
-```
-
-That separate PR must test HTTP probing, parser equivalence, AES-GCM through Web Crypto, non-ephemeral storage, Cloudflare Free limits, fail-closed behavior and synthetic parity. It must not deploy production or use private data without separate authorization.
+After PR #6 reaches green CI on its final exact SHA, freeze it and continue the separately authorized zero-cost Cloudflare runtime PoC. Do not merge or deploy as part of this phase.
