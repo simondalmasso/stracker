@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 
-const root = 'out'
+const runtimeRoots = ['out/index.html', 'out/_next/static']
 const extensions = new Set(['.html', '.js', '.css', '.json', '.txt'])
 const forbidden = [
   { name: 'Mapbox hosted API', pattern: /api\.mapbox\.com/i },
@@ -17,17 +17,17 @@ const forbidden = [
 ]
 
 async function filesUnder(current) {
+  const info = await stat(current)
+  if (info.isFile()) return extensions.has(extname(current)) ? [current] : []
   const result = []
   for (const entry of await readdir(current)) {
     const path = join(current, entry)
-    const info = await stat(path)
-    if (info.isDirectory()) result.push(...await filesUnder(path))
-    else if (extensions.has(extname(path))) result.push(path)
+    result.push(...await filesUnder(path))
   }
   return result
 }
 
-const files = await filesUnder(root)
+const files = (await Promise.all(runtimeRoots.map(filesUnder))).flat().sort()
 let openFreeMapFound = false
 let satelliteFound = false
 let mapLibreFound = false
@@ -43,10 +43,10 @@ for (const file of files) {
   }
 }
 
-if (!openFreeMapFound) throw new Error('OpenFreeMap host absent from exported assets')
-if (!satelliteFound) throw new Error('selected EOx satellite host absent from exported assets')
-if (!mapLibreFound) throw new Error('MapLibre runtime marker absent from exported assets')
-if (!basemapLabelsFound) throw new Error('three visible basemap labels absent from exported assets')
+if (!openFreeMapFound) throw new Error('OpenFreeMap host absent from exported runtime assets')
+if (!satelliteFound) throw new Error('selected EOx satellite host absent from exported runtime assets')
+if (!mapLibreFound) throw new Error('MapLibre runtime marker absent from exported runtime assets')
+if (!basemapLabelsFound) throw new Error('three visible basemap labels absent from exported runtime assets')
 
 console.log(`EXPORTED_RUNTIME_FILES_SCANNED=${files.length}`)
 console.log('SINGLE_ENGINE_FINAL_BUNDLE=PASS')
