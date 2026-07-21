@@ -8,6 +8,8 @@ import type {
   SourceHealth,
 } from '../contracts'
 
+export type MapProviderState = 'loading' | 'available' | 'degraded'
+
 export interface MapRenderState {
   source: LocationSource
   point: GeoPoint
@@ -41,6 +43,7 @@ export interface MapEngineCallbacks {
   onManualInteraction: () => void
   onWebglContextLost: () => void
   onWebglContextRestored: () => void
+  onProviderState: (state: MapProviderState) => void
   onPerformance: (snapshot: MapPerformanceSnapshot) => void
 }
 
