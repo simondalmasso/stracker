@@ -188,6 +188,7 @@ export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSo
 
   const sourceTitle = source === 'my-device' ? 'MI UBICACIÓN' : 'UBICACIÓN COMPARTIDA'
   const stateText = snapshot.health === 'receiving' ? 'RECIBIENDO' : snapshot.health === 'degraded' ? 'DEGRADADA' : snapshot.health === 'unreachable' ? 'INALCANZABLE' : 'DESCONOCIDA'
+  const ghostrailPointCount = ghostrail.reduce((total, segment) => total + segment.points.length, 0)
 
   return (
     <main
@@ -196,12 +197,21 @@ export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSo
       data-map-engine="maplibre"
       data-map-provider={providerState}
       data-camera-mode={cameraMode}
+      data-camera-animation={reducedMotion ? 'off' : 'on'}
+      data-reduced-motion={reducedMotion ? 'true' : 'false'}
       data-motion={snapshot.motion}
       data-freshness={snapshot.freshness}
       data-health={snapshot.health}
       data-filter-decision={snapshot.filterDecision}
       data-ghostrail-segments={ghostrail.length}
+      data-ghostrail-points={ghostrailPointCount}
       data-webgl-recovery={contextRecovery}
+      data-map-first-visible-ms={performance?.firstMapVisibleMs ?? ''}
+      data-map-first-interactive-ms={performance?.firstInteractiveMs ?? ''}
+      data-map-fps={performance?.estimatedFps ?? ''}
+      data-map-long-tasks={performance?.longTasks ?? ''}
+      data-map-long-task-ms={performance?.longTaskDurationMs ?? ''}
+      data-map-transferred-bytes={performance?.transferredBytes ?? ''}
     >
       <div ref={containerRef} className="h-full w-full" aria-label="Mapa vectorial de ubicación" />
       {providerState === 'degraded' ? (
