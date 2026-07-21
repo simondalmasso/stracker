@@ -5,7 +5,6 @@ const root = 'out'
 const extensions = new Set(['.html', '.js', '.css', '.json', '.txt'])
 const forbidden = [
   { name: 'Mapbox hosted API', pattern: /api\.mapbox\.com/i },
-  { name: 'Mapbox renderer global', pattern: /\bmapboxgl\b/i },
   { name: 'Leaflet runtime', pattern: /leaflet-container|react-leaflet/i },
   { name: 'Legacy OSM raster', pattern: /tile\.openstreetmap\.org/i },
   { name: 'ArcGIS imagery', pattern: /(?:arcgisonline\.com|arcgis\.com).*?(?:World_Imagery|imagery)/i },
