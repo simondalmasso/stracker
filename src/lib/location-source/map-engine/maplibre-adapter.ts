@@ -205,6 +205,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
   let contextLostActive = false
   let satelliteFailureActive = false
   let satelliteAvailabilityTimer: ReturnType<typeof setTimeout> | null = null
+  let appliedBasemapMode: BasemapMode | null = null
   let createdAtMs = 0
   let firstMapVisibleMs: number | null = null
   let firstInteractiveMs: number | null = null
@@ -291,6 +292,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       enabled: mode === 'vector-3d' && Boolean(latestState?.buildings3d),
       density: latestState?.reducedMotion ? 'reduced' : 'full',
     })
+    appliedBasemapMode = mode
   }
 
   const handleContextLost = (event?: Event) => {
@@ -330,6 +332,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       loaded = false
       contextLostActive = false
       satelliteFailureActive = false
+      appliedBasemapMode = null
       clearSatelliteAvailabilityTimer()
       createdAtMs = performance.now()
       fpsWindowStart = createdAtMs
@@ -425,10 +428,10 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       performanceTimer = setInterval(emitPerformance, 5_000)
     },
     render(state) {
-      const modeChanged = latestState?.basemapMode !== state.basemapMode
       latestState = state
-      if (!map || !loaded || contextLostActive) return
-      if (modeChanged) applyBasemapMode(state.basemapMode)
+      if (!map || contextLostActive) return
+      if (map.isStyleLoaded() && appliedBasemapMode !== state.basemapMode) applyBasemapMode(state.basemapMode)
+      if (!loaded) return
       setSourceData(map, SOURCE_MARKER, markerData(state))
       setSourceData(map, SOURCE_ACCURACY, accuracyData(state))
       setSourceData(map, SOURCE_RAIL, railData(state))
@@ -472,6 +475,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       loaded = false
       contextLostActive = false
       satelliteFailureActive = false
+      appliedBasemapMode = null
       baseLayerVisibility.clear()
     },
   }
