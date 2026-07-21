@@ -80,9 +80,16 @@ try {
     if (!(target instanceof HTMLElement)) throw new Error('shared button not found')
     target.click()
   })
-  await page.waitForFunction(() => document.body.textContent?.includes('Vincular sesión de Google Maps'))
-  assert(!(await page.content()).includes('leaflet-container'), 'shared map must remain locked without validated session')
+  await page.waitForFunction(() => {
+    const text = document.body.textContent || ''
+    return text.includes('Vincular sesión de Google Maps') || text.includes('Ubicación compartida sintética')
+  })
+  assert(!(await page.content()).includes('leaflet-container'), 'shared map must remain locked without validated gateway response')
   assert(await page.$eval('body', (body) => body.scrollWidth <= window.innerWidth), 'shared onboarding overflow')
+  if ((await page.content()).includes('STAGING SINTÉTICO')) {
+    assert((await page.content()).includes('DATOS NO REALES'), 'staging synthetic warning missing')
+    assert(!(await page.content()).includes('Cookie Editor JSON'), 'staging must not offer real cookie import')
+  }
   await context.close()
 
   console.log(`MOBILE_QA_PASS viewports=${viewports.length} pageerror=0 overflow=0 touch_targets=pass map_locking=pass`)
