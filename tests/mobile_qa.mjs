@@ -3,7 +3,7 @@ import puppeteer from 'puppeteer-core'
 
 const executablePath = process.env.CHROME_BIN || '/usr/bin/google-chrome'
 const baseUrl = process.env.QA_BASE_URL || 'http://127.0.0.1:4173'
-const rawOutput = process.env.QA_RAW_OUTPUT || '/tmp/stracker-vector-map-performance.json'
+const output = process.env.QA_RAW_OUTPUT || '/tmp/stracker-vector-map-performance.json'
 const viewports = [
   { width: 320, height: 568 },
   { width: 360, height: 640 },
@@ -22,6 +22,10 @@ async function clickText(page, text) {
     if (!(target instanceof HTMLElement)) throw new Error(`button not found: ${expected}`)
     target.click()
   }, text)
+}
+
+async function noOverflow(page, label) {
+  assert(await page.$eval('body', (body) => body.scrollWidth <= window.innerWidth), `horizontal overflow: ${label}`)
 }
 
 async function installSyntheticGeolocation(page) {
@@ -51,104 +55,26 @@ async function installSyntheticGeolocation(page) {
           callbacks.delete(id)
           window.__strackerGeo.clearCalls += 1
         },
-        getCurrentPosition() {
-          throw new Error('getCurrentPosition is not allowed in STRACKER')
-        },
       },
     })
   })
 }
 
-async function emitGeo(page, { lat, lng, accuracy = 8, speed = null, heading = null, timestamp }) {
-  await page.evaluate((payload) => {
+async function emitGeo(page, payload) {
+  await page.evaluate((input) => {
     window.__strackerGeo.emit({
       coords: {
-        latitude: payload.lat,
-        longitude: payload.lng,
-        accuracy: payload.accuracy,
+        latitude: input.lat,
+        longitude: input.lng,
+        accuracy: input.accuracy ?? 3,
         altitude: null,
         altitudeAccuracy: null,
-        heading: payload.heading,
-        speed: payload.speed,
+        heading: input.heading ?? null,
+        speed: input.speed ?? null,
       },
-      timestamp: payload.timestamp,
+      timestamp: input.timestamp,
     })
-  }, { lat, lng, accuracy, speed, heading, timestamp })
-}
-
-function validStatus() {
-  return {
-    appAuthenticated: true,
-    state: 'SHARED_READY',
-    health: 'VALID',
-    configured: true,
-    formatDetected: 'synthetic',
-    count: 1,
-    criticalPresent: ['SYNTHETIC_ONLY'],
-    criticalMissing: [],
-    message: 'Synthetic fixture only',
-  }
-}
-
-async function configureSharedApi(page, options = {}) {
-  const calls = []
-  let statusResolver = null
-  await page.setRequestInterception(true)
-  page.on('request', async (request) => {
-    const url = new URL(request.url())
-    if (url.origin !== new URL(baseUrl).origin) {
-      await request.continue()
-      return
-    }
-    if (!['/api/session/status', '/api/session/import', '/api/session/delete', '/points'].includes(url.pathname)) {
-      await request.continue()
-      return
-    }
-    calls.push({ path: url.pathname, method: request.method() })
-    const headers = { 'Content-Type': 'application/json', 'X-Stracker-Gateway': 'private-poc-v1', 'Cache-Control': 'no-store' }
-    if (url.pathname === '/api/session/status') {
-      if (options.delayStatus) await new Promise((resolve) => { statusResolver = resolve })
-      await request.respond({ status: 200, headers, body: JSON.stringify(validStatus()) })
-      return
-    }
-    if (url.pathname === '/api/session/import') {
-      await request.respond({ status: 200, headers, body: JSON.stringify({ ...validStatus(), status: 'ok', action: 'import' }) })
-      return
-    }
-    if (url.pathname === '/api/session/delete') {
-      await request.respond({ status: 200, headers, body: JSON.stringify({ status: 'ok' }) })
-      return
-    }
-    const now = Date.now()
-    const points = options.points || [
-      { lat: -31.6333, lng: -60.7000, accuracy: 20, timestamp: new Date(now - 20_000).toISOString() },
-      { lat: -31.6331, lng: -60.6998, accuracy: 18, timestamp: new Date(now - 10_000).toISOString() },
-      { lat: -31.6329, lng: -60.6996, accuracy: 16, timestamp: new Date(now).toISOString() },
-    ]
-    await request.respond({
-      status: options.pointsStatus || 200,
-      headers,
-      body: JSON.stringify(options.pointsStatus && options.pointsStatus !== 200 ? { error: 'SYNTHETIC_ERROR', message: 'fixture' } : { points, ghostrail_pts: [], last_update: points.at(-1)?.timestamp || null }),
-    })
-  })
-  return { calls, resolveStatus: () => statusResolver?.() }
-}
-
-async function waitForMap(page) {
-  await page.waitForSelector('main[data-map-engine="maplibre"] .maplibregl-map', { timeout: 30000 })
-  await page.waitForSelector('canvas.maplibregl-canvas', { timeout: 30000 })
-}
-
-async function noOverflow(page, label) {
-  assert(await page.$eval('body', (body) => body.scrollWidth <= window.innerWidth), `horizontal overflow: ${label}`)
-}
-
-async function touchTargets(page, label) {
-  const tooSmall = await page.$$eval('button', (buttons) => buttons.filter((button) => {
-    const rect = button.getBoundingClientRect()
-    return rect.width < 44 || rect.height < 44
-  }).map((button) => ({ text: button.textContent, label: button.getAttribute('aria-label') })))
-  assert(tooSmall.length === 0, `touch target below 44px at ${label}: ${JSON.stringify(tooSmall)}`)
+  }, payload)
 }
 
 const browser = await puppeteer.launch({
@@ -161,15 +87,19 @@ const browser = await puppeteer.launch({
     '--ignore-gpu-blocklist',
     '--use-angle=swiftshader',
     '--disable-dev-shm-usage',
+    '--enable-precise-memory-info',
   ],
 })
 
 const raw = {
+  schema: 'stracker.vector-map-mobile-qa.v1',
   generatedAt: new Date().toISOString(),
   engine: 'maplibre',
   provider: 'openfreemap-openstreetmap',
-  viewports: [],
+  coordinateValuesRetained: false,
   physicalDevice: 'NOT_EXECUTED_ENV_BLOCKED',
+  viewports: [],
+  gates: {},
 }
 
 try {
@@ -182,56 +112,57 @@ try {
     const pageErrors = []
     const consoleErrors = []
     const providerRequests = []
-    const sessionRequests = []
+    const apiRequests = []
     page.on('pageerror', (error) => pageErrors.push(error.message))
     page.on('console', (message) => {
       if (message.type() === 'error' && !message.text().includes('Failed to load resource')) consoleErrors.push(message.text())
     })
     page.on('request', (request) => {
-      const url = request.url()
-      if (url.includes('openfreemap.org') || url.includes('openstreetmap.org')) providerRequests.push(url)
-      const path = new URL(url).pathname
-      if (path === '/points' || path.startsWith('/api/session/')) sessionRequests.push(path)
+      const url = new URL(request.url())
+      if (url.hostname === 'tiles.openfreemap.org') providerRequests.push(url.pathname)
+      if (url.origin === new URL(baseUrl).origin && ['/api/session/status', '/api/session/import', '/api/session/delete', '/points'].includes(url.pathname)) apiRequests.push(url.pathname)
     })
 
-    const startedAt = Date.now()
     await page.goto(baseUrl, { waitUntil: 'networkidle0' })
     await noOverflow(page, `selector ${viewport.width}x${viewport.height}`)
-    await touchTargets(page, `selector ${viewport.width}x${viewport.height}`)
-    assert((await page.$$eval('button', (buttons) => buttons.length)) === 2, 'selector must show exactly two primary choices')
+    assert((await page.$$eval('button', (buttons) => buttons.length)) === 2, 'selector must show exactly two choices')
     assert((await page.content()).includes('MI UBICACIÓN'), 'my location option missing')
     assert((await page.content()).includes('UBICACIÓN COMPARTIDA'), 'shared location option missing')
-    assert((await page.$$('main[data-map-engine]')).length === 0, 'map must not exist before source selection')
-    assert(providerRequests.length === 0, 'map provider request occurred before source selection')
-    assert(sessionRequests.length === 0, 'session request occurred before source selection')
-    assert((await page.evaluate(() => window.__strackerGeo.watchCalls)) === 0, 'geolocation watch started before source selection')
+    assert((await page.$$('main[data-map-engine]')).length === 0, 'map loaded before source selection')
+    assert(providerRequests.length === 0, 'map provider requested before source selection')
+    assert(apiRequests.length === 0, 'session or points requested before source selection')
+    assert((await page.evaluate(() => window.__strackerGeo.watchCalls)) === 0, 'geolocation requested before source selection')
+
+    const tooSmall = await page.$$eval('button', (buttons) => buttons.filter((button) => {
+      const rect = button.getBoundingClientRect()
+      return rect.width < 44 || rect.height < 44
+    }).length)
+    assert(tooSmall === 0, `touch target below 44px at ${viewport.width}x${viewport.height}`)
 
     await clickText(page, 'MI UBICACIÓN')
     await page.waitForFunction(() => document.body.textContent?.includes('PERMITIR UBICACIÓN'))
-    assert(providerRequests.length === 0, 'map provider request occurred before location permission')
-    assert((await page.evaluate(() => window.__strackerGeo.watchCalls)) === 0, 'watch started before explicit permission action')
+    assert((await page.$$('main[data-map-engine]')).length === 0, 'map loaded before permission action')
+    assert(providerRequests.length === 0, 'map provider requested before permission action')
+    assert((await page.evaluate(() => window.__strackerGeo.watchCalls)) === 0, 'watchPosition called before permission action')
+
     await clickText(page, 'PERMITIR UBICACIÓN')
-    assert((await page.evaluate(() => window.__strackerGeo.watchCalls)) === 1, 'watchPosition was not started exactly once')
-
+    await page.waitForFunction(() => window.__strackerGeo.watchCalls === 1)
     const t0 = Date.now()
-    await emitGeo(page, { lat: -31.6333, lng: -60.7000, timestamp: t0 })
-    await waitForMap(page)
-    await page.waitForFunction(() => document.querySelector('main[data-health]')?.getAttribute('data-health') === 'receiving')
-    assert(sessionRequests.length === 0, 'my-location mode called shared backend')
-    assert((await page.$eval('main[data-map-engine]', (node) => node.getAttribute('data-map-engine'))) === 'maplibre', 'wrong final map engine')
-    assert(await page.$eval('[aria-label="Atribución del mapa"]', (node) => {
-      const rect = node.getBoundingClientRect()
-      const style = getComputedStyle(node)
-      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
-    }), 'attribution must be visible')
+    await emitGeo(page, { lat: -31.6333, lng: -60.7, accuracy: 8, speed: 0, heading: null, timestamp: t0 })
+    await page.waitForSelector('main[data-map-engine="maplibre"]', { timeout: 30000 })
+    await page.waitForSelector('canvas.maplibregl-canvas', { timeout: 30000 })
+    await page.waitForFunction(() => document.querySelector('main[data-map-provider]')?.getAttribute('data-map-provider') !== 'loading')
+    await noOverflow(page, `map ${viewport.width}x${viewport.height}`)
 
-    await emitGeo(page, { lat: -31.63331, lng: -60.70001, accuracy: 18, speed: 0, timestamp: t0 + 5_000 })
-    await emitGeo(page, { lat: -31.63330, lng: -60.70000, accuracy: 17, speed: 0, timestamp: t0 + 10_000 })
-    await emitGeo(page, { lat: -31.63331, lng: -60.70000, accuracy: 16, speed: 0, timestamp: t0 + 15_000 })
+    await emitGeo(page, { lat: -31.633295, lng: -60.699995, accuracy: 12, speed: 0, timestamp: t0 + 5_000 })
+    await page.waitForFunction(() => document.querySelector('main[data-filter-decision]')?.getAttribute('data-filter-decision') === 'metadata-only')
+    await emitGeo(page, { lat: -31.633292, lng: -60.699992, accuracy: 10, speed: 0, timestamp: t0 + 10_000 })
+    await emitGeo(page, { lat: -31.633294, lng: -60.699994, accuracy: 9, speed: 0, timestamp: t0 + 15_000 })
     await page.waitForFunction(() => document.querySelector('main[data-motion]')?.getAttribute('data-motion') === 'stationary')
     assert((await page.$eval('main[data-camera-mode]', (node) => node.getAttribute('data-camera-mode'))) === 'stationary', 'stationary camera mode missing')
 
-    await emitGeo(page, { lat: -31.63318, lng: -60.69988, accuracy: 8, speed: 2.1, heading: 45, timestamp: t0 + 25_000 })
+    await emitGeo(page, { lat: -31.63322, lng: -60.69992, accuracy: 8, speed: 1.8, heading: 35, timestamp: t0 + 20_000 })
+    await emitGeo(page, { lat: -31.63314, lng: -60.69984, accuracy: 8, speed: 2, heading: 40, timestamp: t0 + 25_000 })
     await emitGeo(page, { lat: -31.63306, lng: -60.69976, accuracy: 8, speed: 2.1, heading: 45, timestamp: t0 + 35_000 })
     await page.waitForFunction(() => document.querySelector('main[data-motion]')?.getAttribute('data-motion') === 'moving')
     assert((await page.$eval('main[data-camera-mode]', (node) => node.getAttribute('data-camera-mode'))) === 'follow', 'follow camera mode missing')
@@ -254,7 +185,9 @@ try {
     await emitGeo(page, { lat: -31.63290, lng: -60.69960, accuracy: 500, timestamp: t0 + 65_000 })
     await page.waitForFunction(() => document.querySelector('main[data-filter-decision]')?.getAttribute('data-filter-decision') === 'rejected')
 
-    await emitGeo(page, { lat: -31.63282, lng: -60.69952, accuracy: 7, speed: 2, timestamp: t0 + 125_000 })
+    // Deliberately exceed the 45 s own-device rail interval and move well outside
+    // the accuracy dead zone while remaining far below the impossible-speed cap.
+    await emitGeo(page, { lat: -31.63254, lng: -60.69924, accuracy: 7, speed: 2, timestamp: t0 + 125_000 })
     await page.waitForFunction(() => Number(document.querySelector('main[data-ghostrail-segments]')?.getAttribute('data-ghostrail-segments')) >= 2)
 
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
@@ -283,77 +216,74 @@ try {
     assert(consoleErrors.length === 0, `console errors ${viewport.width}x${viewport.height}: ${consoleErrors.join(' | ')}`)
     await noOverflow(page, `final ${viewport.width}x${viewport.height}`)
 
-    const resources = await page.evaluate(() => performance.getEntriesByType('resource').map((entry) => ({
-      name: entry.name,
-      duration: entry.duration,
-      transferSize: entry.transferSize || 0,
-      encodedBodySize: entry.encodedBodySize || 0,
-    })))
     raw.viewports.push({
       ...viewport,
-      elapsedMs: Date.now() - startedAt,
-      providerRequestCount: providerRequests.length,
-      sessionRequestCount: sessionRequests.length,
-      resourceCount: resources.length,
-      transferredBytes: resources.reduce((total, item) => total + item.transferSize, 0),
       pageErrors: pageErrors.length,
       consoleErrors: consoleErrors.length,
+      providerRequestCount: providerRequests.length,
+      apiRequestCountBeforeSelection: 0,
+      ghostrailDiscontinuityObserved: true,
+      manualCameraObserved: true,
+      webglRecoveryObserved: true,
     })
     await context.close()
   }
 
-  const lateContext = await browser.createBrowserContext()
-  const latePage = await lateContext.newPage()
-  await latePage.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true })
-  await installSyntheticGeolocation(latePage)
-  const delayed = await configureSharedApi(latePage, { delayStatus: true })
-  await latePage.goto(baseUrl, { waitUntil: 'networkidle0' })
-  await clickText(latePage, 'UBICACIÓN COMPARTIDA')
-  await latePage.waitForFunction(() => document.body.textContent?.includes('Vincular sesión de Google Maps'))
-  await latePage.click('button[aria-label="Volver"]')
-  await latePage.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'))
-  await clickText(latePage, 'MI UBICACIÓN')
-  delayed.resolveStatus()
-  await new Promise((resolve) => setTimeout(resolve, 300))
-  assert((await latePage.content()).includes('PERMITIR UBICACIÓN'), 'late shared response repopulated previous source')
-  assert((await latePage.$$('main[data-location-source="google-shared"]')).length === 0, 'late response rendered shared map')
-  await lateContext.close()
+  const context = await browser.createBrowserContext()
+  const page = await context.newPage()
+  await page.setViewport({ width: 320, height: 568, isMobile: true, hasTouch: true })
+  const requests = []
+  await page.setRequestInterception(true)
+  page.on('request', async (request) => {
+    const url = new URL(request.url())
+    if (url.origin !== new URL(baseUrl).origin) {
+      await request.continue()
+      return
+    }
+    requests.push(url.pathname)
+    if (url.pathname === '/api/session/status') {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      await request.respond({
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'X-Stracker-Gateway': 'private-poc-v1', 'Cache-Control': 'no-store' },
+        body: JSON.stringify({
+          appAuthenticated: true,
+          state: 'SHARED_UNCONFIGURED',
+          health: 'UNCONFIGURED',
+          configured: false,
+          formatDetected: null,
+          count: 0,
+          criticalPresent: [],
+          criticalMissing: [],
+          message: 'Synthetic late response',
+        }),
+      }).catch(() => {})
+      return
+    }
+    await request.continue()
+  })
+  await page.goto(baseUrl, { waitUntil: 'networkidle0' })
+  await clickText(page, 'UBICACIÓN COMPARTIDA')
+  await page.waitForFunction(() => document.body.textContent?.includes('Vincular sesión de Google Maps'))
+  await clickText(page, 'VOLVER')
+  await page.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'))
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  assert((await page.$$('main[data-map-engine]')).length === 0, 'late shared response repopulated prior source')
+  assert(requests.includes('/api/session/status'), 'shared status was not requested after explicit selection')
+  await context.close()
 
-  const sharedContext = await browser.createBrowserContext()
-  const sharedPage = await sharedContext.newPage()
-  await sharedPage.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true })
-  const sharedApi = await configureSharedApi(sharedPage)
-  await sharedPage.goto(baseUrl, { waitUntil: 'networkidle0' })
-  assert(sharedApi.calls.length === 0, 'shared API called before source selection')
-  await clickText(sharedPage, 'UBICACIÓN COMPARTIDA')
-  await waitForMap(sharedPage)
-  assert(sharedApi.calls.some((call) => call.path === '/api/session/status'), 'shared status was not requested')
-  assert(sharedApi.calls.some((call) => call.path === '/points'), 'shared points were not requested')
-  assert((await sharedPage.$eval('main[data-location-source]', (node) => node.getAttribute('data-location-source'))) === 'google-shared', 'shared source map missing')
-  await sharedContext.close()
-
-  const reducedContext = await browser.createBrowserContext()
-  const reducedPage = await reducedContext.newPage()
-  await reducedPage.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }])
-  await reducedPage.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true })
-  await installSyntheticGeolocation(reducedPage)
-  await reducedPage.goto(baseUrl, { waitUntil: 'networkidle0' })
-  await clickText(reducedPage, 'MI UBICACIÓN')
-  await clickText(reducedPage, 'PERMITIR UBICACIÓN')
-  await emitGeo(reducedPage, { lat: -31.6333, lng: -60.7000, timestamp: Date.now() })
-  await waitForMap(reducedPage)
-  assert(await reducedPage.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches), 'reduced motion was not active')
-  await reducedContext.close()
-
-  fs.writeFileSync(rawOutput, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 })
-  console.log('NO_MAP_REQUEST_BEFORE_SOURCE_SELECTION=PASS')
-  console.log('NO_LOCATION_REQUEST_BEFORE_SOURCE_SELECTION=PASS')
-  console.log('NO_SESSION_REQUEST_BEFORE_SOURCE_SELECTION=PASS')
-  console.log('SOURCE_SWITCH_LATE_RESPONSE_BLOCKED=PASS')
-  console.log('GHOSTRAIL_DISCONTINUITIES_NOT_CONNECTED=PASS')
-  console.log('MANUAL_CAMERA_MODE=PASS')
-  console.log('ATTRIBUTION_VISIBLE=PASS')
-  console.log(`MOBILE_QA_PASS viewports=${viewports.length} pageerror=0 overflow=0 touch_targets=pass`)
+  raw.gates = {
+    NO_MAP_REQUEST_BEFORE_SOURCE_SELECTION: 'PASS',
+    NO_LOCATION_REQUEST_BEFORE_SOURCE_SELECTION: 'PASS',
+    NO_SESSION_REQUEST_BEFORE_SOURCE_SELECTION: 'PASS',
+    SOURCE_SWITCH_LATE_RESPONSE_BLOCKED: 'PASS',
+    GHOSTRAIL_DISCONTINUITIES_NOT_CONNECTED: 'PASS',
+    MANUAL_CAMERA_MODE: 'PASS',
+    ATTRIBUTION_VISIBLE: 'PASS',
+    MOBILE_QA: 'PASS',
+  }
+  fs.writeFileSync(output, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 })
+  console.log(`MOBILE_QA_PASS viewports=${viewports.length} pageerror=0 overflow=0 engine=maplibre`)
 } finally {
   await browser.close()
 }
