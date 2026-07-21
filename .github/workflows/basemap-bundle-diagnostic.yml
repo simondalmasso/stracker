@@ -48,6 +48,53 @@ jobs:
           SATELLITE_PROVIDER_OUTPUT=/tmp/satellite-provider-results.json node tools/map-spike/validate-satellite-providers.mjs >/tmp/satellite-provider.txt 2>&1
           echo "satellite_provider_exit=$?" >>/tmp/exits.txt
           exit 0
+      - name: Inspect public provider catalogs
+        run: |
+          node --input-type=module <<'NODE' >/tmp/catalog-inspect.txt 2>&1
+          import { VectorTile } from '@mapbox/vector-tile'
+          import Pbf from 'pbf'
+          const styleUrl = 'https://tiles.openfreemap.org/styles/liberty'
+          const style = await (await fetch(styleUrl)).json()
+          const entry = Object.entries(style.sources || {}).find(([, source]) => source?.type === 'vector')
+          console.log('OPENFREEMAP_SOURCE', JSON.stringify(entry))
+          let source = entry?.[1]
+          let tiles = source?.tiles
+          let tileJson = null
+          if (!tiles && source?.url) {
+            tileJson = await (await fetch(new URL(source.url, styleUrl))).json()
+            tiles = tileJson.tiles
+          }
+          console.log('OPENFREEMAP_TILEJSON', JSON.stringify(tileJson))
+          const lng = -60.7103
+          const lat = -31.6575
+          const zoom = 14
+          const scale = 2 ** zoom
+          const x = Math.floor(((lng + 180) / 360) * scale)
+          const radians = lat * Math.PI / 180
+          const y = Math.floor((1 - Math.asinh(Math.tan(radians)) / Math.PI) / 2 * scale)
+          for (const candidateY of [y, scale - y - 1]) {
+            const template = String(tiles?.[0] || '')
+            const url = template.replace('{z}', String(zoom)).replace('{x}', String(x)).replace('{y}', String(candidateY)).replace('{-y}', String(scale - candidateY - 1))
+            const response = await fetch(url)
+            const buffer = Buffer.from(await response.arrayBuffer())
+            const summary = { status: response.status, bytes: buffer.length, layers: {} }
+            if (response.ok && buffer.length) {
+              try {
+                const tile = new VectorTile(new Pbf(buffer))
+                summary.layers = Object.fromEntries(Object.entries(tile.layers).map(([name, layer]) => [name, layer.length]))
+              } catch (error) {
+                summary.decodeError = String(error)
+              }
+            }
+            console.log('OPENFREEMAP_TILE', candidateY === y ? 'XYZ' : 'TMS', JSON.stringify(summary))
+          }
+          const capabilitiesUrl = 'https://tiles.maps.eox.at/wmts/1.0.0/WMTSCapabilities.xml'
+          const capabilitiesResponse = await fetch(capabilitiesUrl)
+          const xml = await capabilitiesResponse.text()
+          const identifiers = [...xml.matchAll(/<(?:ows:)?Identifier>([^<]+)<\/(?:ows:)?Identifier>/g)].map((match) => match[1])
+          console.log('EOX_CAPABILITIES_STATUS', capabilitiesResponse.status)
+          console.log('EOX_CLOUDLESS_IDENTIFIERS', JSON.stringify([...new Set(identifiers.filter((value) => /cloud|sentinel|2016/i.test(value)))].sort()))
+          NODE
       - uses: actions/upload-artifact@v4
         with:
           name: stracker-basemap-runtime-diagnostic-${{ github.event.pull_request.head.sha }}
@@ -60,6 +107,7 @@ jobs:
             /tmp/basemap-modes.txt
             /tmp/openfreemap-live.txt
             /tmp/satellite-provider.txt
+            /tmp/catalog-inspect.txt
             /tmp/mobile-results.json
             /tmp/mobile-extended-results.json
             /tmp/mobile-performance-results.json
