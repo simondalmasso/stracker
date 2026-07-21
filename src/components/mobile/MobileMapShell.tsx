@@ -91,16 +91,18 @@ export default function MobileMapShell({ source, snapshot, ghostrail, onChangeSo
   const [performance, setPerformance] = useState<MapPerformanceSnapshot | null>(null)
   const reducedMotion = useReducedMotion()
 
-  snapshotRef.current = snapshot
-  reducedMotionRef.current = reducedMotion
-  recoveryRef.current = contextRecovery
-
   const currentRenderState = useMemo(
     () => renderState(source, snapshot, ghostrail, railVisible, buildings3d, reducedMotion),
     [buildings3d, ghostrail, railVisible, reducedMotion, snapshot, source],
   )
   const renderStateRef = useRef(currentRenderState)
-  renderStateRef.current = currentRenderState
+
+  useEffect(() => {
+    snapshotRef.current = snapshot
+    reducedMotionRef.current = reducedMotion
+    recoveryRef.current = contextRecovery
+    renderStateRef.current = currentRenderState
+  }, [contextRecovery, currentRenderState, reducedMotion, snapshot])
 
   const applyCamera = useCallback((options: { userInteracted?: boolean; recenter?: boolean } = {}) => {
     const currentSnapshot = snapshotRef.current
