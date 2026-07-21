@@ -202,7 +202,10 @@ export function useSharedLocation(): SharedLocationController {
       setState(next.state)
       const exact = sharedSessionStateFromStatus(next)
       setExactSessionState(exact)
-      if (exact === 'valid') startPolling()
+      if (exact === 'valid') {
+        setLoading(false)
+        startPolling()
+      }
     } catch (caught) {
       if (generation !== generationRef.current || controller.signal.aborted) return
       setState('SHARED_ERROR')
@@ -233,6 +236,7 @@ export function useSharedLocation(): SharedLocationController {
         pipelineRef.current = replacePipelineSession(pipelineRef.current)
         setSnapshot(null)
         setGhostrail([])
+        setLoading(false)
         startPolling()
       }
       return result
