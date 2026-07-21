@@ -115,12 +115,9 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: '1'
         run: bun run build:export
-      - name: MOBILE_BROWSER_QA
+      - name: MOBILE_VIEWPORT_QA
         env:
           QA_RAW_OUTPUT: /tmp/mobile-results.json
-          QA_EXTENDED_OUTPUT: /tmp/mobile-extended-results.json
-          QA_PERFORMANCE_OUTPUT: /tmp/mobile-performance-results.json
-          QA_BASEMAP_OUTPUT: /tmp/basemap-modes-results.json
         run: |
           python -m http.server 4173 --directory out >/tmp/stracker-vector-map-http.log 2>&1 &
           server_pid=$!
@@ -131,10 +128,50 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:4173/ >/dev/null
           node tests/mobile_qa.mjs
+      - name: MOBILE_EXTENDED_QA
+        if: ${{ !cancelled() }}
+        env:
+          QA_EXTENDED_OUTPUT: /tmp/mobile-extended-results.json
+        run: |
+          python -m http.server 4173 --directory out >/tmp/stracker-vector-map-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
           node tests/vector_map_extended_qa.mjs
+      - name: MOBILE_PERFORMANCE_QA
+        if: ${{ !cancelled() }}
+        env:
+          QA_PERFORMANCE_OUTPUT: /tmp/mobile-performance-results.json
+        run: |
+          python -m http.server 4173 --directory out >/tmp/stracker-vector-map-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
           node tests/vector_map_performance_gate.mjs
+      - name: BASEMAP_MODES_QA
+        if: ${{ !cancelled() }}
+        env:
+          QA_BASEMAP_OUTPUT: /tmp/basemap-modes-results.json
+        run: |
+          python -m http.server 4173 --directory out >/tmp/stracker-vector-map-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
           node tests/basemap_modes_qa.mjs
-          echo 'MOBILE_QA=PASS'
+      - name: MOBILE_BROWSER_QA
+        run: echo 'MOBILE_QA=PASS'
       - name: BASEMAP_AND_PERFORMANCE_GATES
         run: |
           jq -e '.engine == "maplibre" and .provider == "openfreemap-openstreetmap" and (.viewports | length == 5) and .physicalDevice == "NOT_EXECUTED_ENV_BLOCKED"' /tmp/mobile-results.json >/dev/null
