@@ -2,18 +2,19 @@
   "name": "nextjs_tailwind_shadcn_ts",
   "version": "0.2.0",
   "private": true,
+  "packageManager": "bun@1.3.4",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
+    "build:export": "bash scripts/build-mobile-export.sh",
     "start": "bun .next/standalone/server.js",
-    "lint": "eslint src/app src/components/mobile src/lib/location-source",
+    "lint": "eslint src/app/page.tsx src/components/mobile src/lib/location-source",
+    "typecheck": "tsc --noEmit",
+    "test:backend": "python -m unittest discover -s tests -p 'test_*.py'",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset",
-    "build:export": "BUILD_EXPORT=1 next build",
-    "typecheck": "tsc --noEmit",
-    "test:backend": "python -m unittest discover -s tests -p 'test_*.py'"
+    "db:reset": "prisma migrate reset"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -100,6 +101,5 @@
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5"
-  },
-  "packageManager": "bun@1.3.4"
+  }
 }
