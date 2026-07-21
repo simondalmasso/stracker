@@ -1,0 +1,33 @@
+name: STRACKER Vector Map Snapshot
+
+on:
+  push:
+    branches:
+      - feat/stracker-vector-map-engine-v1
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact stack base
+        run: |
+          test "$(git merge-base HEAD origin/feat/stracker-cloudflare-private-gateway-poc)" = "77a937b4b157c2ec2c47940d6fe6891cf10b74c9"
+          git status --short
+      - name: Create tracked source archive
+        run: |
+          git archive --format=zip --output=/tmp/stracker-vector-map-source.zip HEAD
+          sha256sum /tmp/stracker-vector-map-source.zip > /tmp/stracker-vector-map-source.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stracker-vector-map-source-${{ github.sha }}
+          path: |
+            /tmp/stracker-vector-map-source.zip
+            /tmp/stracker-vector-map-source.sha256
+          retention-days: 2
