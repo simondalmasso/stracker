@@ -6,9 +6,14 @@ on:
       - fix/stracker-p0-security-canonical-state
     paths:
       - .github/workflows/p0-security-bootstrap.yml
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
   group: stracker-p0-security-bootstrap
