@@ -1,5 +1,4 @@
 import type {
-  BasemapMode,
   CameraMode,
   FreshnessState,
   GeoPoint,
@@ -10,7 +9,6 @@ import type {
 } from '../contracts'
 
 export type MapProviderState = 'loading' | 'available' | 'degraded'
-export type BasemapProviderState = 'idle' | 'loading' | 'available' | 'unavailable'
 
 export interface MapRenderState {
   source: LocationSource
@@ -24,12 +22,10 @@ export interface MapRenderState {
   railVisible: boolean
   buildings3d: boolean
   reducedMotion: boolean
-  basemapMode: BasemapMode
 }
 
 export interface MapPerformanceSnapshot {
   engine: 'maplibre'
-  basemapMode: BasemapMode
   createdAtMs: number
   firstMapVisibleMs: number | null
   firstInteractiveMs: number | null
@@ -41,8 +37,6 @@ export interface MapPerformanceSnapshot {
   webglContextRestores: number
   resourceCount: number
   transferredBytes: number
-  rasterResourceCount: number
-  rasterTransferredBytes: number
 }
 
 export interface MapEngineCallbacks {
@@ -50,7 +44,6 @@ export interface MapEngineCallbacks {
   onWebglContextLost: () => void
   onWebglContextRestored: () => void
   onProviderState: (state: MapProviderState) => void
-  onBasemapProviderState: (state: BasemapProviderState) => void
   onPerformance: (snapshot: MapPerformanceSnapshot) => void
 }
 
