@@ -7,6 +7,7 @@ interface SelectedSatelliteProvider {
   host: string
   tileTemplate: string
   capabilitiesUrl: string
+  wmtsLayerIdentifier: string
   apiKeyRequired: false
   costUsd: 0
   paidOverageAllowed: false
