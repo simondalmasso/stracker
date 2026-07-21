@@ -1,11 +1,6 @@
 name: STRACKER P0 Security Bootstrap
 
 on:
-  push:
-    branches:
-      - fix/stracker-p0-security-canonical-state
-    paths:
-      - .github/workflows/p0-security-bootstrap.yml
   pull_request:
     branches:
       - main
@@ -49,7 +44,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
 
       - name: Verify exact remote baseline
         shell: bash
