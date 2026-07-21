@@ -56,11 +56,12 @@ assert(selected.license === 'CC BY 4.0', 'selected satellite provider license is
 assert(selected.recentClaimAllowed === false, 'historical imagery must not be presented as recent')
 assert(selected.tileTemplate.startsWith('https://tiles.maps.eox.at/'), 'unexpected satellite tile host')
 assert(!/(google|mapbox|arcgis|maptiler)/i.test(selected.tileTemplate), 'forbidden satellite provider present')
+assert(selected.wmtsLayerIdentifier === 's2cloudless_3857', 'unexpected EOx WMTS layer identifier')
 
 const capabilitiesResponse = await fetchWithTimeout(selected.capabilitiesUrl, { headers: { Accept: 'application/xml,text/xml,*/*' } })
 assert(capabilitiesResponse.ok, `selected WMTS capabilities unavailable: ${capabilitiesResponse.status}`)
 const capabilities = await capabilitiesResponse.text()
-assert(capabilities.includes('s2cloudless-2016_3857'), 'selected WMTS layer is absent from capabilities')
+assert(capabilities.includes(`<ows:Identifier>${selected.wmtsLayerIdentifier}</ows:Identifier>`) || capabilities.includes(`<Identifier>${selected.wmtsLayerIdentifier}</Identifier>`), 'selected WMTS layer is absent from capabilities')
 
 const publicTile = tileFor(-60.7, -31.6333, Math.min(13, selected.maxZoom))
 const tileUrl = expand(selected.tileTemplate, publicTile)
@@ -89,6 +90,7 @@ const result = {
     id: selected.id,
     role: selected.role,
     host: selected.host,
+    wmtsLayerIdentifier: selected.wmtsLayerIdentifier,
     costUsd: selected.costUsd,
     apiKeyRequired: selected.apiKeyRequired,
     paidOverageAllowed: selected.paidOverageAllowed,
