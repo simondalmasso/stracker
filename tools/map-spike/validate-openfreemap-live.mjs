@@ -47,6 +47,12 @@ function safeUrl(raw, base = STYLE_URL) {
   return url
 }
 
+function safeTemplate(raw, base = STYLE_URL) {
+  return safeUrl(raw, base).toString()
+    .replace(/%7B/gi, '{')
+    .replace(/%7D/gi, '}')
+}
+
 async function fetchChecked(url, expectedType) {
   const response = await fetch(url, {
     redirect: 'error',
@@ -118,8 +124,12 @@ if (!tileTemplates && vectorSource.url) {
   tileTemplates = tileJson.tiles
 }
 assert(Array.isArray(tileTemplates) && tileTemplates.length > 0, 'vector source contains no tile templates')
-const template = safeUrl(tileTemplates[0], vectorSource.url || STYLE_URL).toString()
-hosts.add(new URL(template).hostname)
+const template = safeTemplate(tileTemplates[0], vectorSource.url || STYLE_URL)
+hosts.add(new URL(expandTemplate(template, { z: 0, x: 0, y: 0 })).hostname)
+
+const advertisedMaxZoom = Number(tileJson?.maxzoom ?? vectorSource.maxzoom ?? 14)
+const highestTestZoom = Math.min(14, Number.isFinite(advertisedMaxZoom) ? advertisedMaxZoom : 14)
+const zoomLevels = [...new Set([highestTestZoom, highestTestZoom - 1, highestTestZoom - 2].filter((zoom) => zoom >= 0))]
 
 let streetFeatures = 0
 let buildingFootprints = 0
@@ -132,7 +142,7 @@ let emptyTiles = 0
 let selectedZoom = null
 const tileHashes = []
 
-for (const zoom of [16, 15, 14]) {
+for (const zoom of zoomLevels) {
   const center = tileCoordinate(FIXTURE.lng, FIXTURE.lat, zoom)
   let zoomStreet = 0
   let zoomBuildings = 0
@@ -215,6 +225,7 @@ const result = {
   tileJson: tileJsonResponse ? {
     status: tileJsonResponse.status,
     contentType: tileJsonResponse.headers.get('content-type'),
+    advertisedMaxZoom,
   } : null,
   vectorTiles: {
     selectedZoom,
