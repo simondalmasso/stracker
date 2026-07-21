@@ -1,0 +1,195 @@
+name: STRACKER Cloudflare Nonprod Live V1
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-cloudflare-private-gateway-poc
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stracker-cloudflare-nonprod-live-v1-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  local-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Verify stacked base
+        run: |
+          test "$(git merge-base HEAD origin/feat/stracker-cloudflare-private-gateway-poc)" = "77a937b4b157c2ec2c47940d6fe6891cf10b74c9"
+          git diff --check origin/feat/stracker-cloudflare-private-gateway-poc...HEAD
+          echo 'STACKED_BASE_CHECK=PASS'
+
+      - name: Frozen install
+        run: |
+          bun install --frozen-lockfile
+          echo 'FROZEN_INSTALL=PASS'
+
+      - name: Python dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Backend tests
+        run: |
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
+          python -m unittest discover -s tests -p 'test_*.py'
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          echo 'BACKEND_TESTS=PASS'
+
+      - name: ESLint
+        run: |
+          bun run lint
+          bunx eslint gateway/mock-backend/src
+          echo 'ESLINT=PASS'
+
+      - name: Typecheck
+        run: |
+          bun run typecheck
+          echo 'TYPECHECK=PASS'
+
+      - name: Gateway and mock tests
+        run: |
+          bun run gateway:syntax
+          node --check gateway/mock-backend/src/index.mjs
+          node --test gateway/tests/access-jwt.test.mjs
+          node --test gateway/tests/gateway.test.mjs
+          node --test gateway/tests/mock-e2e.test.mjs
+          node --test gateway/tests/staging-live-contract.test.mjs gateway/mock-backend/tests/mock-backend.test.mjs
+          bun run test:gateway-invariants
+          echo 'GATEWAY_TESTS=PASS'
+
+      - name: Static staging export
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXT_PUBLIC_STRACKER_STAGING_MOCK: '1'
+        run: |
+          bun run build:export
+          test -f out/index.html
+          echo 'STATIC_EXPORT_BUILD=PASS'
+
+      - name: Bundle security scan
+        run: |
+          ! grep -R --binary-files=without-match -n 'X-Stracker-Service-Token\|STRACKER_SERVICE_TOKEN' out
+          ! grep -R --binary-files=without-match -n 'onrender\.com\|strackerglm' out gateway/src gateway/mock-backend/src gateway/staging
+          ! grep -R --binary-files=without-match -n 'Cookie Editor JSON\|Cookie Header String\|Netscape HTTP Cookie File' out
+          ! grep -R --binary-files=without-match -n 'SID=\|HSID=\|SAPISID=' out
+          ! git grep -nE 'wrangler[[:space:]]+deploy' -- .github gateway scripts package.json
+          test ! -e .env
+          ! git ls-files --error-unmatch tsconfig.tsbuildinfo
+          echo 'SERVICE_TOKEN_IN_BUNDLE=NO'
+          echo 'COOKIE_VALUES=ABSENT'
+          echo 'REAL_LOCATION_DATA=ABSENT'
+
+      - name: Wrangler dry runs
+        run: |
+          secret_file="$(mktemp)"
+          live_config="gateway/staging/wrangler.live.jsonc"
+          trap 'rm -f "$secret_file" "$live_config"' EXIT
+          printf '%s' '{"STRACKER_SERVICE_TOKEN":"SYNTHETIC_DRY_RUN_ONLY_NOT_REMOTE"}' > "$secret_file"
+          chmod 600 "$secret_file"
+          bunx wrangler@4.112.0 versions upload --dry-run --config gateway/mock-backend/wrangler.jsonc --secrets-file "$secret_file" --outdir /tmp/stracker-mock-dry
+          bunx wrangler@4.112.0 versions upload --dry-run --config gateway/staging/wrangler.bootstrap.jsonc --secrets-file "$secret_file" --outdir /tmp/stracker-gateway-bootstrap-dry
+          sed -e 's|__ACCESS_TEAM_DOMAIN__|https://stracker-dry-run.cloudflareaccess.com|g' -e 's|__ACCESS_AUD__|DRY_RUN_AUDIENCE_ONLY|g' gateway/staging/wrangler.template.jsonc > "$live_config"
+          bunx wrangler@4.112.0 versions upload --dry-run --config "$live_config" --secrets-file "$secret_file" --outdir /tmp/stracker-gateway-live-dry
+          echo 'WRANGLER_DRY_RUN=PASS'
+
+      - name: Mobile local QA
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          python -m http.server 4173 --directory out >/tmp/stracker-mobile-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
+          bun tests/mobile_qa.mjs
+          echo 'MY_LOCATION_INDEPENDENT=PASS'
+          echo 'SHARED_LOCATION_FAIL_CLOSED=PASS'
+          echo 'MOBILE_QA=PASS'
+
+      - name: Final local integrity
+        run: |
+          git diff --check
+          test ! -e gateway/staging/wrangler.live.jsonc
+          bash -n scripts/cloudflare-nonprod-live.sh scripts/cloudflare-nonprod/lib/*.sh
+          echo 'LOCAL_GATES_FINAL=SUCCESS'
+
+  live-staging:
+    needs: local-gates
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CF_TOKEN_PRIMARY: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_TOKEN_SECONDARY: ${{ secrets.CF_API_TOKEN }}
+      CF_TOKEN_TERTIARY: ${{ secrets.CLOUDFLARE_TOKEN }}
+      CF_ACCOUNT_PRIMARY: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_ACCOUNT_SECONDARY: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CF_ACCOUNT_TERTIARY: ${{ secrets.CF_ACCOUNT_ID }}
+      CF_OPERATOR_PRIMARY: ${{ secrets.CLOUDFLARE_OPERATOR_EMAIL }}
+      CF_OPERATOR_SECONDARY: ${{ vars.CLOUDFLARE_OPERATOR_EMAIL }}
+      CF_OPERATOR_TERTIARY: ${{ secrets.STRACKER_ACCESS_OPERATOR_EMAIL }}
+      CF_ACCESS_COOKIE_PRIMARY: ${{ secrets.CLOUDFLARE_ACCESS_AUTH_COOKIE }}
+      CF_ACCESS_COOKIE_SECONDARY: ${{ secrets.CF_ACCESS_AUTH_COOKIE }}
+      CF_ACCESS_COOKIE_TERTIARY: ${{ secrets.STRACKER_ACCESS_AUTH_COOKIE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Frozen install
+        run: bun install --frozen-lockfile
+
+      - name: Build exact staging assets
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXT_PUBLIC_STRACKER_STAGING_MOCK: '1'
+        run: bun run build:export
+
+      - name: Provision and validate isolated nonprod staging
+        run: scripts/cloudflare-nonprod-live.sh
+
+      - name: Upload sanitized staging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stracker-cloudflare-nonprod-live-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/stracker-nonprod-live/evidence/resource-inventory.json
+            ${{ runner.temp }}/stracker-nonprod-live/evidence/live-validation.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Final repository integrity
+        if: success()
+        run: |
+          git diff --check
+          test ! -e gateway/staging/wrangler.live.jsonc
+          echo 'CI_FINAL=SUCCESS'
