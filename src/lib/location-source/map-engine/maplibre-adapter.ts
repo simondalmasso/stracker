@@ -272,7 +272,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
   }
 
   const handleContextLost = (event?: Event) => {
-    event?.preventDefault()
+    if (event && typeof event.preventDefault === 'function') event.preventDefault()
     if (contextLostActive) return
     contextLostActive = true
     webglContextLosses += 1
@@ -286,10 +286,12 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     contextLostActive = false
     webglContextRestores += 1
     callbacks?.onWebglContextRestored()
-    if (map && latestState) {
-      addRuntimeLayers(map, latestState)
-      applyBasemapMode(latestState.basemapMode)
-      adapter.render(latestState)
+    const currentMap = map
+    const currentState = latestState
+    if (currentMap && currentState && currentMap.isStyleLoaded()) {
+      addRuntimeLayers(currentMap, currentState)
+      applyBasemapMode(currentState.basemapMode)
+      adapter.render(currentState)
       callbacks?.onProviderState('available')
     }
     emitPerformance()
@@ -371,8 +373,6 @@ export function createMapLibreAdapter(): MapEngineAdapter {
         })
       }
 
-      map.on('webglcontextlost', handleContextLost)
-      map.on('webglcontextrestored', handleContextRestored)
       const canvas = map.getCanvas()
       canvas.addEventListener('webglcontextlost', handleContextLost, { capture: true })
       canvas.addEventListener('webglcontextrestored', handleContextRestored, { capture: true })
