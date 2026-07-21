@@ -153,11 +153,14 @@ export default function MobileLocationApp() {
   if (flow === 'SELECTING_SOURCE' || !source) return <Selector onSelect={select} />
   if (source === 'my-device') {
     return isMapUnlocked(source, my.state, shared.state) && my.snapshot
-      ? <MobileMapShell source="my-device" snapshot={my.snapshot} ghostrail={my.ghostrail} sharedSessionState="not-applicable" onChangeSource={reset} onStop={reset} />
+      ? <MobileMapShell source="my-device" snapshot={my.snapshot} ghostrail={my.ghostrail} onChangeSource={reset} onStop={reset} />
       : <MyOnboarding state={my.state} requestPermission={my.requestPermission} onBack={reset} />
   }
   if (!importing && isMapUnlocked(source, my.state, shared.state) && shared.snapshot) {
-    return <MobileMapShell source="google-shared" snapshot={shared.snapshot} ghostrail={shared.ghostrail} sharedSessionState={shared.sessionState} onChangeSource={reset} onReplaceSession={() => setImporting(true)} onDeleteSession={() => void shared.deleteSession().then(reset)} />
+    return <MobileMapShell source="google-shared" snapshot={shared.snapshot} ghostrail={shared.ghostrail} onChangeSource={reset} onReplaceSession={() => setImporting(true)} onDeleteSession={() => void shared.deleteSession().then(reset)} />
   }
-  return <SharedImporter status={shared.status} loading={shared.loading} error={shared.error} onBack={reset} onImport={async (raw) => { await shared.importSession(raw); setImporting(false) }} />
+  return <SharedImporter status={shared.status} loading={shared.loading} error={shared.error} onBack={reset} onImport={async (raw) => {
+    const result = await shared.importSession(raw)
+    if (result.state === 'SHARED_READY' || result.state === 'SHARED_STALE') setImporting(false)
+  }} />
 }
