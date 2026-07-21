@@ -1,0 +1,84 @@
+name: STRACKER Vector Map Runtime Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-cloudflare-private-gateway-poc
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - name: Prepare exact product
+        run: |
+          bun install --frozen-lockfile
+          NEXT_TELEMETRY_DISABLED=1 bun run build:export
+      - name: Capture browser diagnostic
+        run: |
+          python -m http.server 4173 --directory out >/tmp/http.raw 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          set +e
+          QA_RAW_OUTPUT=/tmp/mobile-results.json node tests/mobile_qa.mjs >/tmp/mobile.raw 2>&1
+          echo "mobile_exit=$?" >/tmp/exits.txt
+          set -e
+      - name: Capture provider diagnostic
+        run: |
+          set +e
+          OPENFREEMAP_LIVE_OUTPUT=/tmp/provider-results.json node tools/map-spike/validate-openfreemap-live.mjs >/tmp/provider.raw 2>&1
+          echo "provider_exit=$?" >>/tmp/exits.txt
+          set -e
+      - name: Sanitize diagnostic evidence
+        run: |
+          mkdir -p /tmp/stracker-runtime-diagnostic
+          python - <<'PY'
+          from pathlib import Path
+          import re, json
+          out = Path('/tmp/stracker-runtime-diagnostic')
+          patterns = [
+              (re.compile(r'https?://\S+'), '<URL>'),
+              (re.compile(r'(?<!\d)-(?:3\d|6\d)\.\d{3,}'), '<COORD>'),
+              (re.compile(r'(?i)(authorization|cookie|token|secret)\s*[:=]\s*\S+'), r'\1=<REDACTED>'),
+          ]
+          for name in ['mobile','provider']:
+              source = Path(f'/tmp/{name}.raw')
+              text = source.read_text(errors='replace') if source.exists() else 'missing diagnostic output'
+              text = '\n'.join(text.splitlines()[-120:])
+              for pattern, replacement in patterns:
+                  text = pattern.sub(replacement, text)
+              (out / f'{name}.txt').write_text(text + '\n')
+          (out / 'exits.txt').write_text(Path('/tmp/exits.txt').read_text())
+          manifest = {
+              'schema':'stracker.runtime-diagnostic.v2',
+              'sourceSha':'${{ github.event.pull_request.head.sha }}',
+              'privateDataUsed':False,
+              'sourceArchiveIncluded':False,
+              'rawLogsIncluded':False,
+              'coordinateValuesRetained':False,
+              'files':['mobile.txt','provider.txt','exits.txt'],
+          }
+          (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+          ! grep -R -nE 'https?://|Authorization:|Cookie:|CF_Authorization|SAPISID=|-[36][0-9]\.[0-9]{3,}' /tmp/stracker-runtime-diagnostic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stracker-vector-map-runtime-diagnostic-${{ github.event.pull_request.head.sha }}
+          path: /tmp/stracker-runtime-diagnostic/
+          if-no-files-found: error
+          retention-days: 1
