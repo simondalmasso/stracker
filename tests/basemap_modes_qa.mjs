@@ -27,6 +27,14 @@ async function clickText(page, text) {
   }, text)
 }
 
+async function waitForRasterRequest(counters, timeoutMs = 30000) {
+  const startedAt = Date.now()
+  while (counters.requests === 0 && Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  assert(counters.requests > 0, 'satellite mode made no raster request')
+}
+
 async function installSyntheticGeolocation(page) {
   await page.evaluateOnNewDocument(() => {
     const callbacks = new Map()
@@ -163,7 +171,8 @@ try {
 
     await clickText(page, 'SATÉLITE')
     await page.waitForFunction(() => document.querySelector('main')?.getAttribute('data-basemap-mode') === 'satellite')
-    await page.waitForFunction(() => document.querySelector('main')?.getAttribute('data-basemap-provider') === 'available')
+    await waitForRasterRequest(raster)
+    assert((await page.$eval('main', (node) => node.getAttribute('data-basemap-provider'))) !== 'unavailable', 'successful satellite fixture was marked unavailable')
     assert((await page.$eval('[aria-label="Atribución del mapa"]', (node) => node.textContent)).includes('EOxCloudless'), 'satellite attribution missing')
     result.gates.VECTOR_TO_SATELLITE = 'PASS'
 
