@@ -6,7 +6,8 @@
 RENDERER=MapLibre GL JS
 VECTOR_PROVIDER=OpenFreeMap public service
 VECTOR_DATA=OpenStreetMap/OpenMapTiles-compatible
-SATELLITE_PROVIDER=EOxCloudless 2016 public WMTS
+SATELLITE_PROVIDER=EOxCloudless public WMTS
+SATELLITE_WMTS_LAYER=s2cloudless_3857
 ACCOUNT_REQUIRED=NO
 API_TOKEN_REQUIRED=NO
 MAP_PROVIDER_BILLING_ACCOUNT=NO
@@ -46,7 +47,8 @@ CI records allowed hosts, aggregate request counts and transferred bytes. Retain
 
 ```text
 PROVIDER=EOxCloudless
-LAYER=s2cloudless-2016_3857
+WMTS_LAYER=s2cloudless_3857
+ENDPOINT_HOST=tiles.maps.eox.at
 LICENSE=CC BY 4.0
 IMAGERY_PERIOD=2016-2017 mosaic
 RESOLUTION=10 m
@@ -54,7 +56,7 @@ RECENT_CLAIM_ALLOWED=NO
 COMPLETE_COVERAGE_CLAIMED=NO
 ```
 
-The product displays that the imagery is a 2016–2017 mosaic. It is not presented as live or recent.
+The product displays that the imagery is a 2016–2017 mosaic. It is not presented as live or recent. CI validates current WMTS capabilities, a public Santa Fe raster tile, image content type, non-empty bytes and CORS.
 
 ## IGN evaluation
 
@@ -92,4 +94,13 @@ HYBRID: satellite attribution + OpenFreeMap/OpenStreetMap attribution
 
 ## Failure behavior
 
-A failed raster provider produces `SATÉLITE NO DISPONIBLE EN ESTA ZONA`. Tracking, marker, accuracy, GhostRail, timestamps and camera state remain available. STRACKER does not silently substitute a paid or unauthorized provider.
+A failed raster provider or bounded availability timeout produces `SATÉLITE NO DISPONIBLE EN ESTA ZONA`. Tracking, marker, accuracy, GhostRail, timestamps and camera state remain available. STRACKER does not silently substitute a paid or unauthorized provider.
+
+## Exact-head validation
+
+```text
+VALIDATED_FEATURE_HEAD=2faa42dc127099d97acc28a9404c9cd75a0e9efc
+WORKFLOW_RUN_ID=29855942179
+PROVIDER_ARTIFACT_ID=8505304475
+PROVIDER_ARTIFACT_DIGEST=sha256:18e94400cfc5568db95374865948ad16758bbe77e111706861b3286bd2bd5174
+```
