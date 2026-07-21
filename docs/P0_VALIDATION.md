@@ -1,28 +1,47 @@
 # P0 Validation Evidence
 
-Validation ran in a clean GitHub Actions checkout. No production endpoint, deployment or secret store was modified.
+Validation ran in clean GitHub Actions checkouts. No production endpoint, deployment or secret store was modified.
+
+```text
+BASE_SHA=923cac9c9bcc0b7e05701dd1018e61a454d0f478
+IMPLEMENTATION_RUN=29825436822
+FINAL_HARDENING_RUN=29825998483
+PRODUCTION_MODIFIED=NO
+DEPLOYMENT_EXECUTED=NO
+```
 
 ## Backend gates
 
 | Command | Result | Exact status |
 |---|---|---|
 | `python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py tests/test_p0_security.py` | PASS | exit 0 |
-| `python -m unittest discover -s tests -p test_*.py -v` | PASS | exit 0; tests=9 |
+| `python -m unittest discover -s tests -p test_*.py -v` | PASS | exit 0; tests=11 |
+| `cmp tracker_map.py nextjs-ui/tracker_map.py` | PASS | exit 0 |
+| `git diff --check` | PASS | exit 0 |
 
-## Frontend comparison against BASE_SHA
+## Frozen dependency gate
+
+| Checkout | Command | Exit | Classification | Missing entries | Invalid entries |
+|---|---|---:|---|---:|---:|
+| Base | `npm ci --ignore-scripts` | 1 | NPM_CI_EUSAGE | 0 | 0 |
+| Candidate | `npm ci --ignore-scripts` | 1 | NPM_CI_EUSAGE | 0 | 0 |
+
+Package names and raw logs are intentionally omitted. Matching base/candidate classification and counts identify the failure as preexisting.
+
+## Ephemeral frontend comparison
+
+Because the frozen gate fails, these checks use `npm install --ignore-scripts --package-lock=false` only inside disposable runners. This is not a release build.
 
 | Check | Classification | Base exit | Candidate exit |
 |---|---|---:|---:|
-| `npm_ci` | PREEXISTING_FAIL | 1 | 1 |
-| `lint` | PREEXISTING_FAIL | 125 | 125 |
-| `typecheck` | PREEXISTING_FAIL | 125 | 125 |
-| `build` | PREEXISTING_FAIL | 125 | 125 |
+| `npm_install` | PASS | 0 | 0 |
+| `lint` | PREEXISTING_FAIL | 2 | 2 |
+| `typecheck` | PREEXISTING_FAIL | 2 | 2 |
+| `build` | PREEXISTING_FAIL | 1 | 1 |
 
-A candidate failure is classified as `PREEXISTING_FAIL` only when the same clean-environment check also failed on the exact base SHA. Raw logs are retained only in the ephemeral Actions runner and are not committed because they may contain noisy source excerpts.
+## Integrity and scope
 
-## Integrity checks
-
-- `tracker_map.py` and `nextjs-ui/tracker_map.py`: byte-identical after patch.
-- `git diff --check`: required before commit.
+- Browser-generated Bearer token code removed from the active source path.
+- Sensitive endpoint exceptions return generic client errors.
 - Production impact: none.
 - Deployment: not executed.

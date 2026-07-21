@@ -26,7 +26,7 @@ LOCKFILES=package-lock.json,bun.lock
 - `CURRENT_UI_SOURCE`: `src/components/tracker/TrackerView.tsx`.
 - `CURRENT_STATIC_ARTIFACT`: committed `nextjs-ui/` export; source/artifact parity remains unverified.
 - `CURRENT_BACKEND`: `tracker_map.py`; `nextjs-ui/tracker_map.py` is kept byte-identical in this branch.
-- `AUTH_MODEL`: protected Python endpoints require `STRACKER_API_TOKEN` via Bearer or `X-Stracker-Service-Token`, validated server-side with constant-time comparison.
+- `AUTH_MODEL`: protected Python endpoints require `STRACKER_API_TOKEN` via Bearer or `X-Stracker-Service-Token`, validated server-side with constant-time comparison. Browser-side token minting has been removed; the future edge gateway owns origin credentials.
 - `COOKIE_MODEL`: existing JSON/wrapper parser remains functionally unchanged; import endpoints are now authenticated. Header/Netscape normalization remains P1.
 - `GHOSTRAIL_MODEL`: CSV remains the canonical hot-history source; no migration was performed.
 - `STORAGE_MODEL`: local Render filesystem remains operationally unsafe until external persistence is implemented.

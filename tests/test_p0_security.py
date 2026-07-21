@@ -187,5 +187,44 @@ class SecurityBoundaryTests(unittest.TestCase):
         self.assertEqual(tracker_map.decrypt_record(encrypted), '{"safe":"test"}')
 
 
+    def test_internal_errors_use_generic_response(self):
+        original = tracker_map.read_encrypted_ghostrail
+
+        def explode():
+            raise RuntimeError("private-runtime-detail")
+
+        tracker_map.read_encrypted_ghostrail = explode
+        try:
+            with running_server() as port:
+                status, _, payload = request(
+                    port,
+                    "GET",
+                    "/ghostrail/encrypted",
+                    headers=self.auth_headers(),
+                )
+                self.assertEqual(status, 500)
+                self.assertEqual(
+                    json.loads(payload),
+                    {"status": "error", "error": "internal_error"},
+                )
+                self.assertNotIn(b"private-runtime-detail", payload)
+        finally:
+            tracker_map.read_encrypted_ghostrail = original
+
+    def test_browser_client_does_not_generate_bearer_tokens(self):
+        root = Path(__file__).resolve().parents[1]
+        api_client = (root / "src" / "lib" / "api-client.ts").read_text(encoding="utf-8")
+        for forbidden in (
+            "getBearerToken",
+            "ensureSession",
+            "clearSession",
+            "localStorage",
+            "headers.set('Authorization'",
+        ):
+            self.assertNotIn(forbidden, api_client)
+        self.assertIn("credentials: 'same-origin'", api_client)
+        self.assertFalse((root / "src" / "lib" / "auth.ts").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ Protected routes require a server-configured `STRACKER_API_TOKEN` with at least 
 - `Authorization: Bearer <token>` for controlled clients.
 - `X-Stracker-Service-Token: <token>` for the future Cloudflare Worker-to-Render gateway.
 
-Tokens are compared with `hmac.compare_digest`. Missing server configuration returns a generic `503`; missing or incorrect credentials return a generic `401`. CORS remains defense-in-depth and is not authentication.
+Tokens are compared with `hmac.compare_digest`. Missing server configuration returns a generic `503`; missing or incorrect credentials return a generic `401`. CORS remains defense-in-depth and is not authentication. The previous browser-generated Bearer token module was removed from the active source path.
 
 The root Next.js shell is not protected by this transitional mechanism because browser subresources cannot safely attach a manually entered Bearer token. Full UI protection is assigned to Cloudflare Access in the next phase. All endpoints capable of returning or mutating sensitive data are protected now.
 

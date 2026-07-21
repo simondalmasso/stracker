@@ -203,7 +203,9 @@ try:
     _AESGCM_AVAILABLE = True
 except ImportError:
     _AESGCM_AVAILABLE = False
-    logger.warning("cryptography package not available — ghostrail.enc disabled (CSV remains canonical)")
+    logging.getLogger(__name__).warning(
+        "cryptography package not available — encrypted storage unavailable"
+    )
 
 
 def _derive_aes_key() -> bytes:
@@ -2749,7 +2751,7 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                 })
             except Exception as e:
                 logger.error("/api/archive error: %s", e)
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+                self._send_json({"status": "error", "error": "internal_error"}, status=500)
             return
 
         # V5.8 SECURITY_FORTRESS: /ghostrail/encrypted endpoint
@@ -2784,7 +2786,7 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                 })
             except Exception as e:
                 logger.error("/ghostrail/encrypted error: %s", e)
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+                self._send_json({"status": "error", "error": "internal_error"}, status=500)
             return
 
         # V5.8 PREDICT_ENGINE_MARKOV: /predict endpoint
@@ -2818,7 +2820,7 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                 })
             except Exception as e:
                 logger.error("/predict error: %s", e)
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+                self._send_json({"status": "error", "error": "internal_error"}, status=500)
             return
 
         if path in ("/points", "/points/"):
@@ -2867,7 +2869,7 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                 self._send_json({"points": pts, "stats": sts, "state": state, "ghostrail_pts": ghostrail_pts, "last_update": _LAST_UPDATE.isoformat() if _LAST_UPDATE else None, "device_label": _DEVICE_LABEL, "_v58": {"rate_limit": "60/min", "encrypted_db": "/ghostrail/encrypted", "predict": "/predict"}, "_v60": {"cold_storage": "/api/archive", "archive_age_days": ARCHIVE_AGE_DAYS, "security_headers": ["HSTS", "CSP", "X-Frame-Options", "X-Content-Type-Options"], "cors": "strict"}})
             except Exception as e:
                 logger.error("/points error: %s", e)
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+                self._send_json({"status": "error", "error": "internal_error"}, status=500)
             return
 
         if path in ("", "/"):
