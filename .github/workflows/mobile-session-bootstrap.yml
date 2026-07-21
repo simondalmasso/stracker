@@ -49,7 +49,19 @@ jobs:
           git fetch --prune origin fix/stracker-p0-security-canonical-state
           test "$(git rev-parse origin/fix/stracker-p0-security-canonical-state)" = "$BASE_SHA"
           test "$(git merge-base HEAD origin/fix/stracker-p0-security-canonical-state)" = "$BASE_SHA"
-          python scripts/apply_mobile_session_backend.py
+          set +e
+          python scripts/apply_mobile_session_backend.py > /tmp/mobile-patch.log 2>&1
+          PATCH_EXIT=$?
+          set -e
+          if [ "$PATCH_EXIT" -ne 0 ]; then
+            tail -n 30 /tmp/mobile-patch.log > .mobile-patch-error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add .mobile-patch-error.txt
+            git commit -m 'ci: record mobile patch failure cause'
+            git push origin HEAD:$BRANCH_NAME
+            exit "$PATCH_EXIT"
+          fi
           test ! -e google_session.enc
           test ! -e cookies.json
 
@@ -139,7 +151,7 @@ jobs:
 
           Tested: 320x568, 360x640, 375x812, 390x844, 412x915; onboarding, import, map lock/unlock, reload, textarea focus, rotation, stale, no-location, session sheet, logout, expired-session error, horizontal overflow, page errors, and console errors.
           EOF
-          rm -f scripts/apply_mobile_session_backend.py .github/workflows/mobile-session-bootstrap.yml
+          rm -f .mobile-patch-error.txt scripts/apply_mobile_session_backend.py .github/workflows/mobile-session-bootstrap.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
