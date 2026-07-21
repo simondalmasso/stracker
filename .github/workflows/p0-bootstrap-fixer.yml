@@ -1,0 +1,57 @@
+name: STRACKER P0 Bootstrap Fixer
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize]
+    paths:
+      - .github/workflows/p0-bootstrap-fixer.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-generator:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/stracker-p0-security-canonical-state
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Correct escaping and remove diagnostics
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('scripts/p0_security_bootstrap.py')
+          text = path.read_text(encoding='utf-8')
+          old_path = 'replace("\\\\", "/")'
+          new_path = 'replace("\\\\\\\\", "/")'
+          old_csv = 'timestamp,lat,lng\\n'
+          new_csv = 'timestamp,lat,lng\\\\n'
+          if text.count(old_path) != 1:
+              raise SystemExit(f'path escape match count={text.count(old_path)}')
+          if text.count(old_csv) != 1:
+              raise SystemExit(f'csv escape match count={text.count(old_csv)}')
+          text = text.replace(old_path, new_path, 1).replace(old_csv, new_csv, 1)
+          path.write_text(text, encoding='utf-8')
+          Path('.github/workflows/p0-bootstrap-fixer.yml').unlink()
+          diagnostic_workflow = Path('.github/workflows/p0-syntax-diagnostic.yml')
+          if diagnostic_workflow.exists():
+              diagnostic_workflow.unlink()
+          diagnostic_doc = Path('docs/P0_BOOTSTRAP_DIAGNOSTIC.md')
+          if diagnostic_doc.exists():
+              diagnostic_doc.unlink()
+      - name: Commit corrected generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/p0_security_bootstrap.py
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A scripts/p0_security_bootstrap.py .github/workflows docs/P0_BOOTSTRAP_DIAGNOSTIC.md
+          git commit -m 'ci: correct P0 generator escaping'
+          git push origin HEAD:fix/stracker-p0-security-canonical-state
