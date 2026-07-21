@@ -4,8 +4,9 @@
     "id": "eox-s2cloudless-2016",
     "role": "AUTHORIZED_OPEN_FALLBACK",
     "host": "tiles.maps.eox.at",
-    "tileTemplate": "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857/default/g/{z}/{y}/{x}.jpg",
+    "tileTemplate": "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg",
     "capabilitiesUrl": "https://tiles.maps.eox.at/wmts/1.0.0/WMTSCapabilities.xml",
+    "wmtsLayerIdentifier": "s2cloudless_3857",
     "apiKeyRequired": false,
     "costUsd": 0,
     "paidOverageAllowed": false,
@@ -42,7 +43,7 @@
       "status": "SELECTED_AS_AUTHORIZED_OPEN_FALLBACK",
       "selected": true,
       "completeCoverageClaimed": false,
-      "reason": "Global land mosaic, direct WMTS integration, no API key, CC BY 4.0 and no billing dependency; lower 10 m resolution and historical 2016-2017 imagery are disclosed."
+      "reason": "The live WMTS catalog identifies the 2016 Web Mercator layer as s2cloudless_3857. It is a global land mosaic with no API key, CC BY 4.0 and no billing dependency; lower 10 m resolution and historical 2016-2017 imagery are disclosed."
     }
   ]
 }
