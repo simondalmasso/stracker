@@ -7,7 +7,7 @@ P0_BASE_SHA=923cac9c9bcc0b7e05701dd1018e61a454d0f478
 P0_BRANCH=fix/stracker-p0-security-canonical-state
 P0_HEAD_SHA=fa919edad57937481f97e74ac96f09697bf03642
 CURRENT_BRANCH=feat/stracker-mobile-session-product-v1
-CURRENT_HEAD_SHA=70a4c973562faf71b0424347cc4a7bd965a40b65
+CURRENT_HEAD_SHA=568d955d09c1c6f564838da4f580bc28ceea4ad5
 PR_BASE=fix/stracker-p0-security-canonical-state
 DRAFT_PR=2
 PRODUCTION_MODIFIED=NO
@@ -61,11 +61,10 @@ HORIZONTAL_OVERFLOW=0
 PAGEERROR=0
 TOUCH_TARGETS_MINIMUM=PASS
 MAP_LOCKING=PASS
-RUN_ID=29829546964
+RUN_ID=29829660401
 RUN_CONCLUSION=SUCCESS
+VALIDATED_HEAD=568d955d09c1c6f564838da4f580bc28ceea4ad5
 ```
-
-The validated run corresponds to commit `70a4c973562faf71b0424347cc4a7bd965a40b65` before this documentation-only update. The permanent workflow reruns after every new PR HEAD and must remain green before review.
 
 ## Known security findings
 
