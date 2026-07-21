@@ -1,0 +1,28 @@
+{
+  "name": "stracker-gateway-staging",
+  "main": "../src/index.mjs",
+  "compatibility_date": "2026-07-21",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "../../out",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "__ACCESS_TEAM_DOMAIN__",
+    "ACCESS_AUD": "__ACCESS_AUD__"
+  },
+  "secrets": {
+    "required": ["STRACKER_SERVICE_TOKEN"]
+  },
+  "services": [
+    {
+      "binding": "STRACKER_BACKEND",
+      "service": "stracker-backend-mock-staging"
+    }
+  ]
+}
