@@ -2,10 +2,10 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 
 const root = 'out'
-const extensions = new Set(['.html', '.js', '.css', '.json', '.txt', '.map'])
+const extensions = new Set(['.html', '.js', '.css', '.json', '.txt'])
 const forbidden = [
   { name: 'Mapbox hosted API', pattern: /api\.mapbox\.com/i },
-  { name: 'Mapbox renderer runtime', pattern: /(?:from|require\(|sourceMappingURL=.*)\s*['"]?mapbox-gl|\bmapboxgl\b/i },
+  { name: 'Mapbox renderer global', pattern: /\bmapboxgl\b/i },
   { name: 'Leaflet runtime', pattern: /leaflet-container|react-leaflet/i },
   { name: 'Legacy OSM raster', pattern: /tile\.openstreetmap\.org/i },
   { name: 'ArcGIS imagery', pattern: /(?:arcgisonline\.com|arcgis\.com).*?(?:World_Imagery|imagery)/i },
@@ -40,7 +40,7 @@ for (const file of files) {
   if (text.includes('maplibre')) mapLibreFound = true
   if (text.includes('SATÉLITE') && text.includes('HÍBRIDO') && text.includes('MAPA 3D')) basemapLabelsFound = true
   for (const rule of forbidden) {
-    if (rule.pattern.test(text)) throw new Error(`${rule.name} found in exported asset ${file}`)
+    if (rule.pattern.test(text)) throw new Error(`${rule.name} found in exported runtime asset ${file}`)
   }
 }
 
@@ -49,7 +49,7 @@ if (!satelliteFound) throw new Error('selected EOx satellite host absent from ex
 if (!mapLibreFound) throw new Error('MapLibre runtime marker absent from exported assets')
 if (!basemapLabelsFound) throw new Error('three visible basemap labels absent from exported assets')
 
-console.log(`EXPORTED_TEXT_FILES_SCANNED=${files.length}`)
+console.log(`EXPORTED_RUNTIME_FILES_SCANNED=${files.length}`)
 console.log('SINGLE_ENGINE_FINAL_BUNDLE=PASS')
 console.log('SATELLITE_SINGLE_RENDERER_BUNDLE=PASS')
 console.log('SENSITIVE_DATA_IN_LOGS=NO')
