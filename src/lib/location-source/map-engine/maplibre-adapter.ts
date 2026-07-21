@@ -182,6 +182,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     mount(container, initial, nextCallbacks) {
       if (map) adapter.destroy()
       callbacks = nextCallbacks
+      callbacks.onProviderState('loading')
       latestState = initial
       loaded = false
       createdAtMs = performance.now()
@@ -205,6 +206,9 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       })
       map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: OPENFREEMAP_ATTRIBUTION }), 'bottom-left')
 
+      map.on('error', () => {
+        callbacks?.onProviderState('degraded')
+      })
       map.once('style.load', () => {
         if (!map || !latestState) return
         setDarkBaseStyle(map)
@@ -214,11 +218,13 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       map.once('load', () => {
         loaded = true
         firstMapVisibleMs = performance.now() - createdAtMs
+        callbacks?.onProviderState('available')
         if (map && latestState) adapter.render(latestState)
         emitPerformance()
       })
       map.once('idle', () => {
         firstInteractiveMs = performance.now() - createdAtMs
+        callbacks?.onProviderState('available')
         emitPerformance()
       })
       map.on('render', () => { renderFrames += 1 })
@@ -232,6 +238,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       canvas.addEventListener('webglcontextlost', (event) => {
         event.preventDefault()
         webglContextLosses += 1
+        callbacks?.onProviderState('degraded')
         callbacks?.onWebglContextLost()
         emitPerformance()
       })
@@ -242,6 +249,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
           addRuntimeLayers(map, latestState)
           configureBuildings3d(map, { enabled: latestState.buildings3d, density: 'reduced' })
           adapter.render(latestState)
+          callbacks?.onProviderState('available')
         }
         emitPerformance()
       })
