@@ -45,7 +45,7 @@ let basemapTypeFound = false
 for (const file of files) {
   const text = await readFile(file, 'utf8')
   if (text.includes('https://tiles.openfreemap.org/styles/liberty')) selectedStyleFound = true
-  if (text.includes('https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2016_3857/default/g/{z}/{y}/{x}.jpg')) selectedSatelliteFound = true
+  if (text.includes('https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg')) selectedSatelliteFound = true
   if (/BasemapMode\s*=\s*['"]vector-3d['"]\s*\|\s*['"]satellite['"]\s*\|\s*['"]hybrid['"]/.test(text)) basemapTypeFound = true
   for (const rule of forbidden) {
     if (rule.pattern.test(text)) throw new Error(`${rule.name} found in ${file}`)
@@ -65,6 +65,7 @@ if (!basemapTypeFound) throw new Error('exact BasemapMode contract is absent')
 const policy = JSON.parse(await readFile('src/lib/location-source/map-engine/satellite-provider-policy.json', 'utf8'))
 const selected = policy.selectedProvider
 if (selected.id !== 'eox-s2cloudless-2016') throw new Error('unexpected selected satellite provider')
+if (selected.wmtsLayerIdentifier !== 's2cloudless_3857') throw new Error('unexpected EOx WMTS layer identifier')
 if (selected.costUsd !== 0) throw new Error('satellite provider cost is not zero')
 if (selected.apiKeyRequired !== false) throw new Error('satellite provider requires an API key')
 if (selected.paidOverageAllowed !== false) throw new Error('satellite provider allows paid overage')
