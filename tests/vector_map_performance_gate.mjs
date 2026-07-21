@@ -107,22 +107,36 @@ try {
     return value !== null && value !== ''
   }, { timeout: 30000 })
 
-  const metrics = await page.$eval('main[data-map-engine="maplibre"]', (node) => ({
+  const adapterMetrics = await page.$eval('main[data-map-engine="maplibre"]', (node) => ({
     firstMapVisibleMs: Number(node.getAttribute('data-map-first-visible-ms')),
     firstMapInteractiveMs: Number(node.getAttribute('data-map-first-interactive-ms')),
-    estimatedFps: Number(node.getAttribute('data-map-fps')),
+    mapRenderRateEstimate: Number(node.getAttribute('data-map-fps')),
     longTasks: Number(node.getAttribute('data-map-long-tasks')),
     longTaskDurationMs: Number(node.getAttribute('data-map-long-task-ms')),
     resourceTimingTransferredBytes: Number(node.getAttribute('data-map-transferred-bytes')),
   }))
 
-  assert(metrics.firstMapVisibleMs > 0 && metrics.firstMapVisibleMs <= budgets.firstMapVisibleMsMax, `first map visible budget exceeded: ${metrics.firstMapVisibleMs}`)
-  assert(metrics.firstMapInteractiveMs > 0 && metrics.firstMapInteractiveMs <= budgets.firstMapInteractiveMsMax, `first map interactive budget exceeded: ${metrics.firstMapInteractiveMs}`)
-  assert(metrics.estimatedFps >= budgets.estimatedFpsFloor, `FPS floor missed: ${metrics.estimatedFps}`)
-  assert(metrics.longTasks <= budgets.longTaskCountMax, `long task count exceeded: ${metrics.longTasks}`)
-  assert(metrics.longTaskDurationMs <= budgets.longTaskDurationMsMax, `long task duration exceeded: ${metrics.longTaskDurationMs}`)
+  const activeRafFps = await page.evaluate(async () => {
+    const start = performance.now()
+    let frames = 0
+    await new Promise((resolve) => {
+      const frame = (now) => {
+        frames += 1
+        if (now - start < 1500) requestAnimationFrame(frame)
+        else resolve()
+      }
+      requestAnimationFrame(frame)
+    })
+    return Math.round((frames * 1000) / Math.max(1, performance.now() - start))
+  })
+
+  assert(adapterMetrics.firstMapVisibleMs > 0 && adapterMetrics.firstMapVisibleMs <= budgets.firstMapVisibleMsMax, `first map visible budget exceeded: ${adapterMetrics.firstMapVisibleMs}`)
+  assert(adapterMetrics.firstMapInteractiveMs > 0 && adapterMetrics.firstMapInteractiveMs <= budgets.firstMapInteractiveMsMax, `first map interactive budget exceeded: ${adapterMetrics.firstMapInteractiveMs}`)
+  assert(activeRafFps >= budgets.estimatedFpsFloor, `active RAF FPS floor missed: ${activeRafFps}`)
+  assert(adapterMetrics.longTasks <= budgets.longTaskCountMax, `long task count exceeded: ${adapterMetrics.longTasks}`)
+  assert(adapterMetrics.longTaskDurationMs <= budgets.longTaskDurationMsMax, `long task duration exceeded: ${adapterMetrics.longTaskDurationMs}`)
   assert(providerRequests <= budgets.mapProviderRequestsFirstViewportMax, `provider request budget exceeded: ${providerRequests}`)
-  const providerBytesObserved = Math.max(providerContentLengthBytes, metrics.resourceTimingTransferredBytes)
+  const providerBytesObserved = Math.max(providerContentLengthBytes, adapterMetrics.resourceTimingTransferredBytes)
   assert(providerBytesObserved <= budgets.mapProviderTransferredBytesFirstViewportMax, `provider byte budget exceeded: ${providerBytesObserved}`)
 
   const result = {
@@ -133,7 +147,8 @@ try {
     hosts: [...providerHosts].sort(),
     metrics: {
       initialRouteTransferredBytes,
-      ...metrics,
+      ...adapterMetrics,
+      activeRafFps,
       providerRequests,
       providerContentLengthBytes,
       providerBytesObserved,
@@ -143,7 +158,7 @@ try {
       INITIAL_ROUTE_TRANSFER: 'PASS',
       FIRST_MAP_VISIBLE: 'PASS',
       FIRST_MAP_INTERACTIVE: 'PASS',
-      ESTIMATED_FPS: 'PASS',
+      ACTIVE_RAF_FPS: 'PASS',
       LONG_TASKS: 'PASS',
       PROVIDER_REQUESTS: 'PASS',
       PROVIDER_BYTES: 'PASS',
