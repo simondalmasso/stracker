@@ -57,13 +57,17 @@ jobs:
           bun run test:gateway-invariants
           echo 'BACKEND_TESTS=PASS'
           echo 'GATEWAY_REGRESSION=PASS'
-      - name: LINT_AND_TYPECHECK
+      - name: ESLINT
         run: |
           bun run lint
-          bun run typecheck
-          bun run runtime:typecheck
           echo 'ESLINT=PASS'
+      - name: TYPECHECK
+        run: |
+          bun run typecheck
           echo 'TYPECHECK=PASS'
+      - name: RUNTIME_TYPECHECK
+        run: |
+          bun run runtime:typecheck
           echo 'RUNTIME_TYPECHECK=PASS'
       - name: RUNTIME_AND_IDENTITY_TESTS
         run: |
