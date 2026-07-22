@@ -5,12 +5,14 @@ import type {
   NativeSharingSegment,
   NativeSharingSession,
   NativeSharingStore,
+  OpaqueViewerSession,
 } from './contracts.js'
 import { DELETE_AFTER_EXPIRATION_MS, MAX_GHOSTRAIL_SEGMENTS } from './limits.js'
 
 interface SessionBucket {
   session: NativeSharingSession
   points: AcceptedNativePoint[]
+  viewerSessions: Map<string, OpaqueViewerSession>
 }
 
 export class InMemoryNativeSharingStore implements NativeSharingStore {
@@ -19,7 +21,7 @@ export class InMemoryNativeSharingStore implements NativeSharingStore {
   async createSession(input: CreateSessionInput): Promise<NativeSharingSession> {
     if (this.buckets.has(input.session.id)) throw new Error('SESSION_COLLISION')
     const session = structuredClone(input.session)
-    this.buckets.set(session.id, { session, points: [] })
+    this.buckets.set(session.id, { session, points: [], viewerSessions: new Map() })
     return structuredClone(session)
   }
 
@@ -64,16 +66,51 @@ export class InMemoryNativeSharingStore implements NativeSharingStore {
     return structuredClone(segments.slice(-Math.max(1, Math.min(maxSegments, MAX_GHOSTRAIL_SEGMENTS))))
   }
 
+  async createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession): Promise<OpaqueViewerSession> {
+    const bucket = this.buckets.get(sessionId)
+    if (!bucket) throw new Error('SESSION_NOT_FOUND')
+    bucket.viewerSessions.set(viewerSession.tokenVerifier, structuredClone(viewerSession))
+    return structuredClone(viewerSession)
+  }
+
+  async getViewerSession(sessionId: string, tokenVerifier: string): Promise<OpaqueViewerSession | null> {
+    const viewerSession = this.buckets.get(sessionId)?.viewerSessions.get(tokenVerifier)
+    return viewerSession ? structuredClone(viewerSession) : null
+  }
+
+  async revokeViewerSession(sessionId: string, tokenVerifier: string, revokedAt: string): Promise<boolean> {
+    const bucket = this.buckets.get(sessionId)
+    const viewerSession = bucket?.viewerSessions.get(tokenVerifier)
+    if (!bucket || !viewerSession) return false
+    bucket.viewerSessions.set(tokenVerifier, { ...viewerSession, revokedAt })
+    return true
+  }
+
+  async revokeAllViewerSessions(sessionId: string, revokedAt: string): Promise<number> {
+    const bucket = this.buckets.get(sessionId)
+    if (!bucket) return 0
+    let revoked = 0
+    for (const [verifier, viewerSession] of bucket.viewerSessions) {
+      if (!viewerSession.revokedAt) {
+        bucket.viewerSessions.set(verifier, { ...viewerSession, revokedAt })
+        revoked += 1
+      }
+    }
+    return revoked
+  }
+
   async revokeSession(sessionId: string, revokedAt: string): Promise<NativeSharingSession | null> {
     const bucket = this.buckets.get(sessionId)
     if (!bucket) return null
     bucket.session = { ...bucket.session, state: 'revoked', revokedAt }
+    await this.revokeAllViewerSessions(sessionId, revokedAt)
     return structuredClone(bucket.session)
   }
 
-  async rotateViewerCapability(sessionId: string, verifier: string): Promise<NativeSharingSession | null> {
+  async rotateViewerCapability(sessionId: string, verifier: string, revokedAt: string): Promise<NativeSharingSession | null> {
     const bucket = this.buckets.get(sessionId)
     if (!bucket || bucket.session.state !== 'active') return null
+    await this.revokeAllViewerSessions(sessionId, revokedAt)
     bucket.session = { ...bucket.session, viewerVerifier: verifier, viewerGeneration: bucket.session.viewerGeneration + 1 }
     return structuredClone(bucket.session)
   }
@@ -82,6 +119,9 @@ export class InMemoryNativeSharingStore implements NativeSharingStore {
     const now = Date.parse(nowIso)
     let deleted = 0
     for (const [sessionId, bucket] of this.buckets) {
+      for (const [verifier, viewerSession] of bucket.viewerSessions) {
+        if (viewerSession.revokedAt || now > Date.parse(viewerSession.expiresAt)) bucket.viewerSessions.delete(verifier)
+      }
       if (now > Date.parse(bucket.session.expiresAt) + DELETE_AFTER_EXPIRATION_MS) {
         this.buckets.delete(sessionId)
         deleted += 1
@@ -119,8 +159,12 @@ export class D1NativeSharingStoreCandidate implements NativeSharingStore {
   async appendPoint(sessionId: string, expectedLastSequence: number, point: AcceptedNativePoint) { void sessionId; void expectedLastSequence; void point; return this.unavailable() }
   async getLatestPoint(sessionId: string) { void sessionId; return this.unavailable() }
   async getConfirmedSegments(sessionId: string, maxSegments?: number) { void sessionId; void maxSegments; return this.unavailable() }
+  async createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession) { void sessionId; void viewerSession; return this.unavailable() }
+  async getViewerSession(sessionId: string, tokenVerifier: string) { void sessionId; void tokenVerifier; return this.unavailable() }
+  async revokeViewerSession(sessionId: string, tokenVerifier: string, revokedAt: string) { void sessionId; void tokenVerifier; void revokedAt; return this.unavailable() }
+  async revokeAllViewerSessions(sessionId: string, revokedAt: string) { void sessionId; void revokedAt; return this.unavailable() }
   async revokeSession(sessionId: string, revokedAt: string) { void sessionId; void revokedAt; return this.unavailable() }
-  async rotateViewerCapability(sessionId: string, verifier: string) { void sessionId; void verifier; return this.unavailable() }
+  async rotateViewerCapability(sessionId: string, verifier: string, revokedAt: string) { void sessionId; void verifier; void revokedAt; return this.unavailable() }
   async deleteExpired(nowIso: string) { void nowIso; return this.unavailable() }
 }
 
@@ -137,7 +181,11 @@ export class DurableObjectNativeSharingStoreCandidate implements NativeSharingSt
   appendPoint(sessionId: string, expectedLastSequence: number, point: AcceptedNativePoint) { return this.stub().appendPoint(sessionId, expectedLastSequence, point) }
   getLatestPoint(sessionId: string) { return this.stub().getLatestPoint(sessionId) }
   getConfirmedSegments(sessionId: string, maxSegments?: number) { return this.stub().getConfirmedSegments(sessionId, maxSegments) }
+  createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession) { return this.stub().createViewerSession(sessionId, viewerSession) }
+  getViewerSession(sessionId: string, tokenVerifier: string) { return this.stub().getViewerSession(sessionId, tokenVerifier) }
+  revokeViewerSession(sessionId: string, tokenVerifier: string, revokedAt: string) { return this.stub().revokeViewerSession(sessionId, tokenVerifier, revokedAt) }
+  revokeAllViewerSessions(sessionId: string, revokedAt: string) { return this.stub().revokeAllViewerSessions(sessionId, revokedAt) }
   revokeSession(sessionId: string, revokedAt: string) { return this.stub().revokeSession(sessionId, revokedAt) }
-  rotateViewerCapability(sessionId: string, verifier: string) { return this.stub().rotateViewerCapability(sessionId, verifier) }
+  rotateViewerCapability(sessionId: string, verifier: string, revokedAt: string) { return this.stub().rotateViewerCapability(sessionId, verifier, revokedAt) }
   deleteExpired(nowIso: string) { return this.stub().deleteExpired(nowIso) }
 }
