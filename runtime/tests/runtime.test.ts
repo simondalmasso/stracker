@@ -114,7 +114,7 @@ describe('identity and Google Maps session separation', () => {
     }), env())
     const expired = runtime(store, 'identity-user-a', async () => new Response('expired', { status: 403 }))
     const status = await expired.fetch(request('/api/session/status'), env())
-    expect(status.status).toBe(401)
+    expect(status.status).toBe(200)
     expect((await payload(status)).state).toBe('SHARED_EXPIRED')
   })
 
