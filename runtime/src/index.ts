@@ -1,3 +1,4 @@
+import { validateAccessJwt } from '../../gateway/src/access-jwt.mjs'
 import type { AccessIdentity, ParsedSession, SessionPublicStatus, SessionStore } from './contracts'
 import { decryptSession, encryptSession, hashIdentitySubject } from './crypto'
 import {
@@ -64,23 +65,11 @@ function required(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-interface AccessClaims {
-  sub?: unknown
-  email?: unknown
-  exp?: unknown
-}
-
-interface AccessJwtModule {
-  validateAccessJwt(token: string | null, options: { teamDomain: string; audience: string; fetchImpl: typeof fetch }): Promise<AccessClaims>
-}
-
 async function defaultValidateIdentity(assertion: string | null, env: RuntimeEnv): Promise<AccessIdentity> {
   const teamDomain = required(env.ACCESS_TEAM_DOMAIN)
   const audience = required(env.ACCESS_AUD)
   if (!teamDomain || !audience) throw Object.assign(new Error('Cloudflare Access bindings are incomplete.'), { code: 'ACCESS_NOT_CONFIGURED' })
-  // @ts-ignore The existing validated JavaScript Access module is loaded through a typed bridge.
-  const accessModule = await import('../../gateway/src/access-jwt.mjs') as unknown as AccessJwtModule
-  const claims = await accessModule.validateAccessJwt(assertion, { teamDomain, audience, fetchImpl: fetch })
+  const claims = await validateAccessJwt(assertion, { teamDomain, audience, fetchImpl: fetch })
   if (!claims || typeof claims.sub !== 'string' || !claims.sub.trim()) {
     throw Object.assign(new Error('Cloudflare Access subject is missing.'), { code: 'ACCESS_SUBJECT_MISSING' })
   }
