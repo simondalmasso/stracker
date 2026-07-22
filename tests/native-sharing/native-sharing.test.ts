@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import type { AcceptedNativePoint, NativeSharingSession } from '../../native-sharing/src/contracts.js'
 import { PointValidationError } from '../../native-sharing/src/geo.js'
 import { createNativeSharingHttp } from '../../native-sharing/src/http.js'
-import { MAX_POINTS_PER_SESSION } from '../../native-sharing/src/limits.js'
+import { MAX_POINTS_PER_SESSION, VIEWER_SESSION_TTL_MS } from '../../native-sharing/src/limits.js'
 import { capabilityVerifier, parseViewerCapability } from '../../native-sharing/src/security.js'
-import { NativeSharingError, NativeSharingService } from '../../native-sharing/src/service.js'
+import { NativeSharingService } from '../../native-sharing/src/service.js'
 import { InMemoryNativeSharingStore } from '../../native-sharing/src/store.js'
 
 const START = Date.parse('2026-07-22T12:00:00.000Z')
@@ -39,39 +39,72 @@ async function expectCode(promise: Promise<unknown>, code: string) {
   await expect(promise).rejects.toMatchObject({ code })
 }
 
-describe('native capability model', () => {
-  test('EMITTER_VIEWER_TOKEN_SEPARATION', async () => {
+async function createAndExchange(service: NativeSharingService, durationMs = 300_000) {
+  const created = await service.createSession(durationMs)
+  const viewer = await service.exchangeViewerCapability(created.viewerCapability)
+  return { created, viewer }
+}
+
+describe('native capability and opaque viewer sessions', () => {
+  test('EMITTER_VIEWER_TOKEN_SEPARATION and CAPABILITY_EXCHANGE_REQUIRED', async () => {
     const { service, store } = harness()
     const created = await service.createSession(300_000)
-    const viewer = parseViewerCapability(created.viewerCapability)
-    expect(viewer).not.toBeNull()
+    const capability = parseViewerCapability(created.viewerCapability)
+    expect(capability).not.toBeNull()
     expect(created.sessionId).toHaveLength(43)
     expect(created.emitterToken).toHaveLength(43)
-    expect(viewer?.viewerToken).toHaveLength(43)
-    expect(new Set([created.sessionId, created.emitterToken, viewer?.viewerToken]).size).toBe(3)
+    expect(capability?.viewerToken).toHaveLength(43)
+    expect(new Set([created.sessionId, created.emitterToken, capability?.viewerToken]).size).toBe(3)
+
     const stored = await store.getSession(created.sessionId)
     expect(stored?.emitterVerifier).not.toContain(created.emitterToken)
-    expect(stored?.viewerVerifier).not.toContain(viewer?.viewerToken || '')
+    expect(stored?.viewerVerifier).not.toContain(capability?.viewerToken || '')
+    await expectCode(service.getStatus(created.sessionId, capability!.viewerToken), 'NOT_FOUND')
+
+    const viewer = await service.exchangeViewerCapability(created.viewerCapability)
+    expect(viewer.viewerSessionToken).toHaveLength(43)
+    expect(viewer.viewerSessionToken).not.toBe(created.emitterToken)
+    expect(viewer.viewerSessionToken).not.toBe(capability?.viewerToken)
+    expect(viewer.viewerGeneration).toBe(1)
+    expect((await service.getStatus(created.sessionId, viewer.viewerSessionToken)).state).toBe('active')
   })
 
   test('SESSION_ENUMERATION_BLOCKED', async () => {
     const { service } = harness()
     const created = await service.createSession(300_000)
-    const unknown = 'A'.repeat(43)
-    await expectCode(service.getStatus(unknown, 'B'.repeat(43)), 'NOT_FOUND')
-    await expectCode(service.getStatus(created.sessionId, 'B'.repeat(43)), 'NOT_FOUND')
+    const parsed = parseViewerCapability(created.viewerCapability)!
+    const unknown = `${'A'.repeat(43)}.${'B'.repeat(43)}`
+    const invalid = `${created.sessionId}.${'B'.repeat(43)}`
+    await expectCode(service.exchangeViewerCapability(unknown), 'NOT_FOUND')
+    await expectCode(service.exchangeViewerCapability(invalid), 'NOT_FOUND')
+    expect(parsed.viewerToken).not.toBe('B'.repeat(43))
   })
 
-  test('VIEWER_ROTATION_INVALIDATES_OLD_LINK', async () => {
+  test('ROTATION_INVALIDATES_ACTIVE_VIEWERS', async () => {
     const { service } = harness()
-    const created = await service.createSession(300_000)
-    const oldViewer = parseViewerCapability(created.viewerCapability)
+    const { created, viewer } = await createAndExchange(service)
+    expect((await service.getStatus(created.sessionId, viewer.viewerSessionToken)).state).toBe('active')
+
     const rotated = await service.rotateViewer(created.sessionId, created.emitterToken)
-    const newViewer = parseViewerCapability(rotated.viewerCapability)
-    expect(oldViewer).not.toBeNull()
-    expect(newViewer).not.toBeNull()
-    await expectCode(service.getStatus(created.sessionId, oldViewer!.viewerToken), 'NOT_FOUND')
-    expect((await service.getStatus(created.sessionId, newViewer!.viewerToken)).state).toBe('active')
+    expect(rotated.viewerGeneration).toBe(2)
+    await expectCode(service.exchangeViewerCapability(created.viewerCapability), 'NOT_FOUND')
+    await expectCode(service.getStatus(created.sessionId, viewer.viewerSessionToken), 'VIEWER_SESSION_INVALID')
+
+    const replacement = await service.exchangeViewerCapability(rotated.viewerCapability)
+    expect(replacement.viewerGeneration).toBe(2)
+    expect((await service.getStatus(created.sessionId, replacement.viewerSessionToken)).state).toBe('active')
+  })
+
+  test('VIEWER_SESSION_SHORT_LIVED and VIEWER_LOGOUT', async () => {
+    const h = harness()
+    const first = await createAndExchange(h.service)
+    expect(Date.parse(first.viewer.expiresAt) - h.now()).toBe(VIEWER_SESSION_TTL_MS)
+    await h.service.logoutViewer(first.created.sessionId, first.viewer.viewerSessionToken)
+    await expectCode(h.service.getStatus(first.created.sessionId, first.viewer.viewerSessionToken), 'VIEWER_SESSION_INVALID')
+
+    const second = await createAndExchange(h.service, 60 * 60_000)
+    h.advance(VIEWER_SESSION_TTL_MS + 1)
+    await expectCode(h.service.getStatus(second.created.sessionId, second.viewer.viewerSessionToken), 'VIEWER_SESSION_EXPIRED')
   })
 })
 
@@ -118,29 +151,27 @@ describe('native point acceptance', () => {
 })
 
 describe('revocation and expiry', () => {
-  test('REVOCATION_IMMEDIATE', async () => {
+  test('REVOCATION_INVALIDATES_ACTIVE_VIEWERS', async () => {
     const h = harness()
-    const created = await h.service.createSession(300_000)
-    const viewer = parseViewerCapability(created.viewerCapability)!
+    const { created, viewer } = await createAndExchange(h.service)
     await h.service.revoke(created.sessionId, created.emitterToken)
-    expect((await h.service.getStatus(created.sessionId, viewer.viewerToken)).state).toBe('revoked')
-    await expectCode(h.service.getPoints(created.sessionId, viewer.viewerToken), 'SESSION_REVOKED')
+    await expectCode(h.service.getStatus(created.sessionId, viewer.viewerSessionToken), 'SESSION_REVOKED')
+    await expectCode(h.service.getPoints(created.sessionId, viewer.viewerSessionToken), 'SESSION_REVOKED')
     await expectCode(h.service.appendPoint(created.sessionId, created.emitterToken, point(1, new Date(h.now()).toISOString())), 'SESSION_REVOKED')
   })
 
   test('SESSION_EXPIRATION', async () => {
     const h = harness()
-    const created = await h.service.createSession(300_000)
-    const viewer = parseViewerCapability(created.viewerCapability)!
+    const { created, viewer } = await createAndExchange(h.service)
     h.advance(300_001)
-    expect((await h.service.getStatus(created.sessionId, viewer.viewerToken)).state).toBe('expired')
-    await expectCode(h.service.getPoints(created.sessionId, viewer.viewerToken), 'SESSION_EXPIRED')
+    await expectCode(h.service.getStatus(created.sessionId, viewer.viewerSessionToken), 'SESSION_EXPIRED')
+    await expectCode(h.service.getPoints(created.sessionId, viewer.viewerSessionToken), 'SESSION_EXPIRED')
     await expectCode(h.service.appendPoint(created.sessionId, created.emitterToken, point(1, new Date(h.now()).toISOString())), 'SESSION_EXPIRED')
   })
 })
 
 describe('HTTP boundary', () => {
-  test('strict JSON, no-store and no open CORS', async () => {
+  test('strict JSON, no-store, no-referrer, CSP and no open CORS', async () => {
     const h = harness()
     const http = createNativeSharingHttp(h.service)
     const created = await http.fetch(new Request('https://stracker.invalid/api/share/sessions', {
@@ -150,6 +181,8 @@ describe('HTTP boundary', () => {
     }))
     expect(created.status).toBe(201)
     expect(created.headers.get('cache-control')).toBe('no-store, max-age=0')
+    expect(created.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(created.headers.get('content-security-policy')).toContain("default-src 'none'")
     expect(created.headers.get('access-control-allow-origin')).toBeNull()
 
     const crossOrigin = await http.fetch(new Request('https://stracker.invalid/api/share/sessions', {
@@ -159,7 +192,7 @@ describe('HTTP boundary', () => {
     }))
     expect(crossOrigin.status).toBe(403)
 
-    const query = await http.fetch(new Request('https://stracker.invalid/api/share/sessions?guess=1', {
+    const query = await http.fetch(new Request('https://stracker.invalid/api/share/viewer/exchange?guess=1', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
@@ -167,22 +200,62 @@ describe('HTTP boundary', () => {
     expect(query.status).toBe(400)
   })
 
-  test('unknown and invalid capabilities have identical public status', async () => {
+  test('exchange is required and polling uses Authorization bearer', async () => {
     const h = harness()
     const http = createNativeSharingHttp(h.service)
     const created = await h.service.createSession(300_000)
-    const unknown = await http.fetch(new Request(`https://stracker.invalid/api/share/sessions/${'A'.repeat(43)}/status`, { headers: { 'X-Stracker-Viewer': 'B'.repeat(43) } }))
-    const invalid = await http.fetch(new Request(`https://stracker.invalid/api/share/sessions/${created.sessionId}/status`, { headers: { 'X-Stracker-Viewer': 'B'.repeat(43) } }))
+    const original = parseViewerCapability(created.viewerCapability)!
+
+    const originalPolling = await http.fetch(new Request(`https://stracker.invalid/api/share/sessions/${created.sessionId}/status`, {
+      headers: { 'X-Stracker-Viewer': original.viewerToken },
+    }))
+    expect(originalPolling.status).toBe(404)
+
+    const exchange = await http.fetch(new Request('https://stracker.invalid/api/share/viewer/exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ viewerCapability: created.viewerCapability }),
+    }))
+    expect(exchange.status).toBe(200)
+    const exchanged = await exchange.json() as { viewerSessionToken: string; sessionId: string }
+
+    const status = await http.fetch(new Request(`https://stracker.invalid/api/share/sessions/${exchanged.sessionId}/status`, {
+      headers: { Authorization: `Bearer ${exchanged.viewerSessionToken}` },
+    }))
+    expect(status.status).toBe(200)
+  })
+
+  test('unknown and invalid capabilities have identical exchange response', async () => {
+    const h = harness()
+    const http = createNativeSharingHttp(h.service)
+    const created = await h.service.createSession(300_000)
+    const request = (viewerCapability: string) => http.fetch(new Request('https://stracker.invalid/api/share/viewer/exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ viewerCapability }),
+    }))
+    const unknown = await request(`${'A'.repeat(43)}.${'B'.repeat(43)}`)
+    const invalid = await request(`${created.sessionId}.${'B'.repeat(43)}`)
     expect(unknown.status).toBe(404)
     expect(invalid.status).toBe(404)
     expect(await unknown.text()).toBe(await invalid.text())
   })
 
-  test('sanitized errors never echo capabilities', async () => {
+  test('sanitized errors never echo capabilities or viewer session tokens', async () => {
     const h = harness()
     const http = createNativeSharingHttp(h.service)
-    const token = 'T'.repeat(43)
-    const response = await http.fetch(new Request(`https://stracker.invalid/api/share/sessions/${'S'.repeat(43)}/status`, { headers: { 'X-Stracker-Viewer': token } }))
-    expect(await response.text()).not.toContain(token)
+    const capability = `${'S'.repeat(43)}.${'T'.repeat(43)}`
+    const exchange = await http.fetch(new Request('https://stracker.invalid/api/share/viewer/exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ viewerCapability: capability }),
+    }))
+    expect(await exchange.text()).not.toContain(capability)
+
+    const viewerSessionToken = 'V'.repeat(43)
+    const status = await http.fetch(new Request(`https://stracker.invalid/api/share/sessions/${'S'.repeat(43)}/status`, {
+      headers: { Authorization: `Bearer ${viewerSessionToken}` },
+    }))
+    expect(await status.text()).not.toContain(viewerSessionToken)
   })
 })
