@@ -1,0 +1,35 @@
+name: STRACKER Native Sharing Typecheck Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-vector-map-engine-v1
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - run: bun install --frozen-lockfile
+      - name: Capture typecheck output
+        run: |
+          set +e
+          bun run typecheck >/tmp/typecheck.txt 2>&1
+          echo $? >/tmp/typecheck-exit.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-sharing-typecheck-diagnostic-${{ github.event.pull_request.head.sha }}
+          path: /tmp/typecheck*.txt
+          if-no-files-found: error
+          retention-days: 1
