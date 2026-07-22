@@ -7,6 +7,7 @@ import type {
   LocationSample,
   LocationSnapshot,
   MotionState,
+  NativeViewerExchangeResponse,
   SourceHealth,
   ViewerSessionState,
 } from './contracts'
@@ -18,10 +19,13 @@ import {
   type LocationPipelineState,
 } from './location-pipeline'
 import {
+  exchangeNativeViewerCapability,
   fetchNativeViewerPoints,
   fetchNativeViewerStatus,
+  logoutNativeViewer,
   NativeSharingApiError,
-  parseViewerCapability,
+  readViewerCapabilityFromFragment,
+  removeViewerCapabilityFragment,
 } from './native-sharing-api'
 
 interface NativeViewerController {
@@ -33,7 +37,7 @@ interface NativeViewerController {
   sourceHealth: SourceHealth
   loading: boolean
   error: string | null
-  start: (capability: string) => Promise<void>
+  start: () => Promise<void>
   stop: () => void
 }
 
@@ -55,6 +59,7 @@ export function useNativeViewer(): NativeViewerController {
   const generationRef = useRef(0)
   const lastSequenceRef = useRef(0)
   const stateRef = useRef<ViewerSessionState>('unconfirmed')
+  const viewerSessionRef = useRef<NativeViewerExchangeResponse | null>(null)
   const pipelineRef = useRef<LocationPipelineState>(initialLocationPipelineState('shared-location'))
 
   const setExactState = useCallback((next: ViewerSessionState) => {
@@ -72,51 +77,89 @@ export function useNativeViewer(): NativeViewerController {
     requestRef.current = null
   }, [])
 
-  const stop = useCallback(() => {
-    abortTransport()
+  const clearLocalState = useCallback(() => {
     pipelineRef.current = initialLocationPipelineState('shared-location', pipelineRef.current.sessionEpoch + 1)
+    viewerSessionRef.current = null
     lastSequenceRef.current = 0
     setSnapshot(null)
     setGhostrail([])
     setError(null)
     setLoading(false)
-    setExactState('unconfirmed')
-  }, [abortTransport, setExactState])
+  }, [])
 
-  useEffect(() => () => abortTransport(), [abortTransport])
-
-  const start = useCallback(async (capability: string) => {
+  const stop = useCallback(() => {
+    const viewerSession = viewerSessionRef.current
     abortTransport()
-    pipelineRef.current = initialLocationPipelineState('shared-location', pipelineRef.current.sessionEpoch + 1)
-    lastSequenceRef.current = 0
-    setSnapshot(null)
-    setGhostrail([])
-    setError(null)
+    clearLocalState()
+    setExactState('unconfirmed')
+    if (viewerSession) {
+      void logoutNativeViewer(viewerSession.sessionId, viewerSession.viewerSessionToken).catch(() => undefined)
+    }
+  }, [abortTransport, clearLocalState, setExactState])
+
+  useEffect(() => () => {
+    const viewerSession = viewerSessionRef.current
+    abortTransport()
+    viewerSessionRef.current = null
+    if (viewerSession) void logoutNativeViewer(viewerSession.sessionId, viewerSession.viewerSessionToken).catch(() => undefined)
+  }, [abortTransport])
+
+  const start = useCallback(async () => {
+    const priorViewerSession = viewerSessionRef.current
+    abortTransport()
+    clearLocalState()
+    if (priorViewerSession) {
+      void logoutNativeViewer(priorViewerSession.sessionId, priorViewerSession.viewerSessionToken).catch(() => undefined)
+    }
     setLoading(true)
     setExactState('validating')
-    const parsed = parseViewerCapability(capability)
-    if (!parsed) {
+
+    let viewerCapability = readViewerCapabilityFromFragment()
+    if (!viewerCapability) {
       setLoading(false)
       setExactState('invalid')
       setError('El enlace privado no es válido.')
       return
     }
+
     const generation = generationRef.current
+    const exchangeController = new AbortController()
+    requestRef.current = exchangeController
+    try {
+      const exchanged = await exchangeNativeViewerCapability(viewerCapability, exchangeController.signal)
+      if (generation !== generationRef.current || exchangeController.signal.aborted) return
+      viewerSessionRef.current = exchanged
+      removeViewerCapabilityFragment()
+      viewerCapability = ''
+    } catch (caught) {
+      viewerCapability = ''
+      if (generation !== generationRef.current || exchangeController.signal.aborted) return
+      setLoading(false)
+      setExactState(caught instanceof NativeSharingApiError && caught.code === 'SESSION_EXPIRED' ? 'expired' : caught instanceof NativeSharingApiError && caught.code === 'SESSION_REVOKED' ? 'revoked' : 'invalid')
+      setError(message(caught))
+      return
+    }
 
     const load = async () => {
+      const viewerSession = viewerSessionRef.current
+      if (!viewerSession || generation !== generationRef.current) return
+      if (Date.now() > Date.parse(viewerSession.expiresAt)) {
+        abortTransport()
+        clearLocalState()
+        setExactState('expired')
+        setError('La sesión de visualización venció.')
+        return
+      }
+
       const controller = new AbortController()
       requestRef.current?.abort()
       requestRef.current = controller
       try {
-        const status = await fetchNativeViewerStatus(parsed.sessionId, parsed.viewerToken, controller.signal)
-        if (generation !== generationRef.current || controller.signal.aborted) return
+        const status = await fetchNativeViewerStatus(viewerSession.sessionId, viewerSession.viewerSessionToken, controller.signal)
+        if (generation !== generationRef.current || controller.signal.aborted || viewerSession !== viewerSessionRef.current) return
         setExactState(status.state)
-        if (status.state === 'expired' || status.state === 'revoked' || status.state === 'invalid') {
-          setLoading(false)
-          return
-        }
-        const payload = await fetchNativeViewerPoints(parsed.sessionId, parsed.viewerToken, controller.signal)
-        if (generation !== generationRef.current || controller.signal.aborted) return
+        const payload = await fetchNativeViewerPoints(viewerSession.sessionId, viewerSession.viewerSessionToken, controller.signal)
+        if (generation !== generationRef.current || controller.signal.aborted || viewerSession !== viewerSessionRef.current) return
         setExactState(payload.state)
         const freshPoints = payload.points
           .filter((point) => point.sequence > lastSequenceRef.current)
@@ -141,29 +184,40 @@ export function useNativeViewer(): NativeViewerController {
         setError(null)
         setLoading(false)
       } catch (caught) {
-        if (generation !== generationRef.current || controller.signal.aborted) return
+        if (generation !== generationRef.current || controller.signal.aborted || viewerSession !== viewerSessionRef.current) return
         pipelineRef.current = recordPipelineError(pipelineRef.current)
         setSnapshot(pipelineRef.current.latest)
         setGhostrail(pipelineRef.current.rail.segments)
-        if (caught instanceof NativeSharingApiError && caught.status === 404) setExactState('invalid')
-        else if (caught instanceof NativeSharingApiError && caught.code === 'SESSION_REVOKED') setExactState('revoked')
-        else if (caught instanceof NativeSharingApiError && caught.code === 'SESSION_EXPIRED') setExactState('expired')
-        else setExactState('stale')
+        if (caught instanceof NativeSharingApiError && (caught.code === 'SESSION_REVOKED' || caught.code === 'VIEWER_SESSION_INVALID')) {
+          abortTransport()
+          clearLocalState()
+          setExactState('revoked')
+        } else if (caught instanceof NativeSharingApiError && (caught.code === 'SESSION_EXPIRED' || caught.code === 'VIEWER_SESSION_EXPIRED')) {
+          abortTransport()
+          clearLocalState()
+          setExactState('expired')
+        } else if (caught instanceof NativeSharingApiError && caught.status === 404) {
+          abortTransport()
+          clearLocalState()
+          setExactState('invalid')
+        } else {
+          setExactState('stale')
+        }
         setError(message(caught))
         setLoading(false)
       }
     }
 
     await load()
-    if (generation !== generationRef.current || ['expired', 'revoked', 'invalid'].includes(stateRef.current)) return
+    if (generation !== generationRef.current || !viewerSessionRef.current || ['expired', 'revoked', 'invalid'].includes(stateRef.current)) return
     pollRef.current = setInterval(() => void load(), 10_000)
     freshnessRef.current = setInterval(() => {
-      if (generation !== generationRef.current) return
+      if (generation !== generationRef.current || !viewerSessionRef.current) return
       pipelineRef.current = refreshPipelineTime(pipelineRef.current, stateRef.current)
       setSnapshot(pipelineRef.current.latest)
       setGhostrail(pipelineRef.current.rail.segments)
     }, 5_000)
-  }, [abortTransport, setExactState])
+  }, [abortTransport, clearLocalState, setExactState])
 
   return {
     state,
