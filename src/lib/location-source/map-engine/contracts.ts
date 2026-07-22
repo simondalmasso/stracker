@@ -1,0 +1,76 @@
+import type {
+  BasemapMode,
+  CameraMode,
+  FreshnessState,
+  GeoPoint,
+  GhostRailSegment,
+  LocationSource,
+  MotionState,
+  SourceHealth,
+} from '../contracts'
+
+export type MapProviderState = 'loading' | 'available' | 'degraded'
+export type BasemapProviderState = 'idle' | 'loading' | 'available' | 'unavailable'
+
+export interface MapRenderState {
+  source: LocationSource
+  point: GeoPoint
+  accuracyM: number | null
+  ghostrail: GhostRailSegment[]
+  motion: MotionState
+  freshness: FreshnessState
+  health: SourceHealth
+  headingDeg: number | null
+  railVisible: boolean
+  buildings3d: boolean
+  reducedMotion: boolean
+  basemapMode: BasemapMode
+}
+
+export interface MapPerformanceSnapshot {
+  engine: 'maplibre'
+  basemapMode: BasemapMode
+  createdAtMs: number
+  firstMapVisibleMs: number | null
+  firstInteractiveMs: number | null
+  renderFrames: number
+  estimatedFps: number | null
+  longTasks: number
+  longTaskDurationMs: number
+  webglContextLosses: number
+  webglContextRestores: number
+  resourceCount: number
+  transferredBytes: number
+  rasterResourceCount: number
+  rasterTransferredBytes: number
+}
+
+export interface MapEngineCallbacks {
+  onManualInteraction: () => void
+  onWebglContextLost: () => void
+  onWebglContextRestored: () => void
+  onProviderState: (state: MapProviderState) => void
+  onBasemapProviderState: (state: BasemapProviderState) => void
+  onPerformance: (snapshot: MapPerformanceSnapshot) => void
+}
+
+export interface CameraUpdate {
+  mode: CameraMode
+  center: GeoPoint
+  zoom: number
+  pitchDeg: number
+  bearingDeg: number | null
+  offsetYRatio: number
+  durationMs: number
+  animate: boolean
+  shouldMove: boolean
+}
+
+export interface MapEngineAdapter {
+  readonly id: 'maplibre'
+  mount(container: HTMLElement, initial: MapRenderState, callbacks: MapEngineCallbacks): void
+  render(state: MapRenderState): void
+  updateCamera(update: CameraUpdate): void
+  resize(): void
+  destroy(): void
+}

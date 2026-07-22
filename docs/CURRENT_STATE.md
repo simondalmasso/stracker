@@ -3,126 +3,231 @@
 ## Canonical baseline
 
 ```text
-P0_BASE_SHA=923cac9c9bcc0b7e05701dd1018e61a454d0f478
 P0_BRANCH=fix/stracker-p0-security-canonical-state
 P0_HEAD_SHA=fa919edad57937481f97e74ac96f09697bf03642
-MOBILE_BASE_BRANCH=feat/stracker-mobile-session-product-v1
-MOBILE_BASE_SHA=166bf8e316cabd4806ade4fb4c21a20d2ad2040a
-CURRENT_BRANCH=feat/stracker-cloudflare-private-gateway-poc
-CURRENT_HEAD_SHA=SEE_DRAFT_PR_4_HEAD
-PR_BASE=feat/stracker-mobile-session-product-v1
-DRAFT_PR=4
+MOBILE_BRANCH=feat/stracker-mobile-session-product-v1
+MOBILE_HEAD_SHA=166bf8e316cabd4806ade4fb4c21a20d2ad2040a
+STACK_BASE_BRANCH=feat/stracker-cloudflare-private-gateway-poc
+EXPECTED_STACK_BASE_SHA=77a937b4b157c2ec2c47940d6fe6891cf10b74c9
+VERIFIED_STACK_BASE_SHA=77a937b4b157c2ec2c47940d6fe6891cf10b74c9
+STACK_BASE_DEVIATION=NO
+CURRENT_BRANCH=feat/stracker-vector-map-engine-v1
+CURRENT_HEAD_SHA=SEE_DRAFT_PR_6_HEAD
+LAST_VALIDATED_IMPLEMENTATION_HEAD=a5060ca3c4cbf7fa21bd7d93689c381300a41cd3
+LAST_VALIDATED_WORKFLOW_RUN=29882828366
+LAST_VALIDATED_WORKFLOW_CONCLUSION=success
+PR_BASE=feat/stracker-cloudflare-private-gateway-poc
+DRAFT_PR=6
 PRODUCTION_MODIFIED=NO
 DEPLOYMENT_EXECUTED=NO
-VERSION_UPLOAD_EXECUTED=NO
+MERGE_EXECUTED=NO
 PRODUCTION_TRAFFIC=0%
-ROLLBACK=NOT_APPLICABLE
 ```
 
-## Current runtime state
+PR #1, PR #2 and PR #4 remain frozen and unmodified.
 
-- `CURRENT_RENDER_STATE`: production remains on Render and was not modified.
-- `CURRENT_PRODUCTION_STATE`: unchanged; P0, mobile V1 and gateway PoC remain branch-only.
-- `CURRENT_UI_SOURCE`: `src/components/mobile/MobileLocationApp.tsx` from frozen PR #2 baseline.
-- `CURRENT_STATIC_ARTIFACT`: direct `BUILD_EXPORT=1` Next.js export.
-- `CURRENT_BACKEND`: `tracker_map.py`; `nextjs-ui/tracker_map.py` remains byte-identical.
-- `AUTH_MODEL`: Cloudflare Access assertion at the edge plus server-only STRACKER service token at the gateway boundary.
-- `GATEWAY_MODEL`: exact route/method allowlist, fixed backend service binding, no client-selected upstream, no open proxy and no SSRF path.
-- `HEADER_MODEL`: browser headers are discarded; `X-Stracker-Service-Token` is constructed only inside the Worker.
-- `CACHE_MODEL`: all gateway and sensitive backend responses are returned with `Cache-Control: no-store` and defensive response headers.
-- `LOCATION_SOURCE_MODEL`: strict `my-device | google-shared` contract remains canonical.
-- `MY_LOCATION_MODEL`: browser-local `navigator.geolocation.watchPosition()` remains independent from Access and the gateway.
-- `SHARED_LOCATION_MODEL`: same-origin requests require `X-Stracker-Gateway: private-poc-v1`; missing Access, Worker or attestation remains fail-closed.
-- `COOKIE_MODEL`: no real cookie, session or Google data is used by the PoC or its tests.
-- `MOCK_BACKEND_MODEL`: in-memory test binding validates token injection and header stripping.
-- `GHOSTRAIL_MODEL`: unchanged from PR #2; no canonical-history migration in this phase.
-- `STORAGE_MODEL`: unchanged; Render filesystem persistence remains an open operational risk.
+## Product entry contract
 
-## Cloudflare private gateway PoC implemented
-
-- Manual RS256 Cloudflare Access JWT validation using Web Crypto.
-- Exact issuer and audience checks.
-- JWKS retrieval restricted to the configured HTTPS Cloudflare Access team origin.
-- Exact route and method allowlist:
-  - `GET /api/session/status`
-  - `POST /api/session/import`
-  - `POST /api/session/delete`
-  - `GET /points`
-- Query strings, unknown routes and unsupported methods rejected.
-- Request and response size limits.
-- JSON-only protected backend responses.
-- Full reconstruction of upstream and downstream headers.
-- Server-side service-token injection through the Worker binding.
-- Client service-token spoofing overwritten and never forwarded.
-- Mock backend E2E with generated Access key pair and synthetic session text only.
-- Non-routable Wrangler configuration: no `workers.dev`, preview URL, route, custom domain or traffic.
-- No `wrangler deploy`; only an isolated `versions upload --dry-run` build gate.
-
-## Build and validation
+Every open, reload, new tab and navigation to `/` begins at:
 
 ```text
-PACKAGE_MANAGER=Bun 1.3.4
-LOCKFILE=bun.lock
-STACKED_BASE_CHECK=SEE_DRAFT_PR_4_CHECKS
-BUN_FROZEN_INSTALL=SEE_DRAFT_PR_4_CHECKS
-PYTHON_COMPILE=SEE_DRAFT_PR_4_CHECKS
-BACKEND_TESTS=SEE_DRAFT_PR_4_CHECKS
-TRACKER_DUPLICATE_PARITY=SEE_DRAFT_PR_4_CHECKS
-ESLINT=SEE_DRAFT_PR_4_CHECKS
-TYPECHECK=SEE_DRAFT_PR_4_CHECKS
-STATIC_EXPORT_BUILD=SEE_DRAFT_PR_4_CHECKS
-GATEWAY_TESTS=SEE_DRAFT_PR_4_CHECKS
-ACCESS_JWT_VALIDATION=SEE_DRAFT_PR_4_CHECKS
-OPEN_PROXY=SEE_DRAFT_PR_4_CHECKS
-SSRF=SEE_DRAFT_PR_4_CHECKS
-SERVICE_TOKEN_IN_BUNDLE=SEE_DRAFT_PR_4_CHECKS
-MOCK_E2E=SEE_DRAFT_PR_4_CHECKS
-MY_LOCATION_INDEPENDENT=SEE_DRAFT_PR_4_CHECKS
-SHARED_LOCATION_FAIL_CLOSED=SEE_DRAFT_PR_4_CHECKS
-WRANGLER_DRY_RUN=SEE_DRAFT_PR_4_CHECKS
-MOBILE_BROWSER_QA=SEE_DRAFT_PR_4_CHECKS
-CI_FINAL=SEE_DRAFT_PR_4_CHECKS
+¿QUÉ UBICACIÓN QUERÉS VER?
+MI UBICACIÓN | UBICACIÓN COMPARTIDA
 ```
 
-The newest `STRACKER Cloudflare Private Gateway PoC` workflow run associated with the current Draft PR #4 head is authoritative.
-
-## Cloudflare resource and deployment state
+Selection is memory-only. Before choosing a source:
 
 ```text
-CLOUDFLARE_ACCESS_APPLICATION=NOT_CREATED
-CLOUDFLARE_WORKER=NOT_CREATED_OR_MODIFIED
-CLOUDFLARE_VERSION_ID=NONE
-CLOUDFLARE_DEPLOYMENT_ID=NONE
-CLOUDFLARE_BINDINGS=NOT_PROVISIONED
-CLOUDFLARE_SECRETS=NOT_PROVISIONED
-CLOUDFLARE_DNS_CHANGED=NO
-CLOUDFLARE_ROUTES_CHANGED=NO
-CLOUDFLARE_TRAFFIC_CHANGED=NO
-RENDER_CHANGED=NO
+MAP_REQUEST=NO
+LOCATION_REQUEST=NO
+SESSION_REQUEST=NO
+POINTS_REQUEST=NO
 ```
 
-## Known security findings and limitations
+## Renderer and basemap modes
 
-- Repository remains public.
-- Historical `.env`, private coordinates and sharing material still require separately authorized remediation and potential rotation.
-- Production does not enforce P0, mobile V1 or the gateway PoC because no deploy occurred.
-- Render filesystem persistence remains unsafe.
-- The PoC uses a mock service binding and does not prove browser → real Access app → live Worker → Render.
-- A future isolated candidate requires a non-production Access application, non-production service token and isolated backend binding.
-- The Google Location Sharing endpoint is undocumented and may change; health parsing must remain fail-closed.
-- A code rollback would not automatically revert future KV, D1, R2, Durable Objects or external backend state.
+```text
+RENDERER=MapLibre GL JS
+DEFAULT_BASEMAP_MODE=vector-3d
+BASEMAP_MODES=vector-3d|satellite|hybrid
+UI_LABELS=MAPA 3D|SATÉLITE|HÍBRIDO
+SECOND_RENDERER=ABSENT
+```
+
+```ts
+type BasemapMode = 'vector-3d' | 'satellite' | 'hybrid'
+```
+
+`BasemapMode` is independent from `LocationSource`, `MotionState`, `FreshnessState`, `SourceHealth`, `SharedSessionState` and `CameraMode`. It exists only in document memory and is not persisted in localStorage, cookies, backend state or URL parameters.
+
+### VECTOR_3D
+
+```text
+STYLE_PROVIDER=OpenFreeMap
+BASE_DATA=OpenStreetMap/OpenMapTiles-compatible
+STYLE=https://tiles.openfreemap.org/styles/liberty
+BUILDINGS_3D=OPTIONAL
+```
+
+### SATELLITE and HYBRID
+
+```text
+SATELLITE_PROVIDER=eox-s2cloudless-2016
+WMTS_LAYER=s2cloudless_3857
+TILE_ENDPOINT=https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg
+LICENSE=CC BY 4.0
+IMAGERY_PERIOD=2016-2017 mosaic
+RESOLUTION=10 m
+MAX_ZOOM=14
+RECENT_CLAIM_ALLOWED=NO
+COMPLETE_COVERAGE_CLAIMED=NO
+```
+
+`SATELLITE` shows raster imagery without vector labels or extruded buildings. `HYBRID` adds OpenFreeMap line and symbol layers. The raster is inserted above the opaque vector background and below STRACKER product layers.
+
+Accuracy, marker, connection halo, segmented GhostRail, status overlays and dynamic attribution remain above every basemap.
+
+## Provider decision
+
+```text
+IGN_ARGENMAP_HYBRID=BLOCKED_BY_IMAGERY_PROVENANCE_AND_LICENSE_AMBIGUITY
+IGN_PUBLIC_ORTHOMOSAICS=PARTIAL_COVERAGE_CANDIDATE_NOT_SELECTED
+EOXCLOUDLESS_2016=SELECTED_AS_AUTHORIZED_OPEN_FALLBACK
+```
+
+No Google Satellite, Mapbox Satellite, authenticated or billable ArcGIS imagery, billable MapTiler imagery, private API or reverse-engineered endpoint is used. STRACKER does not describe EOxCloudless as recent imagery and does not claim complete IGN orthomosaic coverage.
+
+## Zero-cost policy
+
+```text
+RECURRING_INFRASTRUCTURE_COST_USD=0
+MAP_PROVIDER_COST_USD=0
+PAID_OVERAGE_ALLOWED=NO
+AUTOMATIC_UPGRADE_TO_PAID=NO
+BILLING_DEPENDENCY=NO
+MAP_PROVIDER_TOKEN=NONE
+```
+
+## Basemap transition invariants
+
+Switching modes does not:
+
+- change location source;
+- reopen the source selector;
+- request geolocation again;
+- call session routes or restart polling;
+- clear marker or GhostRail;
+- alter accepted timestamps;
+- exit manual camera mode;
+- accept stale responses;
+- recreate the MapLibre canvas.
+
+The raster source and layer are added once. Mode changes alter layer visibility inside the existing MapLibre instance.
+
+## Failure behavior
+
+A raster-provider error or bounded availability failure produces:
+
+```text
+SATÉLITE NO DISPONIBLE EN ESTA ZONA
+```
+
+Location tracking and product overlays remain active. There is no silent fallback to a paid or unauthorized provider.
+
+## Camera, GhostRail and source isolation
+
+```text
+unknown → overview
+moving → follow
+stationary → stationary
+user interaction → manual
+```
+
+Manual mode blocks automatic recentering, pitch and bearing changes. Basemap changes preserve manual mode. Satellite automatic pitch is capped to reduce raster deformation. GhostRail remains segmented and bounded to 600 accepted points.
+
+`MI UBICACIÓN` starts `watchPosition()` only after explicit user action and never calls shared-session APIs. `UBICACIÓN COMPARTIDA` uses remote timestamps without interpolation, invalidates late responses and does not restart polling during basemap changes.
+
+## Attribution and privacy
+
+```text
+VECTOR_3D=OpenFreeMap|OpenMapTiles|OpenStreetMap
+SATELLITE=EOxCloudless|EOX|modified Copernicus Sentinel data 2016 & 2017
+HYBRID=SATELLITE attribution + OpenFreeMap/OpenStreetMap
+```
+
+Attribution remains visible above the bottom sheet. Providers can observe ordinary HTTP metadata and viewport-derived tile coordinates. No shared-session cookie, Cloudflare Access JWT or STRACKER service token is sent to map providers.
+
+## Exact-head evidence
+
+The latest validated implementation head before this documentation synchronization is:
+
+```text
+VALIDATED_IMPLEMENTATION_HEAD=a5060ca3c4cbf7fa21bd7d93689c381300a41cd3
+WORKFLOW_RUN_ID=29882828366
+WORKFLOW_CONCLUSION=success
+MOBILE_ARTIFACT_ID=8515444752
+MOBILE_ARTIFACT_DIGEST=sha256:c8af9353dcfc79bb6082d8696521683e4bb5eed2aa7e0685b350256d2764b644
+PROVIDER_ARTIFACT_ID=8515433788
+PROVIDER_ARTIFACT_DIGEST=sha256:90cb0a618a63b638b87cee55ff09a08e3bbc7e5a7ca263de847829b398f95f4f
+A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
+```
+
+The Draft PR body records the final documentation-only head and its exact successful workflow run.
+
+## Validation state
+
+```text
+STACKED_BASE_CHECK=PASS
+FROZEN_INSTALL=PASS
+BACKEND_TESTS=PASS
+ESLINT=PASS
+TYPECHECK=PASS
+VECTOR_MAP_TESTS=PASS
+STATIC_EXPORT_BUILD=PASS
+FINAL_BUNDLE_SINGLE_ENGINE=PASS
+UNSELECTED_ENGINE_ABSENT=PASS
+VECTOR_TO_SATELLITE=PASS
+SATELLITE_TO_HYBRID=PASS
+HYBRID_TO_VECTOR=PASS
+LOCATION_SOURCE_UNCHANGED=PASS
+MARKER_PRESERVED=PASS
+GHOSTRAIL_PRESERVED=PASS
+CAMERA_MANUAL_PRESERVED=PASS
+NO_NEW_GEOLOCATION_REQUEST=PASS
+NO_NEW_SESSION_REQUEST=PASS
+NO_SECOND_RENDERER=PASS
+SATELLITE_ATTRIBUTION_VISIBLE=PASS
+PROVIDER_FAILURE_EXPLICIT=PASS
+ZERO_COST_SATELLITE_GATE=PASS
+RASTER_TRANSFER_BUDGETS=PASS
+OPENFREEMAP_LIVE_VALIDATION=PASS
+SATELLITE_PROVIDER_LIVE_VALIDATION=PASS
+SECURITY_ARTIFACT_SCAN=PASS
+TEMPORARY_WORKFLOWS_REMOVED=PASS
+CI_FINAL=SUCCESS
+```
+
+## Known risks
+
+- OpenFreeMap and EOx public services have no STRACKER-controlled SLA.
+- EOxCloudless is historical 10 m imagery, not a current high-resolution orthophoto.
+- IGN orthomosaic coverage remains partial or variable until a coverage-aware catalogue is validated.
+- OpenStreetMap building heights and footprints may be incomplete.
+- Physical Samsung Galaxy A22 performance remains unverified.
+- Production remains on the previous runtime because PR #6 does not deploy.
+- Google Location Sharing remains undocumented and must stay fail-closed.
 
 ## Release posture
 
 ```text
-FULL_CLOUDFLARE_CUTOVER=NO_GO
-HYBRID_CLOUDFLARE_EDGE_PLUS_RENDER=POC_CODE_READY_PENDING_ISOLATED_INFRA
 PR_1_MERGE=NO
 PR_2_MERGE=NO
 PR_4_MERGE=NO
+PR_6_MERGE=NO
 PRODUCTION_DEPLOY=NO
+FULL_CLOUDFLARE_CUTOVER=NO_GO
 ```
 
-## Next exact step
+## Next exact phase
 
-Review Draft PR #4 and its current-head CI evidence. After explicit authorization for isolated non-production Cloudflare resources, create a dedicated Access application, private Worker candidate and mock backend binding; upload a Version without deployment or traffic, then execute browser-to-preview E2E. Do not connect Render or production secrets in that step.
+Freeze PR #6 after its final documentation-only head is green. Continue the separately authorized zero-cost Cloudflare runtime PoC without merging or deploying this PR.

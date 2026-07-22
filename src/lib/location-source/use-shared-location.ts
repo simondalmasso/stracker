@@ -2,11 +2,25 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
+  FreshnessState,
+  GhostRailSegment,
+  LocationSample,
   LocationSnapshot,
+  MotionState,
   SharedLocationState,
+  SharedSessionState,
   SharedSessionStatus,
+  SourceHealth,
 } from './contracts'
-import { freshnessFromTimestamp } from './contracts'
+import { sharedSessionStateFromStatus } from './contracts'
+import {
+  initialLocationPipelineState,
+  processLocationSample,
+  recordPipelineError,
+  refreshPipelineTime,
+  replacePipelineSession,
+  type LocationPipelineState,
+} from './location-pipeline'
 import {
   deleteSharedSession,
   fetchSharedPoints,
@@ -17,9 +31,13 @@ import {
 
 interface SharedLocationController {
   state: SharedLocationState
+  sessionState: SharedSessionState
   status: SharedSessionStatus | null
   snapshot: LocationSnapshot | null
-  ghostrail: LocationSnapshot[]
+  ghostrail: GhostRailSegment[]
+  motionState: MotionState
+  freshnessState: FreshnessState
+  sourceHealth: SourceHealth
   loading: boolean
   error: string | null
   refreshStatus: () => Promise<void>
@@ -42,13 +60,11 @@ function stringField(record: Record<string, unknown>, keys: string[]): string | 
   return null
 }
 
-function toSharedSnapshot(record: Record<string, unknown>): LocationSnapshot | null {
+function toSharedSample(record: Record<string, unknown>, fallbackTimestamp: string | null): LocationSample | null {
   const lat = numberField(record, 'lat')
   const lng = numberField(record, 'lng')
-  if (lat === null || lng === null) return null
-  const capturedAt =
-    stringField(record, ['timestamp', 'captured_at', 'capturedAt', 'ts']) ||
-    new Date().toISOString()
+  const capturedAt = stringField(record, ['timestamp', 'captured_at', 'capturedAt', 'ts']) || fallbackTimestamp
+  if (lat === null || lng === null || !capturedAt || !Number.isFinite(Date.parse(capturedAt))) return null
   return {
     source: 'google-shared',
     lat,
@@ -56,7 +72,8 @@ function toSharedSnapshot(record: Record<string, unknown>): LocationSnapshot | n
     accuracyM: numberField(record, 'accuracy') ?? numberField(record, 'accuracy_m'),
     capturedAt,
     receivedAt: new Date().toISOString(),
-    freshness: freshnessFromTimestamp(capturedAt),
+    speedMps: numberField(record, 'speed') ?? numberField(record, 'speed_mps'),
+    headingDeg: numberField(record, 'heading') ?? numberField(record, 'heading_deg'),
   }
 }
 
@@ -66,150 +83,211 @@ function userMessage(error: unknown): string {
   return 'No se pudo completar la operación.'
 }
 
+function aggregateState(snapshot: LocationSnapshot | null): SharedLocationState {
+  if (!snapshot) return 'SHARED_NO_LOCATION'
+  return snapshot.freshness === 'fresh' ? 'SHARED_READY' : 'SHARED_STALE'
+}
+
 export function useSharedLocation(): SharedLocationController {
   const [state, setState] = useState<SharedLocationState>('SHARED_UNCONFIGURED')
+  const [sessionState, setSessionState] = useState<SharedSessionState>('unconfigured')
   const [status, setStatus] = useState<SharedSessionStatus | null>(null)
   const [snapshot, setSnapshot] = useState<LocationSnapshot | null>(null)
-  const [ghostrail, setGhostrail] = useState<LocationSnapshot[]>([])
+  const [ghostrail, setGhostrail] = useState<GhostRailSegment[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const freshnessTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const requestRef = useRef<AbortController | null>(null)
+  const generationRef = useRef(0)
+  const sessionStateRef = useRef<SharedSessionState>('unconfigured')
+  const pipelineRef = useRef<LocationPipelineState>(initialLocationPipelineState('google-shared'))
 
-  const stop = useCallback(() => {
+  const setExactSessionState = useCallback((next: SharedSessionState) => {
+    sessionStateRef.current = next
+    setSessionState(next)
+  }, [])
+
+  const abortTransport = useCallback(() => {
+    generationRef.current += 1
     if (pollRef.current) clearInterval(pollRef.current)
+    if (freshnessTimerRef.current) clearInterval(freshnessTimerRef.current)
     pollRef.current = null
+    freshnessTimerRef.current = null
     requestRef.current?.abort()
     requestRef.current = null
   }, [])
 
-  useEffect(() => stop, [stop])
+  const stop = useCallback(() => {
+    abortTransport()
+    pipelineRef.current = initialLocationPipelineState('google-shared', pipelineRef.current.sessionEpoch + 1)
+    setStatus(null)
+    setSnapshot(null)
+    setGhostrail([])
+    setError(null)
+    setLoading(false)
+    setState('SHARED_UNCONFIGURED')
+    setExactSessionState('unconfigured')
+  }, [abortTransport, setExactSessionState])
 
-  const loadPoints = useCallback(async () => {
-    requestRef.current?.abort()
+  useEffect(() => () => abortTransport(), [abortTransport])
+
+  const loadPoints = useCallback(async (generation: number) => {
     const controller = new AbortController()
+    requestRef.current?.abort()
     requestRef.current = controller
     try {
       const payload = await fetchSharedPoints(controller.signal)
+      if (generation !== generationRef.current || controller.signal.aborted) return
+      const fallbackTimestamp = typeof payload.last_update === 'string' ? payload.last_update : null
       const rawPoints = Array.isArray(payload.points) ? payload.points : []
-      const rawRail = Array.isArray(payload.ghostrail_pts) ? payload.ghostrail_pts : []
-      const latestRaw = rawPoints.at(-1)
-      const latest = latestRaw && typeof latestRaw === 'object'
-        ? toSharedSnapshot(latestRaw as Record<string, unknown>)
-        : null
-      const rail = rawRail
+      const samples = rawPoints
         .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
-        .map(toSharedSnapshot)
-        .filter((item): item is LocationSnapshot => item !== null)
+        .map((item) => toSharedSample(item, fallbackTimestamp))
+        .filter((item): item is LocationSample => item !== null)
+        .sort((a, b) => Date.parse(a.capturedAt) - Date.parse(b.capturedAt))
 
-      setGhostrail(rail)
-      setSnapshot(latest)
-      setError(null)
-      if (!latest) {
-        setState('SHARED_NO_LOCATION')
-      } else if (latest.freshness === 'fresh') {
-        setState('SHARED_READY')
-      } else {
-        setState('SHARED_STALE')
+      for (const sample of samples) {
+        const result = processLocationSample(pipelineRef.current, sample, sessionStateRef.current)
+        pipelineRef.current = result.state
       }
+      if (generation !== generationRef.current) return
+      const latest = pipelineRef.current.latest
+      setSnapshot(latest)
+      setGhostrail(pipelineRef.current.rail.segments)
+      setError(null)
+      setState(aggregateState(latest))
     } catch (caught) {
-      if (controller.signal.aborted) return
+      if (generation !== generationRef.current || controller.signal.aborted) return
+      pipelineRef.current = recordPipelineError(pipelineRef.current)
+      setSnapshot(pipelineRef.current.latest)
+      setGhostrail(pipelineRef.current.rail.segments)
       if (caught instanceof SessionApiError && caught.status === 401) {
         setState('SHARED_EXPIRED')
+        setExactSessionState('expired')
       } else {
         setState('SHARED_ERROR')
+        setExactSessionState('upstream-error')
       }
       setError(userMessage(caught))
     }
-  }, [])
+  }, [setExactSessionState])
 
   const startPolling = useCallback(() => {
-    stop()
-    void loadPoints()
-    pollRef.current = setInterval(() => void loadPoints(), 20_000)
-  }, [loadPoints, stop])
+    abortTransport()
+    const generation = generationRef.current
+    void loadPoints(generation)
+    pollRef.current = setInterval(() => void loadPoints(generation), 20_000)
+    freshnessTimerRef.current = setInterval(() => {
+      if (generation !== generationRef.current) return
+      pipelineRef.current = refreshPipelineTime(pipelineRef.current, sessionStateRef.current)
+      setSnapshot(pipelineRef.current.latest)
+      setGhostrail(pipelineRef.current.rail.segments)
+      setState(aggregateState(pipelineRef.current.latest))
+    }, 5_000)
+  }, [abortTransport, loadPoints])
 
   const refreshStatus = useCallback(async () => {
+    abortTransport()
+    const generation = generationRef.current
     setLoading(true)
     setError(null)
+    setExactSessionState('validating')
     const controller = new AbortController()
     requestRef.current = controller
     try {
       const next = await getSharedSessionStatus(controller.signal)
+      if (generation !== generationRef.current || controller.signal.aborted) return
       setStatus(next)
       setState(next.state)
-      if (
-        next.state === 'SHARED_READY' ||
-        next.state === 'SHARED_STALE' ||
-        next.state === 'SHARED_NO_LOCATION'
-      ) {
+      const exact = sharedSessionStateFromStatus(next)
+      setExactSessionState(exact)
+      if (exact === 'valid') {
+        setLoading(false)
         startPolling()
       }
     } catch (caught) {
-      if (controller.signal.aborted) return
+      if (generation !== generationRef.current || controller.signal.aborted) return
       setState('SHARED_ERROR')
+      setExactSessionState('upstream-error')
       setError(userMessage(caught))
     } finally {
-      setLoading(false)
+      if (generation === generationRef.current) setLoading(false)
     }
-  }, [startPolling])
+  }, [abortTransport, setExactSessionState, startPolling])
 
-  const importSession = useCallback(
-    async (raw: string): Promise<SharedSessionStatus> => {
-      setLoading(true)
-      setError(null)
-      setState('SHARED_VALIDATING')
-      const controller = new AbortController()
-      requestRef.current = controller
-      try {
-        const result = await importSharedSession(raw, controller.signal)
-        setStatus(result)
-        setState(result.state)
-        if (
-          result.state === 'SHARED_READY' ||
-          result.state === 'SHARED_STALE' ||
-          result.state === 'SHARED_NO_LOCATION'
-        ) {
-          startPolling()
-        }
-        return result
-      } catch (caught) {
-        if (!controller.signal.aborted) {
-          setState('SHARED_ERROR')
-          setError(userMessage(caught))
-        }
-        throw caught
-      } finally {
-        setLoading(false)
-      }
-    },
-    [startPolling],
-  )
-
-  const deleteSession = useCallback(async () => {
+  const importSession = useCallback(async (raw: string): Promise<SharedSessionStatus> => {
+    abortTransport()
+    const generation = generationRef.current
     setLoading(true)
     setError(null)
-    stop()
+    setState('SHARED_VALIDATING')
+    setExactSessionState('validating')
+    const controller = new AbortController()
+    requestRef.current = controller
     try {
-      await deleteSharedSession()
+      const result = await importSharedSession(raw, controller.signal)
+      if (generation !== generationRef.current || controller.signal.aborted) return result
+      setStatus(result)
+      setState(result.state)
+      const exact = sharedSessionStateFromStatus(result)
+      setExactSessionState(exact)
+      if (exact === 'valid') {
+        pipelineRef.current = replacePipelineSession(pipelineRef.current)
+        setSnapshot(null)
+        setGhostrail([])
+        setLoading(false)
+        startPolling()
+      }
+      return result
+    } catch (caught) {
+      if (generation === generationRef.current && !controller.signal.aborted) {
+        setState('SHARED_ERROR')
+        setExactSessionState(caught instanceof SessionApiError && caught.status === 401 ? 'expired' : 'rejected')
+        setError(userMessage(caught))
+      }
+      throw caught
+    } finally {
+      if (generation === generationRef.current) setLoading(false)
+    }
+  }, [abortTransport, setExactSessionState, startPolling])
+
+  const deleteSession = useCallback(async () => {
+    abortTransport()
+    const generation = generationRef.current
+    setLoading(true)
+    setError(null)
+    const controller = new AbortController()
+    requestRef.current = controller
+    try {
+      await deleteSharedSession(controller.signal)
+      if (generation !== generationRef.current || controller.signal.aborted) return
+      pipelineRef.current = replacePipelineSession(pipelineRef.current)
       setStatus(null)
       setSnapshot(null)
       setGhostrail([])
       setState('SHARED_UNCONFIGURED')
+      setExactSessionState('unconfigured')
     } catch (caught) {
+      if (generation !== generationRef.current || controller.signal.aborted) return
       setState('SHARED_ERROR')
+      setExactSessionState('upstream-error')
       setError(userMessage(caught))
       throw caught
     } finally {
-      setLoading(false)
+      if (generation === generationRef.current) setLoading(false)
     }
-  }, [stop])
+  }, [abortTransport, setExactSessionState])
 
   return {
     state,
+    sessionState,
     status,
     snapshot,
     ghostrail,
+    motionState: snapshot?.motion ?? 'unknown',
+    freshnessState: snapshot?.freshness ?? 'unknown',
+    sourceHealth: snapshot?.health ?? 'unknown',
     loading,
     error,
     refreshStatus,
