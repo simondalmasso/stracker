@@ -87,7 +87,7 @@ export async function rotateNativeViewer(sessionId: string, emitterToken: string
     headers: { 'Content-Type': 'application/json', 'X-Stracker-Emitter': emitterToken },
     body: '{}',
   }))
-  return parseJson(response)
+  return parseJson<{ viewerCapability: string; viewerGeneration: number }>(response)
 }
 
 export async function revokeNativeSession(sessionId: string, emitterToken: string, signal?: AbortSignal): Promise<void> {
