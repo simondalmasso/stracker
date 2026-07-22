@@ -1,21 +1,47 @@
-export type LocationSource = 'my-device' | 'google-shared'
+export type LocationSource = 'my-device' | 'shared-location'
+export type SharedLocationProvider = 'stracker-native' | 'google-session-experimental'
 export type MotionState = 'unknown' | 'stationary' | 'moving'
 export type FreshnessState = 'unknown' | 'fresh' | 'stale' | 'expired'
 export type SourceHealth = 'unknown' | 'receiving' | 'degraded' | 'unreachable'
-export type SharedSessionState =
-  | 'not-applicable'
-  | 'unconfigured'
-  | 'validating'
-  | 'valid'
+export type SharingSessionState =
+  | 'not-started'
+  | 'requesting-permission'
+  | 'active'
+  | 'paused'
   | 'expired'
-  | 'rejected'
-  | 'upstream-error'
+  | 'revoked'
+  | 'permission-denied'
+  | 'error'
+export type ViewerSessionState =
+  | 'unconfirmed'
+  | 'validating'
+  | 'active'
+  | 'stale'
+  | 'expired'
+  | 'revoked'
+  | 'invalid'
+export type LocationSessionState = 'not-applicable' | ViewerSessionState
 export type CameraMode = 'overview' | 'follow' | 'stationary' | 'manual'
 export type BasemapMode = 'vector-3d' | 'satellite' | 'hybrid'
 
 export interface GeoPoint {
   lat: number
   lng: number
+}
+
+export interface NativeSharedLocationPoint extends GeoPoint {
+  version: 1
+  sequence: number
+  accuracyM: number | null
+  speedMps: number | null
+  headingDeg: number | null
+  capturedAt: string
+}
+
+export interface AcceptedNativeSharedLocationPoint extends NativeSharedLocationPoint {
+  receivedAt: string
+  sessionId: string
+  acceptanceState: 'accepted'
 }
 
 export interface LocationSample extends GeoPoint {
@@ -31,7 +57,7 @@ export interface LocationSnapshot extends LocationSample {
   freshness: FreshnessState
   health: SourceHealth
   motion: MotionState
-  sharedSession: SharedSessionState
+  viewerSession: LocationSessionState
   visualUpdated: boolean
   filterDecision: 'accepted' | 'metadata-only' | 'rejected'
   filterReason: string
@@ -60,49 +86,24 @@ export type MyLocationState =
   | 'MY_LOCATION_TIMEOUT'
   | 'MY_LOCATION_ERROR'
 
-export type SharedLocationState =
-  | 'SHARED_UNCONFIGURED'
-  | 'SHARED_IMPORTING'
-  | 'SHARED_VALIDATING'
-  | 'SHARED_READY'
-  | 'SHARED_STALE'
-  | 'SHARED_NO_LOCATION'
-  | 'SHARED_EXPIRED'
-  | 'SHARED_PERMISSION_REVOKED'
-  | 'SHARED_ERROR'
-
-export type SharedHealth =
-  | 'VALID'
-  | 'INVALID'
-  | 'EXPIRED'
-  | 'INCOMPLETE'
-  | 'NO_LOCATION_SHARED'
-  | 'UPSTREAM_UNAVAILABLE'
-  | 'UNSUPPORTED_RESPONSE'
-  | 'UNCONFIGURED'
-
-export interface SharedSessionStatus {
-  appAuthenticated: boolean
-  state: SharedLocationState
-  health: SharedHealth
-  configured: boolean
-  formatDetected: string | null
-  count: number
-  criticalPresent: string[]
-  criticalMissing: string[]
-  message: string
+export interface NativeViewerStatus {
+  state: ViewerSessionState
+  expiresAt: string
+  lastUpdate: string | null
+  pointCount: number
 }
 
-export interface SharedImportResult extends SharedSessionStatus {
-  status: 'ok' | 'error'
-  action: string
+export interface NativeViewerPoints {
+  state: ViewerSessionState
+  points: AcceptedNativeSharedLocationPoint[]
+  lastUpdate: string | null
 }
 
-export interface SharedPointsPayload {
-  points?: Array<Record<string, unknown>>
-  ghostrail_pts?: Array<Record<string, unknown>>
-  last_update?: string | null
-  state?: Record<string, unknown> | null
+export interface NativeCreateSessionResponse {
+  sessionId: string
+  emitterToken: string
+  viewerCapability: string
+  expiresAt: string
 }
 
 export function freshnessFromTimestamp(
@@ -113,29 +114,18 @@ export function freshnessFromTimestamp(
   const capturedMs = Date.parse(capturedAt)
   if (!Number.isFinite(capturedMs)) return 'unknown'
   const ageMs = Math.max(0, nowMs - capturedMs)
-  const freshMs = source === 'my-device' ? 30_000 : 90_000
-  const staleMs = source === 'my-device' ? 120_000 : 600_000
+  const freshMs = source === 'my-device' ? 30_000 : 60_000
+  const staleMs = source === 'my-device' ? 120_000 : 300_000
   if (ageMs <= freshMs) return 'fresh'
   if (ageMs <= staleMs) return 'stale'
   return 'expired'
 }
 
-export function sharedSessionStateFromStatus(
-  status: Pick<SharedSessionStatus, 'state' | 'health' | 'configured'> | null,
-): SharedSessionState {
-  if (!status || !status.configured || status.state === 'SHARED_UNCONFIGURED') return 'unconfigured'
-  if (status.state === 'SHARED_VALIDATING' || status.state === 'SHARED_IMPORTING') return 'validating'
-  if (status.state === 'SHARED_EXPIRED' || status.health === 'EXPIRED') return 'expired'
-  if (status.state === 'SHARED_PERMISSION_REVOKED' || status.health === 'INVALID') return 'rejected'
-  if (status.state === 'SHARED_ERROR' || status.health === 'UPSTREAM_UNAVAILABLE') return 'upstream-error'
-  return 'valid'
-}
-
 export function isMapUnlocked(
   source: LocationSource,
   myState: MyLocationState,
-  sharedState: SharedLocationState,
+  viewerState: ViewerSessionState,
 ): boolean {
   if (source === 'my-device') return myState === 'MY_LOCATION_READY'
-  return sharedState === 'SHARED_READY' || sharedState === 'SHARED_STALE'
+  return viewerState === 'active' || viewerState === 'stale'
 }
