@@ -106,6 +106,13 @@ export interface NativeCreateSessionResponse {
   expiresAt: string
 }
 
+export interface NativeViewerExchangeResponse {
+  sessionId: string
+  viewerSessionToken: string
+  viewerGeneration: number
+  expiresAt: string
+}
+
 export function freshnessFromTimestamp(
   source: LocationSource,
   capturedAt: string,
