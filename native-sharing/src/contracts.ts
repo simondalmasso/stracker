@@ -49,6 +49,15 @@ export interface NativeSharingSession {
   pointCount: number
 }
 
+export interface OpaqueViewerSession {
+  tokenVerifier: string
+  sharingSessionId: string
+  viewerGeneration: number
+  createdAt: string
+  expiresAt: string
+  revokedAt: string | null
+}
+
 export interface NativeSharingSegment {
   id: string
   points: AcceptedNativePoint[]
@@ -71,8 +80,12 @@ export interface NativeSharingStore {
   appendPoint(sessionId: string, expectedLastSequence: number, point: AcceptedNativePoint): Promise<AppendPointResult>
   getLatestPoint(sessionId: string): Promise<AcceptedNativePoint | null>
   getConfirmedSegments(sessionId: string, maxSegments?: number): Promise<NativeSharingSegment[]>
+  createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession): Promise<OpaqueViewerSession>
+  getViewerSession(sessionId: string, tokenVerifier: string): Promise<OpaqueViewerSession | null>
+  revokeViewerSession(sessionId: string, tokenVerifier: string, revokedAt: string): Promise<boolean>
+  revokeAllViewerSessions(sessionId: string, revokedAt: string): Promise<number>
   revokeSession(sessionId: string, revokedAt: string): Promise<NativeSharingSession | null>
-  rotateViewerCapability(sessionId: string, verifier: string): Promise<NativeSharingSession | null>
+  rotateViewerCapability(sessionId: string, verifier: string, revokedAt: string): Promise<NativeSharingSession | null>
   deleteExpired(nowIso: string): Promise<number>
 }
 
@@ -80,6 +93,13 @@ export interface CreateSessionResponse {
   sessionId: string
   emitterToken: string
   viewerCapability: string
+  expiresAt: string
+}
+
+export interface ViewerExchangeResponse {
+  sessionId: string
+  viewerSessionToken: string
+  viewerGeneration: number
   expiresAt: string
 }
 
