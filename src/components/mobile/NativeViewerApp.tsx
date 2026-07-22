@@ -1,7 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ChevronLeft, Eye, ShieldCheck } from 'lucide-react'
 import { useNativeViewer } from '@/lib/location-source/use-native-viewer'
 
@@ -19,14 +19,15 @@ function stateLabel(state: string): string {
   } as Record<string, string>)[state] || state.toUpperCase()
 }
 
+function capabilityFromPath(initialCapability: string): string {
+  if (initialCapability) return initialCapability
+  if (typeof window === 'undefined') return ''
+  return /^\/shared\/([^/]+)\/?$/.exec(window.location.pathname)?.[1] || ''
+}
+
 export default function NativeViewerApp({ initialCapability = '' }: { initialCapability?: string }) {
   const viewer = useNativeViewer()
-  const [capability, setCapability] = useState(initialCapability)
-
-  useEffect(() => {
-    const match = /^\/shared\/([^/]+)\/?$/.exec(window.location.pathname)
-    if (match?.[1]) setCapability(match[1])
-  }, [])
+  const [capability] = useState(() => capabilityFromPath(initialCapability))
 
   const close = () => {
     viewer.stop()
