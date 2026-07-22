@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { ChevronLeft, Link2, Radio, ShieldOff } from 'lucide-react'
-import { parseViewerCapability } from '@/lib/location-source/native-sharing-api'
+import { parseViewerCapabilityValue, viewerFragmentLink } from '@/lib/location-source/native-sharing-api'
 
 interface NativeSharingHubProps {
   onBack: () => void
@@ -14,12 +14,12 @@ export default function NativeSharingHub({ onBack }: NativeSharingHubProps) {
   const [error, setError] = useState<string | null>(null)
 
   const openLink = () => {
-    const parsed = parseViewerCapability(value)
+    const parsed = parseViewerCapabilityValue(value)
     if (!parsed) {
       setError('Pegá un enlace privado válido de STRACKER.')
       return
     }
-    window.location.assign(`/shared/${parsed.sessionId}.${parsed.viewerToken}`)
+    window.location.assign(viewerFragmentLink(parsed.capability))
   }
 
   return (
@@ -38,7 +38,7 @@ export default function NativeSharingHub({ onBack }: NativeSharingHubProps) {
           {opening ? (
             <div className="rounded-[22px] border border-white/10 p-3">
               <label htmlFor="viewer-link" className="text-xs font-semibold text-white/50">ENLACE PRIVADO</label>
-              <input id="viewer-link" value={value} onChange={(event) => { setValue(event.target.value); setError(null) }} autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="https://…/shared/…" className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black px-3 text-sm" />
+              <input id="viewer-link" value={value} onChange={(event) => { setValue(event.target.value); setError(null) }} autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="https://…/shared#v=…" className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black px-3 text-sm" />
               {error ? <p role="alert" className="mt-2 text-xs text-white/65">{error}</p> : null}
               <button type="button" onClick={openLink} className="mt-3 min-h-11 w-full rounded-2xl bg-white text-sm font-semibold text-black">ABRIR</button>
             </div>
