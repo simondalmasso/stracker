@@ -1,0 +1,35 @@
+name: STRACKER Native Sharing Test Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-vector-map-engine-v1
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - run: bun install --frozen-lockfile
+      - name: Capture test output
+        run: |
+          set +e
+          bun test tests/native-sharing/native-sharing.test.ts >/tmp/native-tests.txt 2>&1
+          echo $? >/tmp/native-tests-exit.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-sharing-test-diagnostic-${{ github.event.pull_request.head.sha }}
+          path: /tmp/native-tests*.txt
+          if-no-files-found: error
+          retention-days: 1
