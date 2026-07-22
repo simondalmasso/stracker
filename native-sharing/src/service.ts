@@ -4,6 +4,8 @@ import type {
   NativeSharedLocationPoint,
   NativeSharingSession,
   NativeSharingStore,
+  OpaqueViewerSession,
+  ViewerExchangeResponse,
   ViewerPointsResponse,
   ViewerSessionState,
   ViewerStatusResponse,
@@ -16,8 +18,15 @@ import {
   MAX_POINTS_PER_RESPONSE,
   MAX_SESSION_DURATION_MS,
   MIN_SESSION_DURATION_MS,
+  VIEWER_SESSION_TTL_MS,
 } from './limits.js'
-import { buildViewerCapability, capabilityVerifier, generateCapability, verifyCapability } from './security.js'
+import {
+  buildViewerCapability,
+  capabilityVerifier,
+  generateCapability,
+  parseViewerCapability,
+  verifyCapability,
+} from './security.js'
 
 export class NativeSharingError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -40,9 +49,6 @@ function stateAt(session: NativeSharingSession, nowMs: number): NativeSharingSes
 }
 
 function viewerState(session: NativeSharingSession, nowMs: number): ViewerSessionState {
-  const current = stateAt(session, nowMs)
-  if (current === 'revoked') return 'revoked'
-  if (current === 'expired') return 'expired'
   if (!session.lastReceivedAt) return 'active'
   return nowMs - Date.parse(session.lastReceivedAt) > EXPIRATION_GRACE_MS ? 'stale' : 'active'
 }
@@ -97,8 +103,40 @@ export class NativeSharingService {
     }
   }
 
-  async getStatus(sessionId: string, viewerToken: string): Promise<ViewerStatusResponse> {
-    const session = await this.authorizeViewer(sessionId, viewerToken)
+  async exchangeViewerCapability(viewerCapability: string): Promise<ViewerExchangeResponse> {
+    const parsed = parseViewerCapability(viewerCapability)
+    if (!parsed) throw new NativeSharingError(404, 'NOT_FOUND', 'Viewer access was not found.')
+    const session = await this.store.getSession(parsed.sessionId)
+    if (!session || !(await verifyCapability(parsed.viewerToken, session.viewerVerifier))) {
+      throw new NativeSharingError(404, 'NOT_FOUND', 'Viewer access was not found.')
+    }
+    const now = this.now()
+    const sharingState = stateAt(session, now.getTime())
+    if (sharingState !== 'active') {
+      throw new NativeSharingError(410, sharingState === 'revoked' ? 'SESSION_REVOKED' : 'SESSION_EXPIRED', 'Session is no longer readable.')
+    }
+
+    const viewerSessionToken = generateCapability()
+    const expiresAtMs = Math.min(now.getTime() + VIEWER_SESSION_TTL_MS, Date.parse(session.expiresAt))
+    const viewerSession: OpaqueViewerSession = {
+      tokenVerifier: await capabilityVerifier(viewerSessionToken),
+      sharingSessionId: session.id,
+      viewerGeneration: session.viewerGeneration,
+      createdAt: now.toISOString(),
+      expiresAt: new Date(expiresAtMs).toISOString(),
+      revokedAt: null,
+    }
+    await this.store.createViewerSession(session.id, viewerSession)
+    return {
+      sessionId: session.id,
+      viewerSessionToken,
+      viewerGeneration: session.viewerGeneration,
+      expiresAt: viewerSession.expiresAt,
+    }
+  }
+
+  async getStatus(sessionId: string, viewerSessionToken: string): Promise<ViewerStatusResponse> {
+    const session = await this.authorizeViewerSession(sessionId, viewerSessionToken)
     return {
       state: viewerState(session, this.now().getTime()),
       expiresAt: session.expiresAt,
@@ -107,20 +145,26 @@ export class NativeSharingService {
     }
   }
 
-  async getPoints(sessionId: string, viewerToken: string): Promise<ViewerPointsResponse> {
-    const session = await this.authorizeViewer(sessionId, viewerToken)
+  async getPoints(sessionId: string, viewerSessionToken: string): Promise<ViewerPointsResponse> {
+    const session = await this.authorizeViewerSession(sessionId, viewerSessionToken)
     const state = viewerState(session, this.now().getTime())
-    if (state === 'expired' || state === 'revoked') throw new NativeSharingError(410, state === 'revoked' ? 'SESSION_REVOKED' : 'SESSION_EXPIRED', 'Session is no longer readable.')
     const segments = await this.store.getConfirmedSegments(sessionId, MAX_GHOSTRAIL_SEGMENTS)
     const points = segments.flatMap((segment) => segment.points).slice(-MAX_POINTS_PER_RESPONSE)
     return { state, points, segments, lastUpdate: session.lastReceivedAt }
   }
 
+  async logoutViewer(sessionId: string, viewerSessionToken: string): Promise<void> {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId) || !/^[A-Za-z0-9_-]{43}$/.test(viewerSessionToken)) return
+    const verifier = await capabilityVerifier(viewerSessionToken)
+    await this.store.revokeViewerSession(sessionId, verifier, this.now().toISOString())
+  }
+
   async rotateViewer(sessionId: string, emitterToken: string): Promise<{ viewerCapability: string; viewerGeneration: number }> {
     const session = await this.authorizeEmitter(sessionId, emitterToken)
-    if (stateAt(session, this.now().getTime()) !== 'active') throw new NativeSharingError(410, 'SESSION_INACTIVE', 'Session is not active.')
+    const now = this.now()
+    if (stateAt(session, now.getTime()) !== 'active') throw new NativeSharingError(410, 'SESSION_INACTIVE', 'Session is not active.')
     const viewerToken = generateCapability()
-    const updated = await this.store.rotateViewerCapability(sessionId, await capabilityVerifier(viewerToken))
+    const updated = await this.store.rotateViewerCapability(sessionId, await capabilityVerifier(viewerToken), now.toISOString())
     if (!updated) throw new NativeSharingError(404, 'NOT_FOUND', 'Session was not found.')
     return { viewerCapability: buildViewerCapability(sessionId, viewerToken), viewerGeneration: updated.viewerGeneration }
   }
@@ -137,9 +181,26 @@ export class NativeSharingService {
     return session
   }
 
-  private async authorizeViewer(sessionId: string, token: string): Promise<NativeSharingSession> {
+  private async authorizeViewerSession(sessionId: string, token: string): Promise<NativeSharingSession> {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId) || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+      throw new NativeSharingError(404, 'NOT_FOUND', 'Viewer session was not found.')
+    }
     const session = await this.store.getSession(sessionId)
-    if (!session || !(await verifyCapability(token, session.viewerVerifier))) throw new NativeSharingError(404, 'NOT_FOUND', 'Session was not found.')
+    if (!session) throw new NativeSharingError(404, 'NOT_FOUND', 'Viewer session was not found.')
+    const viewerSession = await this.store.getViewerSession(sessionId, await capabilityVerifier(token))
+    if (!viewerSession) throw new NativeSharingError(404, 'NOT_FOUND', 'Viewer session was not found.')
+
+    const nowMs = this.now().getTime()
+    const sharingState = stateAt(session, nowMs)
+    if (sharingState !== 'active') {
+      throw new NativeSharingError(410, sharingState === 'revoked' ? 'SESSION_REVOKED' : 'SESSION_EXPIRED', 'Session is no longer readable.')
+    }
+    if (viewerSession.revokedAt || viewerSession.viewerGeneration !== session.viewerGeneration) {
+      throw new NativeSharingError(401, 'VIEWER_SESSION_INVALID', 'Viewer session is no longer valid.')
+    }
+    if (nowMs > Date.parse(viewerSession.expiresAt)) {
+      throw new NativeSharingError(401, 'VIEWER_SESSION_EXPIRED', 'Viewer session has expired.')
+    }
     return session
   }
 }
