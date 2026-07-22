@@ -97,7 +97,7 @@ describe('native capability and opaque viewer sessions', () => {
 
   test('VIEWER_SESSION_SHORT_LIVED and VIEWER_LOGOUT', async () => {
     const h = harness()
-    const first = await createAndExchange(h.service)
+    const first = await createAndExchange(h.service, 60 * 60_000)
     expect(Date.parse(first.viewer.expiresAt) - h.now()).toBe(VIEWER_SESSION_TTL_MS)
     await h.service.logoutViewer(first.created.sessionId, first.viewer.viewerSessionToken)
     await expectCode(h.service.getStatus(first.created.sessionId, first.viewer.viewerSessionToken), 'VIEWER_SESSION_INVALID')
@@ -116,7 +116,7 @@ describe('native point acceptance', () => {
     await h.service.appendPoint(created.sessionId, created.emitterToken, first)
     await expect(h.service.appendPoint(created.sessionId, created.emitterToken, first)).rejects.toBeInstanceOf(PointValidationError)
     h.advance(10_000)
-    await expectCode(h.service.appendPoint(created.sessionId, created.emitterToken, point(0, new Date(h.now()).toISOString())), 'REPLAY_REJECTED')
+    await expectCode(h.service.appendPoint(created.sessionId, created.emitterToken, point(1, new Date(h.now()).toISOString())), 'REPLAY_REJECTED')
   })
 
   test('IMPOSSIBLE_JUMP_REJECTED', async () => {
