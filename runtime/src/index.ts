@@ -173,7 +173,7 @@ export function createRuntime(dependencies: RuntimeDependencies = {}) {
         try {
           const parsed = deserializeSession(await decryptSession(record.ivB64, record.ciphertextB64, encryptionKey, subjectHash))
           const result = await probeGoogleMapsSession(parsed, fetchGoogle, now().toISOString())
-          return json(statusCodeForStatus(result.status), result.status)
+          return json(200, result.status)
         } catch {
           return fail(503, 'SESSION_DECRYPTION_FAILED', 'La sesión vinculada no pudo abrirse de forma segura.')
         }
