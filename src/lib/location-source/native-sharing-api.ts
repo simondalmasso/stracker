@@ -22,7 +22,7 @@ export function parseViewerCapabilityValue(value: string): { capability: string;
   if (direct) return { capability: raw, sessionId: direct[1], viewerToken: direct[2] }
 
   try {
-    const url = new URL(raw)
+    const url = new URL(raw, 'https://stracker.invalid')
     if (url.pathname !== '/shared' && url.pathname !== '/shared/') return null
     if (url.search) return null
     const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash)
@@ -53,7 +53,7 @@ export function readViewerCapabilityFromFragment(): string | null {
 
 export function removeViewerCapabilityFragment(): void {
   if (typeof window === 'undefined') return
-  window.history.replaceState(window.history.state, '', '/shared')
+  window.history.replaceState(null, '', '/shared')
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -110,6 +110,7 @@ export async function logoutNativeViewer(sessionId: string, viewerSessionToken: 
   const response = await fetch('/api/share/viewer/logout', requestInit({
     method: 'POST',
     signal,
+    keepalive: true,
     headers: { 'Content-Type': 'application/json', ...viewerAuthorization(viewerSessionToken) },
     body: JSON.stringify({ sessionId }),
   }))
