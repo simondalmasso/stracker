@@ -112,19 +112,19 @@ export interface D1DatabaseCandidate {
 }
 
 export class D1NativeSharingStoreCandidate implements NativeSharingStore {
-  constructor(private readonly _database: D1DatabaseCandidate) {}
+  constructor(database: D1DatabaseCandidate) { void database }
   private unavailable(): never { throw new Error('D1_NATIVE_SHARING_CANDIDATE_NOT_ENABLED') }
-  async createSession(_input: CreateSessionInput) { return this.unavailable() }
-  async getSession(_sessionId: string) { return this.unavailable() }
-  async appendPoint(_sessionId: string, _expectedLastSequence: number, _point: AcceptedNativePoint) { return this.unavailable() }
-  async getLatestPoint(_sessionId: string) { return this.unavailable() }
-  async getConfirmedSegments(_sessionId: string, _maxSegments?: number) { return this.unavailable() }
-  async revokeSession(_sessionId: string, _revokedAt: string) { return this.unavailable() }
-  async rotateViewerCapability(_sessionId: string, _verifier: string) { return this.unavailable() }
-  async deleteExpired(_nowIso: string) { return this.unavailable() }
+  async createSession(input: CreateSessionInput) { void input; return this.unavailable() }
+  async getSession(sessionId: string) { void sessionId; return this.unavailable() }
+  async appendPoint(sessionId: string, expectedLastSequence: number, point: AcceptedNativePoint) { void sessionId; void expectedLastSequence; void point; return this.unavailable() }
+  async getLatestPoint(sessionId: string) { void sessionId; return this.unavailable() }
+  async getConfirmedSegments(sessionId: string, maxSegments?: number) { void sessionId; void maxSegments; return this.unavailable() }
+  async revokeSession(sessionId: string, revokedAt: string) { void sessionId; void revokedAt; return this.unavailable() }
+  async rotateViewerCapability(sessionId: string, verifier: string) { void sessionId; void verifier; return this.unavailable() }
+  async deleteExpired(nowIso: string) { void nowIso; return this.unavailable() }
 }
 
-export interface DurableObjectNativeSharingStubCandidate extends NativeSharingStore {}
+export type DurableObjectNativeSharingStubCandidate = NativeSharingStore
 export interface DurableObjectNamespaceCandidate {
   getByName(name: string): DurableObjectNativeSharingStubCandidate
 }
