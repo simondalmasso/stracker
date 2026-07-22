@@ -1,0 +1,59 @@
+'use client'
+
+import { useState } from 'react'
+import { ChevronLeft, Link2, Radio, ShieldOff } from 'lucide-react'
+import { parseViewerCapability } from '@/lib/location-source/native-sharing-api'
+
+interface NativeSharingHubProps {
+  onBack: () => void
+}
+
+export default function NativeSharingHub({ onBack }: NativeSharingHubProps) {
+  const [opening, setOpening] = useState(false)
+  const [value, setValue] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const openLink = () => {
+    const parsed = parseViewerCapability(value)
+    if (!parsed) {
+      setError('Pegá un enlace privado válido de STRACKER.')
+      return
+    }
+    window.location.assign(`/shared/${parsed.sessionId}.${parsed.viewerToken}`)
+  }
+
+  return (
+    <main className="relative flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-black px-4 py-[max(72px,env(safe-area-inset-top))] text-white">
+      <button type="button" onClick={onBack} aria-label="Volver" className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04]"><ChevronLeft size={22} /></button>
+      <div className="w-full max-w-md">
+        <header className="mb-7 text-center">
+          <p className="text-xs font-semibold tracking-[0.2em] text-white/45">UBICACIÓN COMPARTIDA</p>
+          <h1 className="mt-3 text-2xl font-semibold">Elegí cómo continuar</h1>
+        </header>
+        <div className="grid gap-3">
+          <button type="button" onClick={() => setOpening((current) => !current)} className="flex min-h-[92px] items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.035] p-4 text-left">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-black"><Link2 size={23} /></span>
+            <span><strong className="block">ABRIR ENLACE STRACKER</strong><span className="mt-1 block text-sm text-white/55">Ver una ubicación que te compartieron.</span></span>
+          </button>
+          {opening ? (
+            <div className="rounded-[22px] border border-white/10 p-3">
+              <label htmlFor="viewer-link" className="text-xs font-semibold text-white/50">ENLACE PRIVADO</label>
+              <input id="viewer-link" value={value} onChange={(event) => { setValue(event.target.value); setError(null) }} autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="https://…/shared/…" className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black px-3 text-sm" />
+              {error ? <p role="alert" className="mt-2 text-xs text-white/65">{error}</p> : null}
+              <button type="button" onClick={openLink} className="mt-3 min-h-11 w-full rounded-2xl bg-white text-sm font-semibold text-black">ABRIR</button>
+            </div>
+          ) : null}
+          <button type="button" onClick={() => window.location.assign('/share')} className="flex min-h-[92px] items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.035] p-4 text-left">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/15"><Radio size={23} /></span>
+            <span><strong className="block">COMPARTIR MI UBICACIÓN</strong><span className="mt-1 block text-sm text-white/55">Crear un enlace temporal y revocable.</span></span>
+          </button>
+          <button type="button" disabled aria-disabled="true" className="flex min-h-[92px] cursor-not-allowed items-center gap-4 rounded-[24px] border border-white/5 bg-white/[0.015] p-4 text-left opacity-45">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/10"><ShieldOff size={23} /></span>
+            <span><strong className="block">GOOGLE MAPS — EXPERIMENTAL</strong><span className="mt-1 block text-sm text-white/55">No disponible en esta versión.</span></span>
+          </button>
+        </div>
+        <p className="mt-5 text-center text-xs leading-5 text-white/35">STRACKER no consulta estados, puntos ni mapas hasta que elegís una acción explícita.</p>
+      </div>
+    </main>
+  )
+}
