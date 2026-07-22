@@ -2,8 +2,8 @@
 
 import dynamic from 'next/dynamic'
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, LocateFixed, MapPinned, ShieldCheck } from 'lucide-react'
-import type { LocationSource, ProductFlow, SharedSessionStatus } from '@/lib/location-source/contracts'
+import { ChevronLeft, Link2, LocateFixed, MapPinned, ShieldCheck } from 'lucide-react'
+import type { LocationSource, ProductFlow, SharedSessionState, SharedSessionStatus } from '@/lib/location-source/contracts'
 import { isMapUnlocked } from '@/lib/location-source/contracts'
 import { useMyLocation } from '@/lib/location-source/use-my-location'
 import { useSharedLocation } from '@/lib/location-source/use-shared-location'
@@ -18,7 +18,7 @@ function detectFormat(raw: string): DetectedFormat {
   if (value.startsWith('# Netscape HTTP Cookie File') || value.split('\n').some((line) => line.split('\t').length >= 7)) return 'Netscape'
   if (value.startsWith('[')) return 'Cookie Editor JSON'
   if (value.startsWith('{')) return 'JSON envuelto'
-  if (value.includes('=') && value.includes(';')) return 'Cookie Header String'
+  if (value.includes('=')) return 'Cookie Header String'
   return 'Sin detectar'
 }
 
@@ -84,6 +84,65 @@ function MyOnboarding({ state, requestPermission, onBack }: { state: string; req
   )
 }
 
+const sharedStateLabel: Record<SharedSessionState, string> = {
+  'not-applicable': 'NO VINCULADA',
+  unconfigured: 'NO VINCULADA',
+  validating: 'VALIDANDO',
+  valid: 'VINCULADA',
+  expired: 'SESIÓN VENCIDA',
+  rejected: 'SESIÓN RECHAZADA',
+  'upstream-error': 'GOOGLE NO DISPONIBLE',
+}
+
+function SharedLinkPanel({
+  sessionState,
+  status,
+  loading,
+  error,
+  canOpen,
+  onBack,
+  onLink,
+  onOpen,
+}: {
+  sessionState: SharedSessionState
+  status: SharedSessionStatus | null
+  loading: boolean
+  error: string | null
+  canOpen: boolean
+  onBack: () => void
+  onLink: () => void
+  onOpen: () => void
+}) {
+  const linked = sessionState === 'valid'
+  return (
+    <main className="relative flex min-h-[100dvh] items-center justify-center overflow-x-hidden bg-black px-5 text-white">
+      <BackButton onClick={onBack} />
+      <div className="w-full max-w-sm text-center">
+        <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-white/15"><Link2 size={26} /></span>
+        <p className="mt-5 text-xs font-semibold tracking-[0.18em] text-white/45">UBICACIÓN COMPARTIDA</p>
+        <h1 className="mt-2 text-2xl font-semibold">Google Maps</h1>
+        <p className="mt-3 text-sm text-white/55">Importar una sesión autorizada</p>
+        <div className="mt-6 rounded-2xl border border-white/10 p-4 text-left">
+          <span className="text-xs text-white/45">ESTADO</span>
+          <strong className="mt-1 block text-sm">{sharedStateLabel[sessionState]}</strong>
+          {status?.message ? <p className="mt-2 text-xs leading-5 text-white/45">{status.message}</p> : null}
+        </div>
+        {error ? <p role="alert" className="mt-3 rounded-2xl border border-white/10 p-4 text-left text-sm">{error}</p> : null}
+        {linked ? (
+          <button type="button" onClick={onOpen} disabled={loading || !canOpen} className="mt-5 min-h-12 w-full rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-40">
+            {loading || !canOpen ? 'PREPARANDO UBICACIÓN…' : 'ABRIR UBICACIÓN'}
+          </button>
+        ) : (
+          <button type="button" onClick={onLink} disabled={loading || sessionState === 'validating'} className="mt-5 min-h-12 w-full rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-40">
+            {sessionState === 'validating' ? 'VALIDANDO…' : 'VINCULAR GOOGLE MAPS'}
+          </button>
+        )}
+        <p className="mt-4 text-xs leading-5 text-white/35">El acceso a STRACKER y la sesión de Google Maps son credenciales independientes.</p>
+      </div>
+    </main>
+  )
+}
+
 function SharedImporter({ status, loading, error, onBack, onImport }: { status: SharedSessionStatus | null; loading: boolean; error: string | null; onBack: () => void; onImport: (raw: string) => Promise<void> }) {
   const [raw, setRaw] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
@@ -103,15 +162,19 @@ function SharedImporter({ status, loading, error, onBack, onImport }: { status: 
       return
     }
     setLocalError(null)
-    await onImport(raw)
+    try {
+      await onImport(raw)
+    } catch {
+      // The controller exposes a sanitized error message below.
+    }
   }
   return (
     <main className="relative min-h-[100dvh] overflow-x-hidden bg-black px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-[max(76px,calc(env(safe-area-inset-top)+64px))] text-white">
       <BackButton onClick={onBack} />
       <div className="mx-auto max-w-md">
         <p className="text-xs font-semibold tracking-[0.18em] text-white/45">UBICACIÓN COMPARTIDA</p>
-        <h1 className="mt-2 text-2xl font-semibold">Vincular sesión de Google Maps</h1>
-        <p className="mt-3 text-sm leading-6 text-white/55">Importá una sesión autorizada para consultar una ubicación ya compartida con tu cuenta.</p>
+        <h1 className="mt-2 text-2xl font-semibold">Vincular Google Maps</h1>
+        <p className="mt-3 text-sm leading-6 text-white/55">Importar una sesión autorizada</p>
         <div className="mt-5 rounded-[22px] border border-white/10 p-3">
           <div className="mb-2 flex justify-between text-xs"><span className="text-white/45">Formato detectado</span><strong>{detectFormat(raw)}</strong></div>
           <textarea ref={ref} value={raw} onChange={(event) => setRaw(event.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" className="min-h-[180px] w-full resize-y rounded-2xl border border-white/10 bg-black p-3 font-mono text-[13px]" placeholder="Cookie Editor JSON, Header String o Netscape…" />
@@ -120,7 +183,7 @@ function SharedImporter({ status, loading, error, onBack, onImport }: { status: 
         {localError || error ? <div role="alert" className="mt-3 rounded-2xl border border-white/10 p-4 text-sm"><p>{localError || error}</p><p className="mt-2 text-white/50">Revisá el formato o renová la sesión.</p></div> : null}
         {status ? <div className="mt-3 grid grid-cols-2 gap-2 rounded-2xl border border-white/10 p-3 text-xs"><span className="text-white/45">Cookies válidas</span><strong className="text-right">{status.count}</strong><span className="text-white/45">Críticas presentes</span><strong className="text-right">{status.criticalPresent.length}</strong><span className="text-white/45">Críticas faltantes</span><strong className="text-right">{status.criticalMissing.length}</strong><span className="text-white/45">Validación</span><strong className="text-right">{status.health}</strong></div> : null}
         <button type="button" disabled={loading || !raw.trim()} onClick={() => void submit()} className="mt-4 min-h-12 w-full rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-40">{loading ? 'VALIDANDO SESIÓN…' : 'IMPORTAR Y VALIDAR'}</button>
-        <div className="mt-5 flex gap-3 text-xs leading-5 text-white/40"><ShieldCheck size={16} className="shrink-0" /><p>Los valores quedan en el backend privado y nunca vuelven al navegador.</p></div>
+        <div className="mt-5 flex gap-3 text-xs leading-5 text-white/40"><ShieldCheck size={16} className="shrink-0" /><p>Los valores quedan cifrados en el backend privado y nunca vuelven al navegador.</p></div>
       </div>
     </main>
   )
@@ -130,6 +193,7 @@ export default function MobileLocationApp() {
   const [flow, setFlow] = useState<ProductFlow>('SELECTING_SOURCE')
   const [source, setSource] = useState<LocationSource | null>(null)
   const [importing, setImporting] = useState(false)
+  const [sharedOpened, setSharedOpened] = useState(false)
   const my = useMyLocation()
   const shared = useSharedLocation()
 
@@ -139,6 +203,7 @@ export default function MobileLocationApp() {
     setSource(next)
     setFlow(next === 'my-device' ? 'MY_LOCATION_FLOW' : 'SHARED_LOCATION_FLOW')
     setImporting(false)
+    setSharedOpened(false)
     if (next === 'google-shared') void shared.refreshStatus()
   }, [my, shared])
 
@@ -148,6 +213,7 @@ export default function MobileLocationApp() {
     setSource(null)
     setFlow('SELECTING_SOURCE')
     setImporting(false)
+    setSharedOpened(false)
   }, [my, shared])
 
   if (flow === 'SELECTING_SOURCE' || !source) return <Selector onSelect={select} />
@@ -156,11 +222,26 @@ export default function MobileLocationApp() {
       ? <MobileMapShell source="my-device" snapshot={my.snapshot} ghostrail={my.ghostrail} onChangeSource={reset} onStop={reset} />
       : <MyOnboarding state={my.state} requestPermission={my.requestPermission} onBack={reset} />
   }
-  if (!importing && isMapUnlocked(source, my.state, shared.state) && shared.snapshot) {
-    return <MobileMapShell source="google-shared" snapshot={shared.snapshot} ghostrail={shared.ghostrail} onChangeSource={reset} onReplaceSession={() => setImporting(true)} onDeleteSession={() => void shared.deleteSession().then(reset)} />
+  if (sharedOpened && isMapUnlocked(source, my.state, shared.state) && shared.snapshot) {
+    return <MobileMapShell source="google-shared" snapshot={shared.snapshot} ghostrail={shared.ghostrail} onChangeSource={reset} onReplaceSession={() => { setSharedOpened(false); setImporting(true) }} onDeleteSession={() => void shared.deleteSession().then(reset)} />
   }
-  return <SharedImporter status={shared.status} loading={shared.loading} error={shared.error} onBack={reset} onImport={async (raw) => {
-    const result = await shared.importSession(raw)
-    if (result.state === 'SHARED_READY' || result.state === 'SHARED_STALE') setImporting(false)
-  }} />
+  if (importing) {
+    return <SharedImporter status={shared.status} loading={shared.loading} error={shared.error} onBack={() => setImporting(false)} onImport={async (raw) => {
+      const result = await shared.importSession(raw)
+      if (result.state === 'SHARED_READY' || result.state === 'SHARED_STALE' || result.state === 'SHARED_NO_LOCATION') {
+        setImporting(false)
+        setSharedOpened(false)
+      }
+    }} />
+  }
+  return <SharedLinkPanel
+    sessionState={shared.sessionState}
+    status={shared.status}
+    loading={shared.loading}
+    error={shared.error}
+    canOpen={Boolean(shared.snapshot) && isMapUnlocked(source, my.state, shared.state)}
+    onBack={reset}
+    onLink={() => setImporting(true)}
+    onOpen={() => setSharedOpened(true)}
+  />
 }
