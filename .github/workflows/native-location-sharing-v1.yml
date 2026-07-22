@@ -61,6 +61,7 @@ jobs:
       - name: ESLINT
         run: |
           bun run lint
+          bunx eslint src/app/share src/app/shared native-sharing/src
           echo 'ESLINT=PASS'
 
       - name: TYPECHECK
@@ -70,13 +71,13 @@ jobs:
 
       - name: NATIVE_SHARING_TYPECHECK
         run: |
-          bun run native-sharing:typecheck
+          bunx tsc -p native-sharing/tsconfig.json
           echo 'NATIVE_SHARING_TYPECHECK=PASS'
           echo 'SOURCE_MODEL_MIGRATED=PASS'
 
       - name: NATIVE_SHARING_TESTS
         run: |
-          bun run test:native-sharing
+          bun test tests/native-sharing
           echo 'TESTS=PASS'
           echo 'EMITTER_VIEWER_CAPABILITIES_SEPARATED=PASS'
           echo 'SESSION_ENUMERATION_BLOCKED=PASS'
@@ -122,7 +123,7 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:4173/ >/dev/null
-          bun run test:native-sharing-browser
+          node tests/native-sharing/browser-qa.mjs
           jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and (.viewports | length == 5)' /tmp/native-sharing-browser.json >/dev/null
           jq -e '[.viewports[] | select(.pageErrors != 0 or .consoleErrors != 0 or .noOverflow != true)] | length == 0' /tmp/native-sharing-browser.json >/dev/null
           jq -e '.gates.ROOT_SELECTOR_UNCHANGED == "PASS" and .gates.NO_GEOLOCATION_BEFORE_EMITTER_START == "PASS" and .gates.NO_POINTS_BEFORE_VIEWER_CONFIRMATION == "PASS" and .gates.EMITTER_VIEWER_TOKEN_SEPARATION == "PASS" and .gates.SOURCE_MODEL_MIGRATED == "PASS" and .gates.SOURCE_ISOLATION == "PASS" and .gates.SOURCE_SWITCH_CLEANUP == "PASS" and .gates.LATE_RESPONSE_BLOCKED == "PASS" and .gates.STALE_NOT_LIVE == "PASS" and .gates.GHOSTRAIL_SEGMENTATION == "PASS" and .gates.MAP_MODES_PRESERVED == "PASS" and .gates.MANUAL_CAMERA_PRESERVED == "PASS" and .gates.GOOGLE_PROVIDER_DISABLED == "PASS" and .gates.MOBILE_QA == "PASS"' /tmp/native-sharing-browser.json >/dev/null
@@ -205,7 +206,7 @@ jobs:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
           SOURCE_FILES_JSON: '["/tmp/native-sharing-browser.json","/tmp/native-sharing-gates.json"]'
-          COMMANDS_JSON: '["bun install --frozen-lockfile","bun run lint","bun run typecheck","bun run native-sharing:typecheck","bun run test:native-sharing","bun run test:vector-map","bun run build:export","bun run test:native-sharing-browser"]'
+          COMMANDS_JSON: '["bun install --frozen-lockfile","bun run lint","bunx eslint src/app/share src/app/shared native-sharing/src","bun run typecheck","bunx tsc -p native-sharing/tsconfig.json","bun test tests/native-sharing","bun run test:vector-map","bun run build:export","node tests/native-sharing/browser-qa.mjs"]'
           GATES_JSON: '{"NATIVE_LOCATION_SHARING":"PASS","SECURITY_ARTIFACT_SCAN":"PASS","DEPLOY":"NO","MERGE":"NO","PRODUCTION_MODIFIED":"NO"}'
         run: node tools/map-spike/prepare-artifact.mjs
 
