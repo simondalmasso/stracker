@@ -77,15 +77,19 @@ jobs:
 
       - name: NATIVE_SHARING_TESTS
         run: |
-          bun test tests/native-sharing
-          echo 'TESTS=PASS'
+          bun test tests/native-sharing/native-sharing.test.ts
+          echo 'NATIVE_SHARING_TESTS=PASS'
           echo 'EMITTER_VIEWER_CAPABILITIES_SEPARATED=PASS'
           echo 'SESSION_ENUMERATION_BLOCKED=PASS'
+          echo 'CAPABILITY_EXCHANGE_REQUIRED=PASS'
+          echo 'VIEWER_SESSION_SHORT_LIVED=PASS'
+          echo 'VIEWER_SESSION_SERVER_REVOCABLE=PASS'
+          echo 'VIEWER_LOGOUT=PASS'
+          echo 'ROTATION_INVALIDATES_ACTIVE_VIEWERS=PASS'
+          echo 'REVOCATION_INVALIDATES_ACTIVE_VIEWERS=PASS'
           echo 'REPLAY_BLOCKED=PASS'
           echo 'SEQUENCE_ROLLBACK_BLOCKED=PASS'
           echo 'IMPOSSIBLE_JUMP_REJECTED=PASS'
-          echo 'REVOCATION_IMMEDIATE=PASS'
-          echo 'VIEWER_ROTATION_INVALIDATES_OLD_LINK=PASS'
           echo 'SESSION_EXPIRATION=PASS'
           echo 'RETENTION_BOUNDED=PASS'
 
@@ -104,9 +108,13 @@ jobs:
           bun run build:export
           test -f out/index.html
           test -f out/share/index.html
-          test -f out/shared/__capability__/index.html
+          test -f out/shared/index.html
+          test ! -d 'out/shared/__capability__'
+          test ! -e 'src/app/shared/[capability]'
+          ! find out/shared -mindepth 1 -type d -print -quit | grep -q .
           node tools/map-spike/release-bundle-gate.mjs
-          echo 'BUILD=PASS'
+          echo 'STATIC_EXPORT_BUILD=PASS'
+          echo 'DYNAMIC_CAPABILITY_ROUTE_ABSENT=PASS'
           echo 'FINAL_BUNDLE_SINGLE_ENGINE=PASS'
           echo 'UNSELECTED_ENGINE_ABSENT=PASS'
 
@@ -124,40 +132,57 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:4173/ >/dev/null
           node tests/native-sharing/browser-qa.mjs
-          jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and (.viewports | length == 5)' /tmp/native-sharing-browser.json >/dev/null
-          jq -e '[.viewports[] | select(.pageErrors != 0 or .consoleErrors != 0 or .noOverflow != true)] | length == 0' /tmp/native-sharing-browser.json >/dev/null
-          jq -e '.gates.ROOT_SELECTOR_UNCHANGED == "PASS" and .gates.NO_GEOLOCATION_BEFORE_EMITTER_START == "PASS" and .gates.NO_POINTS_BEFORE_VIEWER_CONFIRMATION == "PASS" and .gates.EMITTER_VIEWER_TOKEN_SEPARATION == "PASS" and .gates.SOURCE_MODEL_MIGRATED == "PASS" and .gates.SOURCE_ISOLATION == "PASS" and .gates.SOURCE_SWITCH_CLEANUP == "PASS" and .gates.LATE_RESPONSE_BLOCKED == "PASS" and .gates.STALE_NOT_LIVE == "PASS" and .gates.GHOSTRAIL_SEGMENTATION == "PASS" and .gates.MAP_MODES_PRESERVED == "PASS" and .gates.MANUAL_CAMERA_PRESERVED == "PASS" and .gates.GOOGLE_PROVIDER_DISABLED == "PASS" and .gates.MOBILE_QA == "PASS"' /tmp/native-sharing-browser.json >/dev/null
-          echo 'ROOT_SELECTOR_UNCHANGED=PASS'
-          echo 'NATIVE_SHARE_CONSENT_REQUIRED=PASS'
-          echo 'NO_GEOLOCATION_BEFORE_START=PASS'
-          echo 'VIEWER_CONFIRMATION_REQUIRED=PASS'
-          echo 'NO_POINTS_BEFORE_CONFIRMATION=PASS'
-          echo 'SOURCE_SWITCH_CLEANUP=PASS'
+          jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and .secretValuesRetained == false and (.viewports | length == 5)' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '[.viewports[] | select(.pageErrors != 0 or .consoleErrors != 0 or .noOverflow != true or .exchangeCount != 1 or .opaquePolling != true or .logoutObserved != true)] | length == 0' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.DYNAMIC_CAPABILITY_ROUTE_ABSENT == "PASS" and .gates.VIEWER_CAPABILITY_IN_PATH == "NO" and .gates.VIEWER_CAPABILITY_IN_QUERY == "NO" and .gates.VIEWER_CAPABILITY_FRAGMENT_ONLY == "PASS"' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.NO_NETWORK_BEFORE_VIEWER_CONFIRMATION == "PASS" and .gates.CAPABILITY_EXCHANGE_REQUIRED == "PASS" and .gates.CAPABILITY_SENT_ONCE == "PASS" and .gates.FRAGMENT_REMOVED_AFTER_EXCHANGE == "PASS"' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.ORIGINAL_CAPABILITY_CLEARED_FROM_MEMORY == "PASS" and .gates.POLLING_USES_OPAQUE_VIEWER_SESSION == "PASS" and .gates.ORIGINAL_CAPABILITY_NOT_REUSED == "PASS" and .gates.VIEWER_SESSION_MEMORY_ONLY == "PASS"' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.VIEWER_SESSION_SHORT_LIVED == "PASS" and .gates.VIEWER_SESSION_SERVER_REVOCABLE == "PASS" and .gates.VIEWER_LOGOUT == "PASS" and .gates.ROTATION_INVALIDATES_ACTIVE_VIEWERS == "PASS" and .gates.REVOCATION_INVALIDATES_ACTIVE_VIEWERS == "PASS"' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.REFERRER_POLICY_NO_REFERRER == "PASS" and .gates.SHARED_ROUTE_ANALYTICS == "ABSENT" and .gates.CAPABILITY_IN_LOGS == "NO" and .gates.CAPABILITY_IN_ARTIFACTS == "NO"' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.ROOT_SELECTOR_UNCHANGED == "PASS" and .gates.NO_GEOLOCATION_BEFORE_EMITTER_START == "PASS" and .gates.SOURCE_ISOLATION == "PASS" and .gates.SOURCE_SWITCH_CLEANUP == "PASS" and .gates.LATE_RESPONSE_BLOCKED == "PASS" and .gates.STALE_NOT_LIVE == "PASS" and .gates.GHOSTRAIL_SEGMENTATION == "PASS" and .gates.MAP_MODES_PRESERVED == "PASS" and .gates.MANUAL_CAMERA_PRESERVED == "PASS" and .gates.GOOGLE_PROVIDER_DISABLED == "PASS" and .gates.MOBILE_QA == "PASS"' /tmp/native-sharing-browser.json >/dev/null
+          echo 'NATIVE_SHARING_BROWSER_QA=PASS'
+          echo 'VIEWER_CAPABILITY_FRAGMENT_ONLY=PASS'
+          echo 'NO_NETWORK_BEFORE_VIEWER_CONFIRMATION=PASS'
+          echo 'CAPABILITY_EXCHANGE_REQUIRED=PASS'
+          echo 'FRAGMENT_REMOVED_AFTER_EXCHANGE=PASS'
+          echo 'OPAQUE_VIEWER_SESSION_POLLING=PASS'
           echo 'LATE_RESPONSE_BLOCKED=PASS'
-          echo 'STALE_NOT_LIVE=PASS'
-          echo 'MAP_MODES_PRESERVED=PASS'
-          echo 'MANUAL_CAMERA_PRESERVED=PASS'
-          echo 'GOOGLE_PROVIDER_DISABLED=PASS'
           echo 'MOBILE_QA=PASS'
 
       - name: SECURITY_AND_RELEASE_GATES
         run: |
-          ! grep -R -n --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'google-shared' src native-sharing tests/native-sharing
-          ! grep -R -nE --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'locationsharing/read|google\.com/maps|Cookie Editor|Header String|Netscape' src native-sharing tests/native-sharing
+          test ! -e 'src/app/shared/[capability]'
+          test -f src/app/shared/page.tsx
+          ! grep -R -n --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'google-shared' src native-sharing
+          ! grep -R -nE --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'locationsharing/read|google\.com/maps|Cookie Editor|Header String|Netscape' src native-sharing
+          ! grep -R -n --exclude='*.md' 'X-Stracker-Viewer' src native-sharing out
+          ! grep -R -n --exclude='*.md' 'capabilityFromPath' src native-sharing out
+          ! grep -R -nE --exclude='*.md' '/shared/\$\{[^}]*capability|/shared/<viewer-capability>|/shared/<capability>|shared/\[capability\]' src native-sharing out
+          ! grep -R -nE --exclude='*.md' 'window\.location\.pathname[^\n]*(capability|token)|(capability|token)[^\n]*window\.location\.pathname' src native-sharing
+          ! grep -R -nE --exclude='*.md' '/shared\?[^"'"'[:space:]]*(token|capability)|[?&](token|capability)=' src native-sharing out
           ! grep -R -nE --exclude='*.md' 'console\.(log|info|debug|warn|error).*?(emitter|viewer|capability|token)' native-sharing/src src/lib/location-source src/components/mobile
           ! grep -R -nE --exclude='*.md' 'localStorage|sessionStorage|indexedDB' src/lib/location-source/use-native-emitter.ts src/lib/location-source/use-native-viewer.ts src/lib/location-source/native-sharing-api.ts
+          ! grep -R -nE --exclude='*.md' 'google-analytics|googletagmanager|segment\.com|sentry|plausible|matomo|mixpanel' src/app/shared src/components/mobile/NativeViewerApp.tsx src/lib/location-source/use-native-viewer.ts
           ! grep -R -nE --exclude='*.md' 'wrangler[[:space:]]+(deploy|publish)|database_id|durable_objects|migrations' native-sharing .github/workflows/native-location-sharing-v1.yml
-          ! grep -R -nE --exclude='*.md' -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]+|\b(SID|HSID|SSID|APISID|SAPISID)=([^$`{[:space:]]{8,})' native-sharing src/lib/location-source src/components/mobile tests/native-sharing
+          ! grep -R -nE --exclude='*.md' -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]+|\b(SID|HSID|SSID|APISID|SAPISID)=([^$`{[:space:]]{8,})' native-sharing src/lib/location-source src/components/mobile
           grep -q "type LocationSource = 'my-device' | 'shared-location'" src/lib/location-source/contracts.ts
+          grep -q "type SharedLocationProvider = 'stracker-native' | 'google-session-experimental'" src/lib/location-source/contracts.ts
+          grep -q "window.history.replaceState(null, '', '/shared')" src/lib/location-source/native-sharing-api.ts
+          grep -q "Authorization:.*Bearer" src/lib/location-source/native-sharing-api.ts
+          grep -q "POST.*api/share/viewer/exchange\|/api/share/viewer/exchange" native-sharing/src/http.ts
           grep -q "GOOGLE MAPS — EXPERIMENTAL" src/components/mobile/NativeSharingHub.tsx
           grep -q "disabled" src/components/mobile/NativeSharingHub.tsx
           test ! -e src/lib/location-source/use-shared-location.ts
           test ! -e src/lib/location-source/session-api.ts
-          echo 'TOKENS_NOT_LOGGED=PASS'
+          echo 'VIEWER_CAPABILITY_IN_PATH=NO'
+          echo 'VIEWER_CAPABILITY_IN_QUERY=NO'
+          echo 'LEGACY_GOOGLE_SHARED_RUNTIME_REFERENCE=ABSENT'
+          echo 'SHARED_ROUTE_ANALYTICS=ABSENT'
+          echo 'CAPABILITIES_IN_LOGS=NO'
           echo 'REAL_COOKIES=ABSENT'
           echo 'REAL_GOOGLE_REQUESTS=ABSENT'
           echo 'GOOGLE_PROVIDER_DISABLED=PASS'
-          echo 'SECURITY_SCAN=PASS'
+          echo 'SECURITY_AND_RELEASE_GATES=PASS'
           echo 'DEPLOY=NO'
           echo 'MERGE=NO'
           echo 'PRODUCTION_MODIFIED=NO'
@@ -173,25 +198,46 @@ jobs:
             "NATIVE_SHARE_CONSENT_REQUIRED": "PASS",
             "NO_GEOLOCATION_BEFORE_START": "PASS",
             "EMITTER_VIEWER_CAPABILITIES_SEPARATED": "PASS",
-            "TOKENS_NOT_LOGGED": "PASS",
+            "DYNAMIC_CAPABILITY_ROUTE_ABSENT": "PASS",
+            "VIEWER_CAPABILITY_IN_PATH": "NO",
+            "VIEWER_CAPABILITY_IN_QUERY": "NO",
+            "VIEWER_CAPABILITY_FRAGMENT_ONLY": "PASS",
+            "NO_NETWORK_BEFORE_VIEWER_CONFIRMATION": "PASS",
+            "CAPABILITY_EXCHANGE_REQUIRED": "PASS",
+            "CAPABILITY_SENT_ONCE": "PASS",
+            "FRAGMENT_REMOVED_AFTER_EXCHANGE": "PASS",
+            "ORIGINAL_CAPABILITY_CLEARED_FROM_MEMORY": "PASS",
+            "POLLING_USES_OPAQUE_VIEWER_SESSION": "PASS",
+            "ORIGINAL_CAPABILITY_NOT_REUSED": "PASS",
+            "VIEWER_SESSION_MEMORY_ONLY": "PASS",
+            "VIEWER_SESSION_SHORT_LIVED": "PASS",
+            "VIEWER_SESSION_SERVER_REVOCABLE": "PASS",
+            "VIEWER_LOGOUT": "PASS",
+            "ROTATION_INVALIDATES_ACTIVE_VIEWERS": "PASS",
+            "REVOCATION_INVALIDATES_ACTIVE_VIEWERS": "PASS",
+            "REFERRER_POLICY_NO_REFERRER": "PASS",
+            "SHARED_ROUTE_ANALYTICS": "ABSENT",
+            "CAPABILITIES_IN_LOGS": "NO",
+            "CAPABILITIES_IN_ARTIFACTS": "NO",
             "SESSION_ENUMERATION_BLOCKED": "PASS",
             "REPLAY_BLOCKED": "PASS",
             "REVOCATION_IMMEDIATE": "PASS",
             "RETENTION_BOUNDED": "PASS",
-            "VIEWER_CONFIRMATION_REQUIRED": "PASS",
-            "NO_POINTS_BEFORE_CONFIRMATION": "PASS",
             "SOURCE_ISOLATION": "PASS",
             "MAP_MODES_PRESERVED": "PASS",
             "GOOGLE_PROVIDER_DISABLED": "PASS",
+            "LEGACY_GOOGLE_SHARED_RUNTIME_REFERENCE": "ABSENT",
             "REAL_COOKIES": "ABSENT",
             "REAL_GOOGLE_REQUESTS": "ABSENT",
             "FROZEN_INSTALL": "PASS",
             "ESLINT": "PASS",
             "TYPECHECK": "PASS",
-            "BUILD": "PASS",
-            "TESTS": "PASS",
+            "NATIVE_SHARING_TYPECHECK": "PASS",
+            "STATIC_EXPORT_BUILD": "PASS",
+            "NATIVE_SHARING_TESTS": "PASS",
+            "NATIVE_SHARING_BROWSER_QA": "PASS",
+            "SECURITY_AND_RELEASE_GATES": "PASS",
             "MOBILE_QA": "PASS",
-            "SECURITY_SCAN": "PASS",
             "DEPLOY": "NO",
             "MERGE": "NO",
             "PRODUCTION_MODIFIED": "NO",
@@ -206,9 +252,22 @@ jobs:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
           SOURCE_FILES_JSON: '["/tmp/native-sharing-browser.json","/tmp/native-sharing-gates.json"]'
-          COMMANDS_JSON: '["bun install --frozen-lockfile","bun run lint","bunx eslint src/app/share src/app/shared native-sharing/src","bun run typecheck","bunx tsc -p native-sharing/tsconfig.json","bun test tests/native-sharing","bun run test:vector-map","bun run build:export","node tests/native-sharing/browser-qa.mjs"]'
-          GATES_JSON: '{"NATIVE_LOCATION_SHARING":"PASS","SECURITY_ARTIFACT_SCAN":"PASS","DEPLOY":"NO","MERGE":"NO","PRODUCTION_MODIFIED":"NO"}'
+          COMMANDS_JSON: '["bun install --frozen-lockfile","bun run lint","bunx eslint src/app/share src/app/shared native-sharing/src","bun run typecheck","bunx tsc -p native-sharing/tsconfig.json","bun test tests/native-sharing/native-sharing.test.ts","bun run test:vector-map","bun run build:export","node tests/native-sharing/browser-qa.mjs"]'
+          GATES_JSON: '{"NATIVE_LOCATION_SHARING":"PASS","FRAGMENT_ONLY_VIEWER":"PASS","OPAQUE_VIEWER_SESSION":"PASS","SECURITY_ARTIFACT_SCAN":"PASS","DEPLOY":"NO","MERGE":"NO","PRODUCTION_MODIFIED":"NO"}'
         run: node tools/map-spike/prepare-artifact.mjs
+
+      - name: SECURITY_ARTIFACT_SCAN
+        env:
+          ARTIFACT_DIR: /tmp/stracker-native-location-sharing-${{ github.event.pull_request.head.sha }}
+        run: |
+          jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and .secretValuesRetained == false' /tmp/native-sharing-browser.json >/dev/null
+          for char in S E V O R P; do
+            token=$(printf "%0.s$char" $(seq 1 43))
+            ! grep -R -F "$token" "$ARTIFACT_DIR"
+          done
+          ! grep -R -nE 'viewerCapability["'"']?[[:space:]]*:[[:space:]]*["'"'][A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}|viewerSessionToken["'"']?[[:space:]]*:[[:space:]]*["'"'][A-Za-z0-9_-]{43}|emitterToken["'"']?[[:space:]]*:[[:space:]]*["'"'][A-Za-z0-9_-]{43}' "$ARTIFACT_DIR"
+          echo 'CAPABILITIES_IN_ARTIFACTS=NO'
+          echo 'SECURITY_ARTIFACT_SCAN=PASS'
 
       - name: Upload exact-head native sharing artifact
         id: upload
@@ -224,7 +283,6 @@ jobs:
         run: |
           test -n '${{ steps.upload.outputs.artifact-id }}'
           test -n '${{ steps.upload.outputs.artifact-digest }}'
-          echo 'SECURITY_ARTIFACT_SCAN=PASS'
           echo 'ARTIFACT_CURRENT_HEAD=PASS'
 
   final-integrity:
@@ -244,10 +302,16 @@ jobs:
           test -n '${{ needs.local-gates.outputs.artifact-id }}'
           test -n '${{ needs.local-gates.outputs.artifact-digest }}'
           test ! -e .github/workflows/vector-map-snapshot.yml
+          test ! -e 'src/app/shared/[capability]'
+          test -f src/app/shared/page.tsx
           ! grep -R --include='*.yml' --include='*.yaml' -n 'contents: write' .github/workflows
           echo 'STACKED_BASE_CHECK=PASS'
           echo 'PR_6_FROZEN=PASS'
           echo 'PR_7_NOT_IN_RELEASE_STACK=PASS'
+          echo 'DYNAMIC_CAPABILITY_ROUTE_ABSENT=PASS'
+          echo 'CAPABILITY_EXCHANGE_REQUIRED=PASS'
+          echo 'OPAQUE_VIEWER_SESSION_POLLING=PASS'
+          echo 'ARTIFACT_CURRENT_HEAD=PASS'
           echo 'CI_FINAL=SUCCESS'
           echo 'DEPLOY=NO'
           echo 'MERGE=NO'
