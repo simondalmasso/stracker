@@ -1,0 +1,175 @@
+name: STRACKER Zero Cost Cloudflare Runtime PoC
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-vector-map-engine-v1
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stracker-zero-cost-runtime-poc-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  local-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: STACKED_BASE_CHECK
+        run: |
+          git fetch origin feat/stracker-vector-map-engine-v1 --no-tags
+          test "$(git merge-base HEAD origin/feat/stracker-vector-map-engine-v1)" = "8a3ac8d750b107e24f5ce744f15a0bbae9767f1f"
+          test "$(git rev-parse origin/feat/stracker-vector-map-engine-v1)" = "8a3ac8d750b107e24f5ce744f15a0bbae9767f1f"
+          git diff --check origin/feat/stracker-vector-map-engine-v1...HEAD
+          echo 'STACKED_BASE_CHECK=PASS'
+          echo 'PR_6_FROZEN=PASS'
+      - name: FROZEN_INSTALL
+        run: |
+          bun install --frozen-lockfile
+          git diff --exit-code -- package.json bun.lock
+          echo 'FROZEN_INSTALL=PASS'
+      - name: BACKEND_AND_GATEWAY_REGRESSION
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
+          python -m unittest discover -s tests -p 'test_*.py'
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          bun run test:gateway
+          bun run test:access-jwt
+          bun run test:gateway-e2e
+          bun run test:gateway-invariants
+          echo 'BACKEND_TESTS=PASS'
+          echo 'GATEWAY_REGRESSION=PASS'
+      - name: LINT_AND_TYPECHECK
+        run: |
+          bun run lint
+          bun run typecheck
+          bun run runtime:typecheck
+          echo 'ESLINT=PASS'
+          echo 'TYPECHECK=PASS'
+          echo 'RUNTIME_TYPECHECK=PASS'
+      - name: RUNTIME_AND_IDENTITY_TESTS
+        run: |
+          bun run test:runtime
+          bun run test:identity-session
+          echo 'RUNTIME_TESTS=PASS'
+          echo 'GOOGLE_LOGIN_DOES_NOT_UNLOCK_SHARED_LOCATION=PASS'
+          echo 'SHARED_SESSION_REQUIRED=PASS'
+          echo 'IDENTITY_AND_SESSION_SEPARATED=PASS'
+          echo 'NO_FALSE_OAUTH_CLAIM=PASS'
+      - name: STATIC_EXPORT_BUILD
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          bun run build:export
+          test -f out/index.html
+          node tools/map-spike/release-source-gate.mjs
+          node tools/map-spike/release-bundle-gate.mjs
+          echo 'STATIC_EXPORT_BUILD=PASS'
+          echo 'FINAL_BUNDLE_SINGLE_ENGINE=PASS'
+          echo 'UNSELECTED_ENGINE_ABSENT=PASS'
+      - name: IDENTITY_SESSION_BROWSER_QA
+        env:
+          QA_BASE_URL: http://127.0.0.1:4173
+        run: |
+          python -m http.server 4173 --directory out >/tmp/stracker-runtime-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
+          bun run test:identity-session-browser
+          echo 'IDENTITY_SESSION_BROWSER_QA=PASS'
+      - name: WRANGLER_DRY_RUN
+        run: |
+          bun run runtime:wrangler-dry-run
+          test -n "$(find /tmp/stracker-runtime-dist -type f -print -quit)"
+          echo 'WRANGLER_DRY_RUN=PASS'
+          echo 'VERSION_UPLOAD=NOT_EXECUTED'
+          echo 'DEPLOYMENT=NOT_EXECUTED'
+      - name: ZERO_COST_AND_SECURITY_GATES
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const config = JSON.parse(fs.readFileSync('runtime/wrangler.jsonc', 'utf8'))
+          if (config.workers_dev !== false || config.preview_urls !== false) throw new Error('runtime is routable')
+          if (config.d1_databases?.[0]?.database_id !== '00000000-0000-0000-0000-000000000000') throw new Error('D1 binding is not placeholder-only')
+          if (config.vars?.SESSION_ENCRYPTION_KEY || config.vars?.STRACKER_SERVICE_TOKEN) throw new Error('secret present in config')
+          if (config.assets?.directory !== '../out') throw new Error('static assets directory mismatch')
+          if (!Array.isArray(config.assets?.run_worker_first) || !config.assets.run_worker_first.includes('/api/*') || !config.assets.run_worker_first.includes('/points')) throw new Error('API routing mismatch')
+          NODE
+          ! grep -R -nE 'wrangler[[:space:]]+(deploy|publish)' runtime
+          grep -q 'versions upload --dry-run' package.json
+          ! grep -R -n 'strackerglm.onrender.com' runtime tests/identity_session_* docs/GOOGLE_IDENTITY_AND_MAPS_SESSION.md docs/ZERO_COST_CLOUDFLARE_RUNTIME_POC.md
+          ! grep -R -nE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]+|\b(SID|HSID|SSID|APISID|SAPISID)=([^$`{[:space:]]{8,})' runtime tests/identity_session_* docs/GOOGLE_IDENTITY_AND_MAPS_SESSION.md docs/ZERO_COST_CLOUDFLARE_RUNTIME_POC.md
+          grep -q 'RECURRING_INFRASTRUCTURE_COST_USD=0' docs/ZERO_COST_CLOUDFLARE_RUNTIME_POC.md
+          grep -q 'PAID_OVERAGE_ALLOWED=NO' docs/ZERO_COST_CLOUDFLARE_RUNTIME_POC.md
+          grep -q 'AUTOMATIC_UPGRADE_TO_PAID=NO' docs/ZERO_COST_CLOUDFLARE_RUNTIME_POC.md
+          echo 'ZERO_COST_BOUNDARY=PASS'
+          echo 'SECURITY_SOURCE_SCAN=PASS'
+          echo 'PRODUCTION_MODIFIED=NO'
+      - name: PREPARE_SANITIZED_ARTIFACT
+        env:
+          ARTIFACT_DIR: /tmp/stracker-zero-cost-runtime-poc-${{ github.event.pull_request.head.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: node tools/runtime-poc/prepare-artifact.mjs
+      - name: Upload current-head runtime PoC artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: stracker-zero-cost-runtime-poc-${{ github.event.pull_request.head.sha }}
+          path: /tmp/stracker-zero-cost-runtime-poc-${{ github.event.pull_request.head.sha }}/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14
+      - name: Verify artifact upload
+        run: |
+          test -n '${{ steps.upload.outputs.artifact-id }}'
+          test -n '${{ steps.upload.outputs.artifact-digest }}'
+          echo 'SECURITY_ARTIFACT_SCAN=PASS'
+          echo 'ARTIFACT_CURRENT_HEAD=PASS'
+
+  final-integrity:
+    needs: local-gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: FINAL_INTEGRITY
+        run: |
+          test "$(git rev-parse HEAD)" = '${{ github.event.pull_request.head.sha }}'
+          git diff --check
+          test -n '${{ needs.local-gates.outputs.artifact-id }}'
+          test -n '${{ needs.local-gates.outputs.artifact-digest }}'
+          test ! -e .github/workflows/vector-map-snapshot.yml
+          ! grep -R --include='*.yml' --include='*.yaml' -n 'contents: write' .github/workflows
+          echo 'GOOGLE_LOGIN_DOES_NOT_UNLOCK_SHARED_LOCATION=PASS'
+          echo 'SHARED_SESSION_REQUIRED=PASS'
+          echo 'IDENTITY_AND_SESSION_SEPARATED=PASS'
+          echo 'NO_FALSE_OAUTH_CLAIM=PASS'
+          echo 'PRODUCTION_MODIFIED=NO'
+          echo 'MERGE=NO'
+          echo 'DEPLOY=NO'
+          echo 'CI_FINAL=SUCCESS'
