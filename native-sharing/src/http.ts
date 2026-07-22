@@ -2,6 +2,7 @@ import type { NativeSharedLocationPoint } from './contracts.js'
 import {
   MAX_CREATE_REQUESTS_PER_MINUTE,
   MAX_EMITTER_REQUESTS_PER_MINUTE,
+  MAX_EXCHANGE_REQUESTS_PER_MINUTE,
   MAX_REQUEST_BODY_BYTES,
   MAX_VIEWER_REQUESTS_PER_MINUTE,
   STORE_TIMEOUT_MS,
@@ -35,6 +36,7 @@ function headers(extra: Record<string, string> = {}): Headers {
     Pragma: 'no-cache',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     ...extra,
   })
 }
@@ -45,6 +47,11 @@ function json(status: number, payload: unknown, extra: Record<string, string> = 
 
 function clientKey(request: Request): string {
   return request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
+}
+
+function bearerToken(request: Request): string {
+  const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('authorization') || '')
+  return match?.[1] || ''
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
@@ -92,6 +99,20 @@ export function createNativeSharingHttp(service: NativeSharingService, limiter: 
           return json(201, await bounded(service.createSession(durationMs)))
         }
 
+        if (request.method === 'POST' && url.pathname === '/api/share/viewer/exchange') {
+          if (!limiter.consume(`exchange:${clientKey(request)}`, MAX_EXCHANGE_REQUESTS_PER_MINUTE, 60_000)) throw new NativeSharingError(429, 'RATE_LIMITED', 'Too many viewer exchange requests.')
+          const body = await readJson(request)
+          if (typeof body.viewerCapability !== 'string') throw new NativeSharingError(400, 'CAPABILITY_REQUIRED', 'Viewer capability is required.')
+          return json(200, await bounded(service.exchangeViewerCapability(body.viewerCapability)))
+        }
+
+        if (request.method === 'POST' && url.pathname === '/api/share/viewer/logout') {
+          const body = await readJson(request)
+          if (typeof body.sessionId !== 'string') throw new NativeSharingError(400, 'SESSION_REQUIRED', 'Session identifier is required.')
+          await bounded(service.logoutViewer(body.sessionId, bearerToken(request)))
+          return json(200, { status: 'ok' })
+        }
+
         const match = /^\/api\/share\/sessions\/([A-Za-z0-9_-]{43})(?:\/(points|status|rotate-viewer))?$/.exec(url.pathname)
         if (!match) throw new NativeSharingError(404, 'NOT_FOUND', 'Resource was not found.')
         const [, sessionId, action] = match
@@ -103,14 +124,12 @@ export function createNativeSharingHttp(service: NativeSharingService, limiter: 
           return json(202, { status: 'ok', point: await bounded(service.appendPoint(sessionId, emitter, body as unknown as NativeSharedLocationPoint)) })
         }
         if (request.method === 'GET' && action === 'status') {
-          const viewer = request.headers.get('x-stracker-viewer') || ''
           if (!limiter.consume(`view:${sessionId}`, MAX_VIEWER_REQUESTS_PER_MINUTE, 60_000)) throw new NativeSharingError(429, 'RATE_LIMITED', 'Viewer rate limit reached.')
-          return json(200, await bounded(service.getStatus(sessionId, viewer)))
+          return json(200, await bounded(service.getStatus(sessionId, bearerToken(request))))
         }
         if (request.method === 'GET' && action === 'points') {
-          const viewer = request.headers.get('x-stracker-viewer') || ''
           if (!limiter.consume(`view:${sessionId}`, MAX_VIEWER_REQUESTS_PER_MINUTE, 60_000)) throw new NativeSharingError(429, 'RATE_LIMITED', 'Viewer rate limit reached.')
-          return json(200, await bounded(service.getPoints(sessionId, viewer)))
+          return json(200, await bounded(service.getPoints(sessionId, bearerToken(request))))
         }
         if (request.method === 'POST' && action === 'rotate-viewer') {
           const emitter = request.headers.get('x-stracker-emitter') || ''
