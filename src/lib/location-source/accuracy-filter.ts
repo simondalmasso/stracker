@@ -36,7 +36,7 @@ const CONFIG: Record<LocationSource, AccuracyFilterConfig> = {
     maximumAccuracyM: 250,
     maximumPlausibleSpeedMps: 70,
   },
-  'google-shared': {
+  'shared-location': {
     minimumDeadZoneM: 8,
     maximumAccuracyM: 5_000,
     maximumPlausibleSpeedMps: 90,
