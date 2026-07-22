@@ -7,11 +7,12 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-function base64ToBytes(value: string): Uint8Array {
+function base64ToArrayBuffer(value: string): ArrayBuffer {
   const binary = atob(value)
-  const bytes = new Uint8Array(binary.length)
+  const buffer = new ArrayBuffer(binary.length)
+  const bytes = new Uint8Array(buffer)
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
-  return bytes
+  return buffer
 }
 
 async function deriveAesKey(secret: string): Promise<CryptoKey> {
@@ -53,12 +54,12 @@ export async function decryptSession(
   const plaintext = await crypto.subtle.decrypt(
     {
       name: 'AES-GCM',
-      iv: base64ToBytes(ivB64),
+      iv: base64ToArrayBuffer(ivB64),
       additionalData,
       tagLength: 128,
     },
     key,
-    base64ToBytes(ciphertextB64),
+    base64ToArrayBuffer(ciphertextB64),
   )
   return decoder.decode(plaintext)
 }
