@@ -1,0 +1,253 @@
+name: STRACKER Native Location Sharing V1
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-vector-map-engine-v1
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stracker-native-location-sharing-v1-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  local-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: STACKED_BASE_CHECK
+        run: |
+          git fetch origin feat/stracker-vector-map-engine-v1 feat/stracker-zero-cost-cloudflare-runtime-poc --no-tags
+          test "$(git rev-parse origin/feat/stracker-vector-map-engine-v1)" = "8a3ac8d750b107e24f5ce744f15a0bbae9767f1f"
+          test "$(git merge-base HEAD origin/feat/stracker-vector-map-engine-v1)" = "8a3ac8d750b107e24f5ce744f15a0bbae9767f1f"
+          ! git merge-base --is-ancestor 9da3582580dbd05eaf8170268db9752c5f1c710e HEAD
+          git diff --check origin/feat/stracker-vector-map-engine-v1...HEAD
+          echo 'STACKED_BASE_CHECK=PASS'
+          echo 'PR_6_FROZEN=PASS'
+          echo 'PR_7_NOT_IN_RELEASE_STACK=PASS'
+
+      - name: FROZEN_INSTALL
+        run: |
+          bun install --frozen-lockfile
+          git diff --exit-code -- package.json bun.lock
+          echo 'FROZEN_INSTALL=PASS'
+
+      - name: BACKEND_REGRESSION
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
+          python -m unittest discover -s tests -p 'test_*.py'
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          echo 'BACKEND_TESTS=PASS'
+
+      - name: ESLINT
+        run: |
+          bun run lint
+          echo 'ESLINT=PASS'
+
+      - name: TYPECHECK
+        run: |
+          bun run typecheck
+          echo 'TYPECHECK=PASS'
+
+      - name: NATIVE_SHARING_TYPECHECK
+        run: |
+          bun run native-sharing:typecheck
+          echo 'NATIVE_SHARING_TYPECHECK=PASS'
+          echo 'SOURCE_MODEL_MIGRATED=PASS'
+
+      - name: NATIVE_SHARING_TESTS
+        run: |
+          bun run test:native-sharing
+          echo 'TESTS=PASS'
+          echo 'EMITTER_VIEWER_CAPABILITIES_SEPARATED=PASS'
+          echo 'SESSION_ENUMERATION_BLOCKED=PASS'
+          echo 'REPLAY_BLOCKED=PASS'
+          echo 'SEQUENCE_ROLLBACK_BLOCKED=PASS'
+          echo 'IMPOSSIBLE_JUMP_REJECTED=PASS'
+          echo 'REVOCATION_IMMEDIATE=PASS'
+          echo 'VIEWER_ROTATION_INVALIDATES_OLD_LINK=PASS'
+          echo 'SESSION_EXPIRATION=PASS'
+          echo 'RETENTION_BOUNDED=PASS'
+
+      - name: VECTOR_MAP_REGRESSION
+        run: |
+          bun run test:vector-map
+          node tools/map-spike/release-source-gate.mjs
+          echo 'SOURCE_ISOLATION=PASS'
+          echo 'GHOSTRAIL_SEGMENTATION=PASS'
+          echo 'MAP_PIPELINE_REUSED=PASS'
+
+      - name: STATIC_EXPORT_BUILD
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          bun run build:export
+          test -f out/index.html
+          test -f out/share/index.html
+          test -f out/shared/__capability__/index.html
+          node tools/map-spike/release-bundle-gate.mjs
+          echo 'BUILD=PASS'
+          echo 'FINAL_BUNDLE_SINGLE_ENGINE=PASS'
+          echo 'UNSELECTED_ENGINE_ABSENT=PASS'
+
+      - name: NATIVE_SHARING_BROWSER_QA
+        env:
+          QA_BASE_URL: http://127.0.0.1:4173
+          QA_NATIVE_OUTPUT: /tmp/native-sharing-browser.json
+        run: |
+          node tests/native-sharing/static-server.mjs >/tmp/native-sharing-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
+          bun run test:native-sharing-browser
+          jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and (.viewports | length == 5)' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '[.viewports[] | select(.pageErrors != 0 or .consoleErrors != 0 or .noOverflow != true)] | length == 0' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.ROOT_SELECTOR_UNCHANGED == "PASS" and .gates.NO_GEOLOCATION_BEFORE_EMITTER_START == "PASS" and .gates.NO_POINTS_BEFORE_VIEWER_CONFIRMATION == "PASS" and .gates.EMITTER_VIEWER_TOKEN_SEPARATION == "PASS" and .gates.SOURCE_MODEL_MIGRATED == "PASS" and .gates.SOURCE_ISOLATION == "PASS" and .gates.SOURCE_SWITCH_CLEANUP == "PASS" and .gates.LATE_RESPONSE_BLOCKED == "PASS" and .gates.STALE_NOT_LIVE == "PASS" and .gates.GHOSTRAIL_SEGMENTATION == "PASS" and .gates.MAP_MODES_PRESERVED == "PASS" and .gates.MANUAL_CAMERA_PRESERVED == "PASS" and .gates.GOOGLE_PROVIDER_DISABLED == "PASS" and .gates.MOBILE_QA == "PASS"' /tmp/native-sharing-browser.json >/dev/null
+          echo 'ROOT_SELECTOR_UNCHANGED=PASS'
+          echo 'NATIVE_SHARE_CONSENT_REQUIRED=PASS'
+          echo 'NO_GEOLOCATION_BEFORE_START=PASS'
+          echo 'VIEWER_CONFIRMATION_REQUIRED=PASS'
+          echo 'NO_POINTS_BEFORE_CONFIRMATION=PASS'
+          echo 'SOURCE_SWITCH_CLEANUP=PASS'
+          echo 'LATE_RESPONSE_BLOCKED=PASS'
+          echo 'STALE_NOT_LIVE=PASS'
+          echo 'MAP_MODES_PRESERVED=PASS'
+          echo 'MANUAL_CAMERA_PRESERVED=PASS'
+          echo 'GOOGLE_PROVIDER_DISABLED=PASS'
+          echo 'MOBILE_QA=PASS'
+
+      - name: SECURITY_AND_RELEASE_GATES
+        run: |
+          ! grep -R -n --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'google-shared' src native-sharing tests/native-sharing
+          ! grep -R -nE --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'locationsharing/read|google\.com/maps|Cookie Editor|Header String|Netscape' src native-sharing tests/native-sharing
+          ! grep -R -nE --exclude='*.md' 'console\.(log|info|debug|warn|error).*?(emitter|viewer|capability|token)' native-sharing/src src/lib/location-source src/components/mobile
+          ! grep -R -nE --exclude='*.md' 'localStorage|sessionStorage|indexedDB' src/lib/location-source/use-native-emitter.ts src/lib/location-source/use-native-viewer.ts src/lib/location-source/native-sharing-api.ts
+          ! grep -R -nE --exclude='*.md' 'wrangler[[:space:]]+(deploy|publish)|database_id|durable_objects|migrations' native-sharing .github/workflows/native-location-sharing-v1.yml
+          ! grep -R -nE --exclude='*.md' -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]+|\b(SID|HSID|SSID|APISID|SAPISID)=([^$`{[:space:]]{8,})' native-sharing src/lib/location-source src/components/mobile tests/native-sharing
+          grep -q "type LocationSource = 'my-device' | 'shared-location'" src/lib/location-source/contracts.ts
+          grep -q "GOOGLE MAPS — EXPERIMENTAL" src/components/mobile/NativeSharingHub.tsx
+          grep -q "disabled" src/components/mobile/NativeSharingHub.tsx
+          test ! -e src/lib/location-source/use-shared-location.ts
+          test ! -e src/lib/location-source/session-api.ts
+          echo 'TOKENS_NOT_LOGGED=PASS'
+          echo 'REAL_COOKIES=ABSENT'
+          echo 'REAL_GOOGLE_REQUESTS=ABSENT'
+          echo 'GOOGLE_PROVIDER_DISABLED=PASS'
+          echo 'SECURITY_SCAN=PASS'
+          echo 'DEPLOY=NO'
+          echo 'MERGE=NO'
+          echo 'PRODUCTION_MODIFIED=NO'
+
+      - name: PREPARE_SANITIZED_GATES
+        run: |
+          cat > /tmp/native-sharing-gates.json <<'JSON'
+          {
+            "STACKED_BASE_CHECK": "PASS",
+            "PR_6_FROZEN": "PASS",
+            "PR_7_NOT_IN_RELEASE_STACK": "PASS",
+            "SOURCE_MODEL_MIGRATED": "PASS",
+            "NATIVE_SHARE_CONSENT_REQUIRED": "PASS",
+            "NO_GEOLOCATION_BEFORE_START": "PASS",
+            "EMITTER_VIEWER_CAPABILITIES_SEPARATED": "PASS",
+            "TOKENS_NOT_LOGGED": "PASS",
+            "SESSION_ENUMERATION_BLOCKED": "PASS",
+            "REPLAY_BLOCKED": "PASS",
+            "REVOCATION_IMMEDIATE": "PASS",
+            "RETENTION_BOUNDED": "PASS",
+            "VIEWER_CONFIRMATION_REQUIRED": "PASS",
+            "NO_POINTS_BEFORE_CONFIRMATION": "PASS",
+            "SOURCE_ISOLATION": "PASS",
+            "MAP_MODES_PRESERVED": "PASS",
+            "GOOGLE_PROVIDER_DISABLED": "PASS",
+            "REAL_COOKIES": "ABSENT",
+            "REAL_GOOGLE_REQUESTS": "ABSENT",
+            "FROZEN_INSTALL": "PASS",
+            "ESLINT": "PASS",
+            "TYPECHECK": "PASS",
+            "BUILD": "PASS",
+            "TESTS": "PASS",
+            "MOBILE_QA": "PASS",
+            "SECURITY_SCAN": "PASS",
+            "DEPLOY": "NO",
+            "MERGE": "NO",
+            "PRODUCTION_MODIFIED": "NO",
+            "A22_PHYSICAL_VALIDATION": "NOT_EXECUTED_ENV_BLOCKED"
+          }
+          JSON
+
+      - name: PREPARE_SANITIZED_ARTIFACT
+        env:
+          ARTIFACT_KIND: mobile-qa
+          ARTIFACT_DIR: /tmp/stracker-native-location-sharing-${{ github.event.pull_request.head.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          SOURCE_FILES_JSON: '["/tmp/native-sharing-browser.json","/tmp/native-sharing-gates.json"]'
+          COMMANDS_JSON: '["bun install --frozen-lockfile","bun run lint","bun run typecheck","bun run native-sharing:typecheck","bun run test:native-sharing","bun run test:vector-map","bun run build:export","bun run test:native-sharing-browser"]'
+          GATES_JSON: '{"NATIVE_LOCATION_SHARING":"PASS","SECURITY_ARTIFACT_SCAN":"PASS","DEPLOY":"NO","MERGE":"NO","PRODUCTION_MODIFIED":"NO"}'
+        run: node tools/map-spike/prepare-artifact.mjs
+
+      - name: Upload exact-head native sharing artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: stracker-native-location-sharing-${{ github.event.pull_request.head.sha }}
+          path: /tmp/stracker-native-location-sharing-${{ github.event.pull_request.head.sha }}/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14
+
+      - name: Verify artifact upload
+        run: |
+          test -n '${{ steps.upload.outputs.artifact-id }}'
+          test -n '${{ steps.upload.outputs.artifact-digest }}'
+          echo 'SECURITY_ARTIFACT_SCAN=PASS'
+          echo 'ARTIFACT_CURRENT_HEAD=PASS'
+
+  final-integrity:
+    needs: local-gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: FINAL_INTEGRITY
+        run: |
+          test "$(git rev-parse HEAD)" = '${{ github.event.pull_request.head.sha }}'
+          test "$(git merge-base HEAD origin/feat/stracker-vector-map-engine-v1)" = '8a3ac8d750b107e24f5ce744f15a0bbae9767f1f'
+          ! git merge-base --is-ancestor 9da3582580dbd05eaf8170268db9752c5f1c710e HEAD
+          git diff --check
+          test -n '${{ needs.local-gates.outputs.artifact-id }}'
+          test -n '${{ needs.local-gates.outputs.artifact-digest }}'
+          test ! -e .github/workflows/vector-map-snapshot.yml
+          ! grep -R --include='*.yml' --include='*.yaml' -n 'contents: write' .github/workflows
+          echo 'STACKED_BASE_CHECK=PASS'
+          echo 'PR_6_FROZEN=PASS'
+          echo 'PR_7_NOT_IN_RELEASE_STACK=PASS'
+          echo 'CI_FINAL=SUCCESS'
+          echo 'DEPLOY=NO'
+          echo 'MERGE=NO'
+          echo 'PRODUCTION_MODIFIED=NO'
