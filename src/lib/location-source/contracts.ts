@@ -1,4 +1,12 @@
 export type LocationSource = 'my-device' | 'google-shared'
+export type GoogleIdentityState = 'access-required' | 'authenticated' | 'expired' | 'revoked'
+export type GoogleMapsSessionLinkState =
+  | 'not-linked'
+  | 'validating'
+  | 'linked'
+  | 'expired'
+  | 'rejected'
+  | 'google-unavailable'
 export type MotionState = 'unknown' | 'stationary' | 'moving'
 export type FreshnessState = 'unknown' | 'fresh' | 'stale' | 'expired'
 export type SourceHealth = 'unknown' | 'receiving' | 'degraded' | 'unreachable'
