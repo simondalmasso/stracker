@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { ChevronLeft, Copy, Link2, Radio, RotateCcw, ShieldAlert, Square } from 'lucide-react'
+import { viewerFragmentLink } from '@/lib/location-source/native-sharing-api'
 import { useNativeEmitter } from '@/lib/location-source/use-native-emitter'
 
 const DURATIONS = [
@@ -32,7 +33,7 @@ export default function NativeEmitterApp() {
   const link = useMemo(() => {
     if (!emitter.session) return null
     const origin = typeof window === 'undefined' ? '' : window.location.origin
-    return `${origin}/shared/${emitter.session.viewerCapability}`
+    return viewerFragmentLink(emitter.session.viewerCapability, origin)
   }, [emitter.session])
   const started = emitter.state !== 'not-started' && emitter.state !== 'requesting-permission' && emitter.session !== null
 
@@ -77,7 +78,7 @@ export default function NativeEmitterApp() {
                 <div className="flex items-center gap-2 text-xs font-semibold text-white/45"><Link2 size={15} />ENLACE PRIVADO</div>
                 <input readOnly value={link} aria-label="Enlace privado de espectador" className="mt-3 min-h-12 w-full rounded-2xl border border-white/10 bg-black px-3 font-mono text-xs" />
                 <button type="button" onClick={() => void copy()} className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-white text-sm font-semibold text-black"><Copy size={17} />{copied ? 'COPIADO' : 'COPIAR ENLACE'}</button>
-                <p className="mt-3 text-xs leading-5 text-white/40">El token de emisión permanece sólo en memoria y nunca forma parte del enlace.</p>
+                <p className="mt-3 text-xs leading-5 text-white/40">La capacidad viewer queda sólo en el fragmento `#v=` y no se envía en la solicitud HTTP inicial. El token de emisión nunca forma parte del enlace.</p>
               </section>
             ) : null}
             {emitter.error ? <p role="alert" className="mt-3 rounded-2xl border border-white/10 p-4 text-sm">{emitter.error}</p> : null}
