@@ -61,7 +61,23 @@ FIRST_INTERMEDIATE_GREEN_RUN=29980429089
 FIRST_INTERMEDIATE_GREEN_CONCLUSION=success
 ```
 
-This run is evidence only for that exact SHA. The helper and documentation reconciliation that follow require a new full pipeline and must not reuse run `29980429089` as evidence for their new SHA.
+This run is evidence only for that exact SHA.
+
+## Second intermediate green baseline
+
+The helper and canonical-document reconciliation completed on an exact second intermediate baseline:
+
+```text
+SECOND_INTERMEDIATE_GREEN_HEAD=7f91ca6a822107a1e242267c8c2c56da1923118c
+SECOND_INTERMEDIATE_GREEN_RUN=29981034009
+SECOND_INTERMEDIATE_GREEN_CONCLUSION=success
+
+CURRENT_HELPER_AND_DOCS_PIPELINE=PASS
+BOUNDED_TRANCHE_STATUS=COMPLETE
+BOUNDED_TRANCHE_CANONICALLY_RECONCILED=YES
+```
+
+Run `29981034009` is evidence only for exact SHA `7f91ca6a822107a1e242267c8c2c56da1923118c`. No dynamic SHA or run marker is required in this document for later documentation-only commits.
 
 ## Canonical product boundary
 
@@ -346,10 +362,12 @@ ALARM_CLEANUP_VERIFICATION_FAILURE
 
 The Bun SQLite adapter remains Level 1 unit/adapter evidence only. It is not called Worker SQLite E2E.
 
-The helper and documentation changes after the first intermediate green baseline require a second full pipeline on their exact new SHA. Until that run succeeds:
+The helper and documentation reconciliation passed a second full pipeline on exact SHA `7f91ca6a822107a1e242267c8c2c56da1923118c` in run `29981034009`:
 
 ```text
-CURRENT_HELPER_AND_DOCS_PIPELINE=PENDING_NEW_HEAD_CI
+CURRENT_HELPER_AND_DOCS_PIPELINE=PASS
+BOUNDED_TRANCHE_STATUS=COMPLETE
+BOUNDED_TRANCHE_CANONICALLY_RECONCILED=YES
 PR_9_TECHNICALLY_READY=NO
 ```
 
@@ -401,7 +419,6 @@ LIVE_INFRASTRUCTURE=NO
 ## Open risks
 
 ```text
-SECOND_EXACT_HEAD_PIPELINE=PENDING
 FINAL_BROWSER_QA=NOT_EXECUTED
 FINAL_SIX_FILE_ARTIFACT=NOT_CREATED
 PR_9_TECHNICALLY_READY=NO
@@ -410,4 +427,6 @@ A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
 
 ## Next exact step
 
-Run the complete intermediate Phase B pipeline on the exact helper-and-documentation reconciliation HEAD. Do not reuse run `29980429089` as evidence for that new SHA. Do not start quota, incremental polling, timeout/idempotency, final Browser QA or final artifact work without a new decision.
+```text
+NEXT_EXACT_STEP=AWAIT_NEW_JEFATURA_TRANCHE_DECISION
+```

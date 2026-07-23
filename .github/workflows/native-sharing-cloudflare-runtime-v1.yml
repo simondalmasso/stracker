@@ -137,11 +137,21 @@ jobs:
               'PR_9_TECHNICALLY_READY=NO',
               'FINAL_ARTIFACT=NO',
               'CURRENT_REWORK=EXPORTS_SQLITE_ATOMICITY_WORKERD',
+              'SECOND_INTERMEDIATE_GREEN_HEAD=7f91ca6a822107a1e242267c8c2c56da1923118c',
+              'SECOND_INTERMEDIATE_GREEN_RUN=29981034009',
+              'SECOND_INTERMEDIATE_GREEN_CONCLUSION=success',
+              'CURRENT_HELPER_AND_DOCS_PIPELINE=PASS',
+              'BOUNDED_TRANCHE_STATUS=COMPLETE',
           }
           missing = sorted(required.difference(text.splitlines()))
           if missing:
               raise SystemExit('STATE_TRUTH_MISSING')
-          forbidden = ('new_sqlite_classes migration', '\npoints\nviewer_sessions')
+          forbidden = (
+              'new_sqlite_classes migration',
+              '\npoints\nviewer_sessions',
+              'CURRENT_HELPER_AND_DOCS_PIPELINE=PENDING_NEW_HEAD_CI',
+              'SECOND_EXACT_HEAD_PIPELINE=PENDING',
+          )
           if any(value in text for value in forbidden):
               raise SystemExit('STATE_TRUTH_OBSOLETE')
           PY
