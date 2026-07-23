@@ -19,12 +19,12 @@
       }
     ]
   },
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["NativeSharingDurableObject"]
+  "exports": {
+    "NativeSharingDurableObject": {
+      "type": "durable-object",
+      "storage": "sqlite"
     }
-  ],
+  },
   "observability": {
     "enabled": false
   }
