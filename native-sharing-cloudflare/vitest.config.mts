@@ -17,7 +17,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ['tests/native-sharing-cloudflare/workerd-*.test.ts'],
+    include: ['tests/native-sharing-cloudflare/workerd-atomicity.test.ts'],
     testTimeout: 30_000,
   },
 })

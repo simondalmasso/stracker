@@ -19,6 +19,12 @@ function sqlExecutor(storage: DurableObjectStorage): RuntimeSqlExecutor {
     exec<T extends RuntimeSqlRow = RuntimeSqlRow>(query: string, ...bindings: RuntimeSqlValue[]) {
       return storage.sql.exec<T>(query, ...bindings)
     },
+    logicalRowsWritten(): number {
+      const row = storage.sql.exec<{ logical_rows_written: number }>(
+        'SELECT changes() AS logical_rows_written',
+      ).toArray()[0]
+      return Number(row?.logical_rows_written ?? 0)
+    },
     transactionSync<T>(callback: () => T): T {
       return storage.transactionSync(callback)
     },

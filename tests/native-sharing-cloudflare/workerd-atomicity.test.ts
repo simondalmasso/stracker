@@ -75,7 +75,7 @@ async function countRows(character: string, table: string): Promise<number> {
 }
 
 describe('Phase B workerd SQLite proof', () => {
-  test('EXPORTS_CONFIG_LOADS and SQLITE_SCHEMA_EXISTS', async () => {
+  test('WORKERD_SQLITE_SCHEMA_EXISTS', async () => {
     const object = stub('A')
     expect((await object.createSession(await sessionFixture('A'))).ok).toBe(true)
 

@@ -35,6 +35,13 @@ export class BunSqlExecutor implements RuntimeSqlExecutor {
     return new TestSqlCursor<T>([], 0, Number(result.changes))
   }
 
+  logicalRowsWritten(): number {
+    const row = this.database.query(
+      'SELECT changes() AS logical_rows_written',
+    ).get() as { logical_rows_written: number }
+    return Number(row.logical_rows_written)
+  }
+
   transactionSync<T>(callback: () => T): T {
     return this.database.transaction(callback)()
   }

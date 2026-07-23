@@ -26,6 +26,7 @@ export interface RuntimeSqlCursor<T extends RuntimeSqlRow> {
 }
 export interface RuntimeSqlExecutor {
   exec<T extends RuntimeSqlRow = RuntimeSqlRow>(query: string, ...bindings: RuntimeSqlValue[]): RuntimeSqlCursor<T>
+  logicalRowsWritten(): number
   transactionSync<T>(callback: () => T): T
 }
 
@@ -131,9 +132,12 @@ function count(cursor: RuntimeSqlCursor<RuntimeSqlRow & { count: number }>): num
   return Number(one(cursor)?.count ?? 0)
 }
 
-function completedRowsWritten(cursor: RuntimeSqlCursor<RuntimeSqlRow>): number {
+function completedLogicalRowsWritten(
+  cursor: RuntimeSqlCursor<RuntimeSqlRow>,
+  sql: RuntimeSqlExecutor,
+): number {
   cursor.toArray()
-  return cursor.rowsWritten
+  return sql.logicalRowsWritten()
 }
 
 export class SqliteNativeSharingStore implements NativeSharingStore {
@@ -209,14 +213,14 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
         session.lastReceivedAt,
         session.pointCount,
       )
-      if (completedRowsWritten(inserted) !== 1) throw new NativeSharingStoreFault('SESSION_CREATE_FAILED')
+      if (completedLogicalRowsWritten(inserted, this.sql) !== 1) throw new NativeSharingStoreFault('SESSION_CREATE_FAILED')
       const sequenceState = this.sql.exec(
         `INSERT INTO rate_or_sequence_state (state_key, last_sequence, updated_at)
          VALUES ('point-sequence', ?, ?)`,
         session.lastSequence,
         session.createdAt,
       )
-      if (completedRowsWritten(sequenceState) !== 1) throw new NativeSharingStoreFault('SESSION_CREATE_FAILED')
+      if (completedLogicalRowsWritten(sequenceState, this.sql) !== 1) throw new NativeSharingStoreFault('SESSION_CREATE_FAILED')
       return structuredClone(session)
     })
   }
@@ -257,7 +261,7 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
         expectedLastSequence,
         MAX_POINTS_PER_SESSION,
       )
-      if (completedRowsWritten(updated) !== 1) throw new NativeSharingStoreFault('SEQUENCE_RACE')
+      if (completedLogicalRowsWritten(updated, this.sql) !== 1) throw new NativeSharingStoreFault('SEQUENCE_RACE')
 
       const sequenceUpdated = this.sql.exec(
         `UPDATE rate_or_sequence_state SET last_sequence = ?, updated_at = ?
@@ -266,7 +270,7 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
         point.receivedAt,
         expectedLastSequence,
       )
-      if (completedRowsWritten(sequenceUpdated) !== 1) throw new NativeSharingStoreFault('SEQUENCE_RACE')
+      if (completedLogicalRowsWritten(sequenceUpdated, this.sql) !== 1) throw new NativeSharingStoreFault('SEQUENCE_RACE')
 
       const inserted = this.sql.exec(
         `INSERT INTO accepted_points (
@@ -283,7 +287,7 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
         point.receivedAt,
         segmentIndex,
       )
-      if (completedRowsWritten(inserted) !== 1) throw new NativeSharingStoreFault('POINT_INSERT_FAILED')
+      if (completedLogicalRowsWritten(inserted, this.sql) !== 1) throw new NativeSharingStoreFault('POINT_INSERT_FAILED')
 
       const updatedRow = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session WHERE id = ? LIMIT 1', sessionId))
       if (!updatedRow) throw new NativeSharingStoreFault('SESSION_NOT_FOUND')
@@ -355,7 +359,7 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
         viewerSession.expiresAt,
         viewerSession.revokedAt,
       )
-      if (completedRowsWritten(inserted) !== 1) throw new NativeSharingStoreFault('VIEWER_SESSION_CREATE_FAILED')
+      if (completedLogicalRowsWritten(inserted, this.sql) !== 1) throw new NativeSharingStoreFault('VIEWER_SESSION_CREATE_FAILED')
       return structuredClone(viewerSession)
     })
   }
@@ -377,7 +381,7 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
       sessionId,
       tokenVerifier,
     )
-    return completedRowsWritten(updated) === 1
+    return completedLogicalRowsWritten(updated, this.sql) === 1
   }
 
   async revokeAllViewerSessions(sessionId: string, revokedAt: string): Promise<number> {
@@ -386,7 +390,7 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
       revokedAt,
       sessionId,
     )
-    return completedRowsWritten(updated)
+    return completedLogicalRowsWritten(updated, this.sql)
   }
 
   async revokeSession(sessionId: string, revokedAt: string): Promise<NativeSharingSession | null> {
@@ -399,7 +403,7 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
         revokedAt,
         sessionId,
       )
-      if (completedRowsWritten(updated) !== 1) throw new NativeSharingStoreFault('SESSION_REVOKE_FAILED')
+      if (completedLogicalRowsWritten(updated, this.sql) !== 1) throw new NativeSharingStoreFault('SESSION_REVOKE_FAILED')
       this.sql.exec(
         'UPDATE viewer_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE sharing_session_id = ? AND revoked_at IS NULL',
         revokedAt,
@@ -422,7 +426,7 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
         sessionId,
         row.viewer_generation,
       )
-      if (completedRowsWritten(updated) !== 1) throw new NativeSharingStoreFault('VIEWER_ROTATION_RACE')
+      if (completedLogicalRowsWritten(updated, this.sql) !== 1) throw new NativeSharingStoreFault('VIEWER_ROTATION_RACE')
       this.sql.exec(
         'UPDATE viewer_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE sharing_session_id = ? AND revoked_at IS NULL',
         revokedAt,
