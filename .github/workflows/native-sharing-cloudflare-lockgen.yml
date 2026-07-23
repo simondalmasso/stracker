@@ -7,7 +7,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   lockgen:
@@ -17,20 +17,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.4
-      - name: Generate lockfile
-        run: bun install --lockfile-only
-      - name: Verify requested packages
+      - name: Generate exact lockfile
         run: |
-          grep -q '"vitest"' package.json
-          grep -q '"@cloudflare/vitest-pool-workers"' package.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-sharing-cloudflare-lock-${{ github.event.pull_request.head.sha }}
-          path: |
-            package.json
-            bun.lock
-          if-no-files-found: error
-          retention-days: 1
+          cp package.json /tmp/package.before.json
+          bun install --lockfile-only
+          cmp package.json /tmp/package.before.json
+          test "$(git diff --name-only | sort)" = 'bun.lock'
+          grep -q '"tw-animate-css": "\^1.3.5"' package.json
+          grep -q '"@cloudflare/vitest-pool-workers": "\^0.16.20"' package.json
+          grep -q '"vitest": "\^4.1.0"' package.json
+      - name: Commit lockfile linearly
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git fetch origin "$HEAD_BRANCH" --no-tags
+          test "$(git rev-parse origin/$HEAD_BRANCH)" = "$EXPECTED_HEAD"
+          git config user.name 'stracker-ci'
+          git config user.email 'stracker-ci@users.noreply.github.com'
+          git add bun.lock
+          git commit -m 'build: synchronize Phase B Bun lockfile'
+          git push origin "HEAD:$HEAD_BRANCH"
