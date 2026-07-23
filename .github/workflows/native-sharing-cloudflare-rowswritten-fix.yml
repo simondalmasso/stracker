@@ -34,7 +34,6 @@ jobs:
                   raise SystemExit('count helper marker missing')
               text = text.replace(marker, helper)
           text = re.sub(r'\b([A-Za-z][A-Za-z0-9_]*)\.rowsWritten\b', r'completedRowsWritten(\1)', text)
-          # Restore the helper's own direct property read after the generic replacement.
           text = text.replace('return completedRowsWritten(cursor)', 'return cursor.rowsWritten')
           path.write_text(text)
 
@@ -46,11 +45,15 @@ jobs:
           runtime_test.write_text(test_text)
           PY
           git diff --check
-          git diff --exit-code --quiet && exit 0
+          if git diff --quiet; then
+            echo 'No cursor-consumption changes required.'
+            exit 0
+          fi
       - name: Commit linear correction
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
+          if git diff --quiet; then exit 0; fi
           git config user.name 'stracker-ci'
           git config user.email 'stracker-ci@users.noreply.github.com'
           git add native-sharing-cloudflare/src/sqlite-store.ts tests/native-sharing-cloudflare/runtime.test.ts
