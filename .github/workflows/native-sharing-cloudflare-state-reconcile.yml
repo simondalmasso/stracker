@@ -30,19 +30,53 @@ jobs:
           state = state_path.read_text(encoding='utf-8')
 
           first_note = "This run is evidence only for that exact SHA. The helper and documentation reconciliation that follow require a new full pipeline and must not reuse run `29980429089` as evidence for their new SHA."
-          second_block = """This run is evidence only for that exact SHA.\n\n## Second intermediate green baseline\n\nThe helper and canonical-document reconciliation completed on an exact second intermediate baseline:\n\n```text\nSECOND_INTERMEDIATE_GREEN_HEAD=7f91ca6a822107a1e242267c8c2c56da1923118c\nSECOND_INTERMEDIATE_GREEN_RUN=29981034009\nSECOND_INTERMEDIATE_GREEN_CONCLUSION=success\n\nCURRENT_HELPER_AND_DOCS_PIPELINE=PASS\nBOUNDED_TRANCHE_STATUS=COMPLETE\nBOUNDED_TRANCHE_CANONICALLY_RECONCILED=YES\n```\n\nRun `29981034009` is evidence only for exact SHA `7f91ca6a822107a1e242267c8c2c56da1923118c`. No dynamic SHA or run marker is required in this document for later documentation-only commits."""
+          second_block = """This run is evidence only for that exact SHA.
+
+## Second intermediate green baseline
+
+The helper and canonical-document reconciliation completed on an exact second intermediate baseline:
+
+```text
+SECOND_INTERMEDIATE_GREEN_HEAD=7f91ca6a822107a1e242267c8c2c56da1923118c
+SECOND_INTERMEDIATE_GREEN_RUN=29981034009
+SECOND_INTERMEDIATE_GREEN_CONCLUSION=success
+
+CURRENT_HELPER_AND_DOCS_PIPELINE=PASS
+BOUNDED_TRANCHE_STATUS=COMPLETE
+BOUNDED_TRANCHE_CANONICALLY_RECONCILED=YES
+```
+
+Run `29981034009` is evidence only for exact SHA `7f91ca6a822107a1e242267c8c2c56da1923118c`. No dynamic SHA or run marker is required in this document for later documentation-only commits."""
           if first_note not in state:
               raise SystemExit('FIRST_INTERMEDIATE_NOTE_MISSING')
           state = state.replace(first_note, second_block, 1)
+          state = state.replace(
+              "The helper and documentation changes after the first intermediate green baseline require a second full pipeline on their exact new SHA. Until that run succeeds:\n\n```text\nCURRENT_HELPER_AND_DOCS_PIPELINE=PENDING_NEW_HEAD_CI\nPR_9_TECHNICALLY_READY=NO\n```",
+              "The helper and documentation reconciliation passed a second full pipeline on exact SHA `7f91ca6a822107a1e242267c8c2c56da1923118c` in run `29981034009`:\n\n```text\nCURRENT_HELPER_AND_DOCS_PIPELINE=PASS\nBOUNDED_TRANCHE_STATUS=COMPLETE\nBOUNDED_TRANCHE_CANONICALLY_RECONCILED=YES\nPR_9_TECHNICALLY_READY=NO\n```",
+          )
           state = state.replace('CURRENT_HELPER_AND_DOCS_PIPELINE=PENDING_NEW_HEAD_CI', 'CURRENT_HELPER_AND_DOCS_PIPELINE=PASS')
           state = state.replace('SECOND_EXACT_HEAD_PIPELINE=PENDING\n', '')
 
-          tail = """## Open risks\n\n```text\nFINAL_BROWSER_QA=NOT_EXECUTED\nFINAL_SIX_FILE_ARTIFACT=NOT_CREATED\nPR_9_TECHNICALLY_READY=NO\nA22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED\n```\n\n## Next exact step\n\n```text\nNEXT_EXACT_STEP=AWAIT_NEW_JEFATURA_TRANCHE_DECISION\n```\n"""
+          tail = """## Open risks
+
+```text
+FINAL_BROWSER_QA=NOT_EXECUTED
+FINAL_SIX_FILE_ARTIFACT=NOT_CREATED
+PR_9_TECHNICALLY_READY=NO
+A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
+```
+
+## Next exact step
+
+```text
+NEXT_EXACT_STEP=AWAIT_NEW_JEFATURA_TRANCHE_DECISION
+```
+"""
           state, count = re.subn(r'## Open risks\n.*\Z', tail, state, count=1, flags=re.S)
           if count != 1:
               raise SystemExit('OPEN_RISKS_SECTION_MISSING')
 
-          required_state = {
+          required = {
               'SECOND_INTERMEDIATE_GREEN_HEAD=7f91ca6a822107a1e242267c8c2c56da1923118c',
               'SECOND_INTERMEDIATE_GREEN_RUN=29981034009',
               'SECOND_INTERMEDIATE_GREEN_CONCLUSION=success',
@@ -52,7 +86,7 @@ jobs:
               'NEXT_EXACT_STEP=AWAIT_NEW_JEFATURA_TRANCHE_DECISION',
           }
           lines = set(state.splitlines())
-          if required_state.difference(lines):
+          if required.difference(lines):
               raise SystemExit('RECONCILED_STATE_MISSING')
           for forbidden in (
               'CURRENT_HELPER_AND_DOCS_PIPELINE=PENDING_NEW_HEAD_CI',
@@ -61,34 +95,16 @@ jobs:
               if forbidden in state:
                   raise SystemExit('RECONCILED_STATE_PENDING_MARKER')
           state_path.write_text(state, encoding='utf-8')
-
-          workflow_path = Path('.github/workflows/native-sharing-cloudflare-runtime-v1.yml')
-          workflow = workflow_path.read_text(encoding='utf-8')
-          old_required = """              'LEGACY_BASELINE_SHA=1b8bc4b79c63e36f5f6d7bb8a7fc39f0a782c930',\n              'LEGACY_BASELINE_RUN=29974437874',\n              'LEGACY_BASELINE_ARTIFACT=8550899250',\n              'LEGACY_GREEN_SCOPE=SUPERSEDED_CONTRACT_ONLY',\n              'PR_9_TECHNICALLY_READY=NO',\n              'FINAL_ARTIFACT=NO',\n              'CURRENT_REWORK=EXPORTS_SQLITE_ATOMICITY_WORKERD',\n"""
-          new_required = old_required + """              'SECOND_INTERMEDIATE_GREEN_HEAD=7f91ca6a822107a1e242267c8c2c56da1923118c',\n              'SECOND_INTERMEDIATE_GREEN_RUN=29981034009',\n              'SECOND_INTERMEDIATE_GREEN_CONCLUSION=success',\n              'CURRENT_HELPER_AND_DOCS_PIPELINE=PASS',\n              'BOUNDED_TRANCHE_STATUS=COMPLETE',\n"""
-          if old_required not in workflow:
-              raise SystemExit('STATE_TRUTH_REQUIRED_BLOCK_MISSING')
-          workflow = workflow.replace(old_required, new_required, 1)
-          old_forbidden = "          forbidden = ('new_sqlite_classes migration', '\\npoints\\nviewer_sessions')"
-          new_forbidden = """          forbidden = (\n              'new_sqlite_classes migration',\n              '\\npoints\\nviewer_sessions',\n              'CURRENT_HELPER_AND_DOCS_PIPELINE=PENDING_NEW_HEAD_CI',\n              'SECOND_EXACT_HEAD_PIPELINE=PENDING',\n          )"""
-          if old_forbidden not in workflow:
-              raise SystemExit('STATE_TRUTH_FORBIDDEN_BLOCK_MISSING')
-          workflow = workflow.replace(old_forbidden, new_forbidden, 1)
-          workflow_path.write_text(workflow, encoding='utf-8')
-
-          Path('.github/workflows/native-sharing-cloudflare-state-reconcile.yml').unlink()
           PY
           git diff --check
-          test "$(git status --short | wc -l)" -eq 3
-          git status --short | grep -q '^ M .github/workflows/native-sharing-cloudflare-runtime-v1.yml$'
+          test "$(git status --short | wc -l)" -eq 1
           git status --short | grep -q '^ M docs/CURRENT_STATE.md$'
-          git status --short | grep -q '^ D .github/workflows/native-sharing-cloudflare-state-reconcile.yml$'
-      - name: Commit canonical reconciliation
+      - name: Commit canonical state only
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           git config user.name 'stracker-ci'
           git config user.email 'stracker-ci@users.noreply.github.com'
-          git add -A
-          git commit -m 'docs: complete bounded Phase B reconciliation'
+          git add docs/CURRENT_STATE.md
+          git commit -m 'docs: complete bounded Phase B state'
           git push origin "HEAD:$HEAD_BRANCH"
