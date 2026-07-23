@@ -32,20 +32,20 @@ const POINT_VALIDATION_STATUS: Readonly<Record<string, number>> = {
 
 function classifyUnknown(error: unknown): { status: number; code: RuntimeErrorCode } {
   if (error instanceof NativeSharingError) {
-    const code = error.code as RuntimeErrorCode
-    return { status: error.status, code }
+    return { status: error.status, code: error.code as RuntimeErrorCode }
   }
   if (error instanceof PointValidationError) {
     if (error.code === 'RETENTION_LIMIT') return { status: 429, code: 'POINT_QUOTA_EXCEEDED' }
-    const status = POINT_VALIDATION_STATUS[error.code] ?? 422
-    return { status, code: error.code as RuntimeErrorCode }
+    return { status: POINT_VALIDATION_STATUS[error.code] ?? 422, code: error.code as RuntimeErrorCode }
   }
   if (error instanceof NativeSharingStoreFault) {
     switch (error.code) {
       case 'SESSION_COLLISION': return { status: 409, code: 'SESSION_COLLISION' }
       case 'SEQUENCE_RACE': return { status: 409, code: 'SEQUENCE_RACE' }
+      case 'SESSION_INACTIVE': return { status: 410, code: 'SESSION_INACTIVE' }
       case 'POINT_QUOTA_EXCEEDED': return { status: 429, code: 'POINT_QUOTA_EXCEEDED' }
       case 'VIEWER_SESSION_QUOTA_EXCEEDED': return { status: 429, code: 'VIEWER_SESSION_QUOTA_EXCEEDED' }
+      case 'VIEWER_GENERATION_RACE': return { status: 409, code: 'VIEWER_SESSION_INVALID' }
       default: return { status: 503, code: 'STORAGE_UNAVAILABLE' }
     }
   }
@@ -57,7 +57,6 @@ function classifyUnknown(error: unknown): { status: number; code: RuntimeErrorCo
 
 export class NativeSharingSessionRuntime {
   private readonly service: NativeSharingService
-  private mutationTail: Promise<void> = Promise.resolve()
 
   constructor(readonly store: SqliteNativeSharingStore, now: () => Date = () => new Date()) {
     this.service = new NativeSharingService(store, now)
@@ -72,28 +71,16 @@ export class NativeSharingSessionRuntime {
     }
   }
 
-  private serializeMutation<T>(operation: () => Promise<T>): Promise<RpcResult<T>> {
-    const run = this.mutationTail.then(
-      () => this.guard(operation),
-      () => this.guard(operation),
-    )
-    this.mutationTail = run.then(
-      () => undefined,
-      () => undefined,
-    )
-    return run
-  }
-
   createSession(input: CreateSessionInput): Promise<RpcResult<NativeSharingSession>> {
-    return this.serializeMutation(() => this.store.createSession(input))
+    return this.guard(() => this.store.createSession(input))
   }
 
   appendPoint(sessionId: string, emitterToken: string, point: NativeSharedLocationPoint): Promise<RpcResult<AcceptedNativePoint>> {
-    return this.serializeMutation(() => this.service.appendPoint(sessionId, emitterToken, point))
+    return this.guard(() => this.service.appendPoint(sessionId, emitterToken, point))
   }
 
   exchangeViewerCapability(viewerCapability: string): Promise<RpcResult<ViewerExchangeResponse>> {
-    return this.serializeMutation(() => this.service.exchangeViewerCapability(viewerCapability))
+    return this.guard(() => this.service.exchangeViewerCapability(viewerCapability))
   }
 
   getStatus(sessionId: string, viewerSessionToken: string): Promise<RpcResult<ViewerStatusResponse>> {
@@ -104,29 +91,21 @@ export class NativeSharingSessionRuntime {
     return this.guard(() => this.service.getPoints(sessionId, viewerSessionToken))
   }
 
-  logoutViewer(sessionId: string, viewerSessionToken: string): Promise<RpcResult<null>> {
-    return this.serializeMutation(async () => {
+  async logoutViewer(sessionId: string, viewerSessionToken: string): Promise<RpcResult<null>> {
+    return this.guard(async () => {
       await this.service.logoutViewer(sessionId, viewerSessionToken)
       return null
     })
   }
 
   rotateViewer(sessionId: string, emitterToken: string): Promise<RpcResult<{ viewerCapability: string; viewerGeneration: number }>> {
-    return this.serializeMutation(() => this.service.rotateViewer(sessionId, emitterToken))
+    return this.guard(() => this.service.rotateViewer(sessionId, emitterToken))
   }
 
-  revoke(sessionId: string, emitterToken: string): Promise<RpcResult<null>> {
-    return this.serializeMutation(async () => {
+  async revoke(sessionId: string, emitterToken: string): Promise<RpcResult<null>> {
+    return this.guard(async () => {
       await this.service.revoke(sessionId, emitterToken)
       return null
     })
-  }
-
-  async forceRevoke(sessionId: string, revokedAt: string): Promise<void> {
-    const result = await this.serializeMutation(async () => {
-      await this.store.revokeSession(sessionId, revokedAt)
-      return null
-    })
-    if (!result.ok) throw new Error(result.code)
   }
 }
