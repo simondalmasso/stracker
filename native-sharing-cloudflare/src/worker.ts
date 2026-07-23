@@ -32,6 +32,8 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const API_HEADERS = {
   'Cache-Control': 'no-store, max-age=0',
   'Content-Type': 'application/json; charset=utf-8',
+  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  Pragma: 'no-cache',
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
 } as const
@@ -203,7 +205,8 @@ async function routeApi(request: Request, env: NativeSharingRuntimeBindings, url
     const token = bearer(request)
     const body = await readJsonBody<RuntimeViewerLogoutRequest>(request)
     if (typeof body.sessionId !== 'string') throw new HttpBoundaryError(400, 'REQUEST_INVALID')
-    return unwrap(await withTimeout(stubFor(env, body.sessionId).logoutViewer(body.sessionId, token)))
+    const result = await withTimeout(stubFor(env, body.sessionId).logoutViewer(body.sessionId, token))
+    return result.ok ? success({ status: 'ok' }) : errorResponse(result.status, result.code)
   }
 
   const match = /^\/api\/share\/sessions\/([A-Za-z0-9_-]{43})(?:\/(points|status|rotate-viewer))?$/.exec(url.pathname)
@@ -215,7 +218,8 @@ async function routeApi(request: Request, env: NativeSharingRuntimeBindings, url
   if (operation === 'points' && request.method === 'POST') {
     const token = emitter(request)
     const point = await readJsonBody<NativeSharedLocationPoint>(request)
-    return unwrap(await withTimeout(stub.appendPoint(sessionId, token, point)), 202)
+    const result = await withTimeout(stub.appendPoint(sessionId, token, point))
+    return result.ok ? success({ status: 'ok', point: result.value }, 202) : errorResponse(result.status, result.code)
   }
   if (operation === 'points' && request.method === 'GET') {
     return unwrap(await withTimeout(stub.getPoints(sessionId, bearer(request))))
@@ -227,7 +231,8 @@ async function routeApi(request: Request, env: NativeSharingRuntimeBindings, url
     return unwrap(await withTimeout(stub.rotateViewer(sessionId, emitter(request))))
   }
   if (operation === 'session' && request.method === 'DELETE') {
-    return unwrap(await withTimeout(stub.revoke(sessionId, emitter(request))))
+    const result = await withTimeout(stub.revoke(sessionId, emitter(request)))
+    return result.ok ? success({ status: 'ok', state: 'revoked' }) : errorResponse(result.status, result.code)
   }
   throw new HttpBoundaryError(405, 'METHOD_NOT_ALLOWED')
 }
