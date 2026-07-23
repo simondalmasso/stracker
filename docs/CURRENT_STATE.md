@@ -9,19 +9,17 @@ ACTIVE_DRAFT_PR=9
 PR_BASE=feat/stracker-native-location-sharing-v1
 PR_BASE_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
 CURRENT_HEAD_SHA=SEE_DRAFT_PR_9_HEAD
-TECHNICAL_GREEN_SHA=591f976c54cda15d052a6a4c276f45be7e7b123d
-TECHNICAL_GREEN_RUN_ID=29974238896
-TECHNICAL_GREEN_CONCLUSION=success
-TECHNICAL_GREEN_ARTIFACT_ID=8550837441
-TECHNICAL_GREEN_ARTIFACT_DIGEST=sha256:571bf4f0ff295d0664056b98b42920a9cbce779286cf89947d875e8c72768427
-PR_STATE=OPEN_DRAFT
+CURRENT_REWORK=EXPORTS_SQLITE_ATOMICITY_WORKERD
+PR_9_STATE=OPEN_DRAFT
+PR_9_TECHNICALLY_READY=NO
+FINAL_ARTIFACT=NO
 MERGE_EXECUTED=NO
 DEPLOYMENT_EXECUTED=NO
 PRODUCTION_MODIFIED=NO
 PRODUCTION_TRAFFIC=0%
 ```
 
-PR #9 is stacked directly on the final frozen head of PR #8. It is not based on PR #7 and does not merge or cherry-pick PR #7.
+PR #9 remains stacked directly on the final frozen head of PR #8. It is not based on PR #7 and contains no merge or cherry-pick from PR #7.
 
 ```text
 PR_6_ROLE=FROZEN_VECTOR_MAP_ENGINE_BASE
@@ -30,6 +28,7 @@ PR_6_HEAD_SHA=8a3ac8d750b107e24f5ce744f15a0bbae9767f1f
 PR_7_ROLE=EXPERIMENTAL_GOOGLE_RUNTIME_SPIKE
 PR_7_RELEASE_DEPENDENCY=NO
 PR_7_PRODUCTION_CANDIDATE=NO
+PR_7_IN_PR_9_ANCESTRY=NO
 
 PR_8_ROLE=FROZEN_NATIVE_LOCATION_SHARING_PRODUCT
 PR_8_HEAD_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
@@ -38,7 +37,21 @@ PR_8_MERGE=NO
 PR_8_DEPLOY=NO
 ```
 
-## Canonical product
+## Superseded Phase B baseline
+
+The following evidence is preserved because it documents the prior code-only checkpoint, but it does not satisfy the current exports, transaction and workerd contract:
+
+```text
+LEGACY_BASELINE_SHA=1b8bc4b79c63e36f5f6d7bb8a7fc39f0a782c930
+LEGACY_BASELINE_RUN=29974437874
+LEGACY_BASELINE_ARTIFACT=8550899250
+LEGACY_GREEN_SCOPE=SUPERSEDED_CONTRACT_ONLY
+PHASE_B_FINAL_EVIDENCE=NO
+```
+
+The legacy run and artifact must not be used to declare PR #9 technically ready. They predate the declarative `exports` lifecycle, real multi-step SQLite transaction boundaries and the workerd atomicity proof.
+
+## Canonical product boundary
 
 Every open, reload, new tab and navigation to `/` begins at:
 
@@ -69,15 +82,7 @@ type SharedLocationProvider =
   | 'google-session-experimental'
 ```
 
-Inside `UBICACIÓN COMPARTIDA`:
-
-```text
-[ ABRIR ENLACE STRACKER ]
-[ COMPARTIR MI UBICACIÓN ]
-[ GOOGLE MAPS — EXPERIMENTAL ]
-```
-
-The Google option is disabled and displays `No disponible en esta versión`.
+Google remains disabled in this release line:
 
 ```text
 GOOGLE_PROVIDER_DISABLED=YES
@@ -98,45 +103,15 @@ The only supported viewer link is:
 ```text
 VIEWER_CAPABILITY_IN_PATH=NO
 VIEWER_CAPABILITY_IN_QUERY=NO
-CAPABILITY_FRAGMENT_ONLY=PASS
+CAPABILITY_EXCHANGE_REQUIRED=YES
+FRAGMENT_REMOVED_AFTER_EXCHANGE=YES
+CAPABILITY_NOT_REUSED_FOR_POLLING=YES
+VIEWER_SESSION=OPAQUE_SHORT_LIVED_MEMORY_ONLY
 ```
 
-The initial HTTP request contains neither the fragment nor the capability. Before explicit `VER UBICACIÓN`:
+The fragment capability is exchanged once after explicit confirmation. Polling uses a short-lived opaque viewer session in `Authorization: Bearer`; neither capability nor viewer session is persisted in URL, local storage, session storage, IndexedDB or JS-readable cookies.
 
-```text
-NO_STATUS_REQUEST=PASS
-NO_POINTS_REQUEST=PASS
-NO_MAP_REQUEST=PASS
-NO_CAPABILITY_EXCHANGE=PASS
-```
-
-After confirmation:
-
-```text
-fragment capability
-→ POST /api/share/viewer/exchange
-→ short-lived opaque viewer session
-→ history.replaceState(null, '', '/shared')
-→ original capability cleared
-→ Authorization: Bearer polling
-```
-
-The opaque viewer token remains only in document memory. Rotation increments viewer generation and invalidates the prior capability and all active viewer sessions from the previous generation. Revocation and expiration reject reads and writes immediately. Late frontend responses are ignored.
-
-The Worker rejects query-bearing `/shared` requests before Static Assets. The shared document is served with:
-
-```text
-Cache-Control=no-store, max-age=0
-Referrer-Policy=no-referrer
-Content-Security-Policy=STRICT
-Permissions-Policy=geolocation=(), camera=(), microphone=()
-X-Robots-Tag=noindex, nofollow, noarchive, nosnippet
-ANALYTICS_ON_SHARED_ROUTES=OFF
-```
-
-## Cloudflare runtime architecture
-
-PR #9 implements code only:
+## Phase B code-only architecture
 
 ```text
 Browser
@@ -147,130 +122,37 @@ Browser
 → Static Assets
 ```
 
-Deterministic routing uses:
+Deterministic routing uses `env.NATIVE_SHARING.getByName(sessionId)`. Each sharing session maps to one object and one private SQLite database. No live Worker, namespace, route or deployment exists.
 
-```ts
-env.NATIVE_SHARING.getByName(sessionId)
+## Declarative Durable Object lifecycle
+
+`native-sharing-cloudflare/wrangler.jsonc` now declares the class through:
+
+```json
+"exports": {
+  "NativeSharingDurableObject": {
+    "type": "durable-object",
+    "storage": "sqlite"
+  }
+}
 ```
 
-Each `SESSION_ID` maps to one object. No database contains points or capabilities from another sharing session. The Worker carries no mutable request state across sessions.
-
 ```text
-ONE_SESSION_ONE_OBJECT=PASS
-NO_CROSS_SESSION_STATE=PASS
-```
-
-## Durable Object responsibilities
-
-`NativeSharingDurableObject` owns:
-
-```text
-session metadata
-emitter verifier
-viewer capability verifier
-viewer generation
-opaque viewer-session verifiers
-latest accepted sequence
-bounded confirmed points
-server-assigned GhostRail segment indexes
-expiry and retention alarm
-revocation
-viewer rotation
-quota state
-```
-
-Critical state is persisted in SQLite. The implementation uses `ctx.storage.sql` and a `new_sqlite_classes` migration. It does not use KV-backed Durable Object storage APIs.
-
-```text
-DO_SQLITE_ONLY=PASS
-KV_BACKED_DO_STORAGE=ABSENT
-```
-
-### SQLite tables
-
-```text
-sharing_session
-points
-viewer_sessions
-```
-
-`sharing_session` is a single-row record in each object. `points` is keyed by monotonic sequence. `viewer_sessions` stores only token verifiers with generation, expiry and revocation state.
-
-## Worker HTTP API
-
-```text
-POST   /api/share/sessions
-POST   /api/share/sessions/:id/points
-POST   /api/share/viewer/exchange
-POST   /api/share/viewer/logout
-GET    /api/share/sessions/:id/status
-GET    /api/share/sessions/:id/points
-POST   /api/share/sessions/:id/rotate-viewer
-DELETE /api/share/sessions/:id
-```
-
-The Worker validates:
-
-```text
-strict path
-strict method
-same origin
-JSON content type
-body size
-session identifier shape
-emitter capability shape
-opaque viewer bearer shape
-query absence
-binding availability
-RPC timeout
-```
-
-Responses are JSON-only, `no-store`, `nosniff`, no-referrer and sanitized. Unknown bindings, storage failures, quota failures and timeouts fail closed. Capabilities, tokens and coordinates are never logged.
-
-Canonical HTTP envelopes remain compatible with the PR #8 frontend:
-
-```text
-session create → CreateSessionResponse
-point publish → { status: 'ok', point }
-viewer exchange → ViewerExchangeResponse
-viewer logout → { status: 'ok' }
-revoke → { status: 'ok', state: 'revoked' }
-```
-
-## Quota and retention model
-
-```text
-MAX_SESSION_DURATION=4h
-MAX_POINTS_PER_SESSION=2880
-MAX_POINTS_RETURNED=600
-MIN_PUBLISH_INTERVAL=5s
-MAX_ACTIVE_VIEWER_SESSIONS=16
-VIEWER_SESSION_TTL=10m
-EXPIRATION_GRACE=60s
-DELETE_AFTER_EXPIRATION=24h
-MAX_GHOSTRAIL_SEGMENTS=64
-MAX_REQUEST_BODY=16KiB
-RPC_TIMEOUT=1500ms
-```
-
-The product limits are deliberately conservative. Quota exhaustion rejects the new operation and does not silently discard accepted state. Storage-full and unavailable-storage conditions return sanitized fail-closed errors.
-
-## Static Assets and placeholder configuration
-
-`native-sharing-cloudflare/wrangler.jsonc` is non-routable:
-
-```text
+DO_LIFECYCLE_CONFIG=EXPORTS
+SQLITE_STORAGE_DECLARED=YES
+MIGRATIONS_PRESENT=NO
+EXPORTS_AND_MIGRATIONS_COEXIST=NO
+NATIVE_SHARING_BINDING=PRESENT
 workers_dev=false
 preview_urls=false
+observability.enabled=false
 routes=ABSENT
 custom_domains=ABSENT
 account_id=ABSENT
 zone_id=ABSENT
-real_secrets=ABSENT
-observability.enabled=false
 ```
 
-Worker-first paths include:
+Worker-first paths remain:
 
 ```text
 /api/share/*
@@ -278,142 +160,172 @@ Worker-first paths include:
 /shared/*
 ```
 
-The configuration contains the structural Durable Object binding and SQLite migration required for code validation, but no live namespace or account resource exists.
+## SQLite schema
 
-CI permits only:
+The current per-session schema is:
 
 ```text
-wrangler types
-wrangler deploy --dry-run
+sharing_session
+accepted_points
+viewer_sessions
+rate_or_sequence_state
 ```
 
+The schema enforces a singleton sharing-session row, primary keys, unique capability verifiers where applicable, checks on state and numeric domains, point sequence indexes and active-viewer indexes. Only capability and viewer-session verifiers are stored; complete tokens and capabilities are absent.
+
+## Transaction boundaries
+
+The architectural rule is:
+
 ```text
-VERSION_UPLOAD_EXECUTED=NO
-DEPLOYMENT_EXECUTED=NO
+TRANSACTION_SYNC_FOR_EVERY_SQL_WRITE=NO
+TRANSACTION_SYNC_FOR_IDENTIFIED_MULTI_STEP_MUTATIONS=YES
 ```
 
-## Browser and runtime QA
-
-The Worker + SQLite E2E was executed against the real exported frontend at:
+`transactionSync()` is used for identified read/validate/conditional-write operations:
 
 ```text
-320x568
-360x640
-375x812
-390x844
-412x915
+CREATE_SESSION_SQL_STATE
+APPEND_POINT
+CREATE_VIEWER_SESSION_WITH_LIMIT
+ROTATE_VIEWER_AND_INVALIDATE
+REVOKE_SESSION_AND_INVALIDATE
+EXPIRATION_SQL_CLEANUP
 ```
 
+### Create session SQL state
+
+The sharing-session row and `rate_or_sequence_state` row are inserted in one SQLite transaction. Failure of the second insert rolls back the first insert.
+
+Scheduling the alarm is not falsely described as part of the SQLite transaction. The flow is:
+
 ```text
-BROWSER_QA=PASS
+CREATE_SQL_SESSION
+→ SET_ALARM
+→ SUCCESS
+```
+
+If `setAlarm()` fails:
+
+```text
+ctx.storage.deleteAll()
+→ verify sharing_session absent
+→ verify accepted_points absent
+→ verify viewer_sessions absent
+→ verify rate_or_sequence_state absent
+→ verify alarm absent
+→ sanitized STORAGE_UNAVAILABLE
+```
+
+### Append point
+
+Within one transaction:
+
+```text
+READ_SESSION_AND_PREVIOUS_POINT
+→ VALIDATE_STATE_SEQUENCE_AND_QUOTA
+→ CALCULATE_SEGMENT
+→ CONDITIONAL_SESSION_UPDATE
+→ REQUIRE_ROWS_WRITTEN_EQ_1
+→ CONDITIONAL_SEQUENCE_STATE_UPDATE
+→ REQUIRE_ROWS_WRITTEN_EQ_1
+→ INSERT_ACCEPTED_POINT
+→ REQUIRE_ROWS_WRITTEN_EQ_1
+→ ROLLBACK_ON_ANY_FAILURE
+```
+
+A point cannot remain inserted without its counters, and counters cannot remain advanced without the point.
+
+### Viewer exchange
+
+Cryptographic capability verification may occur before the transaction. The transaction then revalidates:
+
+```text
+SESSION_ID_MATCH
+SESSION_STATE=active
+SESSION_EXPIRES_AT>NOW
+VIEWER_VERIFIER=EXPECTED_VERIFIER
+VIEWER_GENERATION=EXPECTED_GENERATION
+```
+
+Only after those checks, in the same transaction:
+
+```text
+PURGE_EXPIRED_VIEWERS
+COUNT_ACTIVE_VIEWERS
+ENFORCE_LIMIT
+INSERT_VIEWER_SESSION
+REQUIRE_ROWS_WRITTEN_EQ_1
+```
+
+Rotation, revocation or expiration between preverification and insertion causes no viewer-session insert and returns a sanitized invalid or inactive result.
+
+### Rotation and revocation
+
+Viewer generation update and active-viewer invalidation are atomic. Sharing-session revocation and active-viewer invalidation are atomic.
+
+## Alarm cleanup
+
+At the cleanup deadline, the Durable Object calls `ctx.storage.deleteAll()` to remove SQL state, metadata and the alarm. Cleanup is idempotent. If post-delete verification is negative, `alarm()` throws `STORAGE_CLEANUP_UNVERIFIED`; it does not silently report success.
+
+## Validation status for current rework
+
+The prior Browser QA and four-file artifact remain historical only. They are not current Phase B evidence.
+
+```text
+FROZEN_INSTALL=PENDING_CURRENT_HEAD_CI
+WRANGLER_TYPES=PENDING_CURRENT_HEAD_CI
+TYPECHECK=PENDING_CURRENT_HEAD_CI
+LINT=PENDING_CURRENT_HEAD_CI
+BUN_ADAPTER_TESTS=PENDING_CURRENT_HEAD_CI
+CLOUDFLARE_WORKER_VITEST=PENDING_CURRENT_HEAD_CI
+SQLITE_TRANSACTION_TESTS=PENDING_CURRENT_HEAD_CI
+ALARM_COMPENSATION_TESTS=PENDING_CURRENT_HEAD_CI
+VIEWER_EXCHANGE_TRANSACTIONAL_REVALIDATION=PENDING_CURRENT_HEAD_CI
+LIFECYCLE_SCANNER_FIXTURES=PENDING_CURRENT_HEAD_CI
+RUNTIME_SECURITY_SCAN=PENDING_CURRENT_HEAD_CI
+WRANGLER_DRY_RUN=PENDING_CURRENT_HEAD_CI
+RUN_CONCLUSION=PENDING
+```
+
+The current workerd suite is required to prove:
+
+```text
+EXPORTS_CONFIG_LOADS
+SQLITE_SCHEMA_EXISTS
+CREATE_SESSION_TWO_INSERT_ROLLBACK
+APPEND_POINT_ROLLBACK
+APPEND_POINT_ROWS_WRITTEN_RACE
+VIEWER_EXCHANGE_GENERATION_RACE
+VIEWER_LIMIT_CONCURRENT
+ROTATION_ATOMIC
+REVOCATION_ATOMIC
+SET_ALARM_FAILURE_DELETE_ALL
+ALARM_CLEANUP_VERIFICATION_FAILURE
+```
+
+The Bun SQLite adapter remains Level 1 unit/adapter evidence only. It is not called Worker SQLite E2E.
+
+## Explicitly outside the current tranche
+
+```text
+QUOTA_MODEL_REWORK=NOT_STARTED
+POLLING_INCREMENTAL=NOT_STARTED
+TIMEOUT_IDEMPOTENCY=NOT_STARTED
+FINAL_BROWSER_QA=NOT_EXECUTED
+FINAL_SCANNER=NOT_EXECUTED
+FINAL_SIX_FILE_ARTIFACT=NOT_CREATED
+PR_BODY_FINALIZATION=NOT_EXECUTED
+```
+
+No current gate may claim:
+
+```text
 WORKER_SQLITE_E2E=PASS
-NO_NETWORK_BEFORE_VIEWER_CONFIRMATION=PASS
-CAPABILITY_FRAGMENT_ONLY=PASS
-CAPABILITY_EXCHANGE_REQUIRED=PASS
-OPAQUE_VIEWER_SESSION_POLLING=PASS
-CAPABILITY_IN_TRANSPORT_URL=NO
-SHARED_QUERY_REJECTED=PASS
-REFERRER_POLICY_NO_REFERRER=PASS
-SHARED_CSP_STRICT=PASS
-PAGEERROR=0
-HORIZONTAL_OVERFLOW=0
-```
-
-Runtime tests cover:
-
-```text
-ONE_SESSION_ONE_OBJECT=PASS
-NO_CROSS_SESSION_STATE=PASS
-CONCURRENT_POINT_SERIALIZATION=PASS
-REPLAY_BLOCKED=PASS
-REVOCATION_IMMEDIATE=PASS
-ROTATION_INVALIDATES_VIEWERS=PASS
-SESSION_EXPIRATION=PASS
-VIEWER_SESSION_EXPIRATION=PASS
+LATE_RESPONSE_BLOCKED=PASS
 RETENTION_BOUNDED=PASS
-POINT_QUOTA_FAIL_CLOSED=PASS
-VIEWER_QUOTA_FAIL_CLOSED=PASS
-STORAGE_FAILURE_FAIL_CLOSED=PASS
-BINDING_FAILURE_FAIL_CLOSED=PASS
-LATE_RPC_TIMEOUT=PASS
+FINAL_ARTIFACT=PASS
 ```
-
-## Technical-green evidence
-
-```text
-TECHNICAL_GREEN_SHA=591f976c54cda15d052a6a4c276f45be7e7b123d
-WORKFLOW_RUN_ID=29974238896
-WORKFLOW_CONCLUSION=success
-ARTIFACT_ID=8550837441
-ARTIFACT_DIGEST=sha256:571bf4f0ff295d0664056b98b42920a9cbce779286cf89947d875e8c72768427
-```
-
-Artifact contents are exactly:
-
-```text
-browser-qa.json
-gates.json
-manifest.json
-sha256sums.txt
-```
-
-Independent inspection verified:
-
-```text
-ARTIFACT_HEAD_SHA_MATCH=PASS
-ARTIFACT_RUN_ID_MATCH=PASS
-ZIP_DIGEST_MATCH=PASS
-INTERNAL_SHA256SUMS=PASS
-PRIVATE_DATA_USED=FALSE
-REAL_COORDINATES=ABSENT
-COOKIES=ABSENT
-TOKENS=ABSENT
-CAPABILITIES=ABSENT
-AUTHORIZATION_HEADERS=ABSENT
-RAW_LOGS=ABSENT
-ENV_FILES=ABSENT
-SOURCE_ARCHIVE=ABSENT
-```
-
-## Validation state
-
-```text
-STACKED_BASE_CHECK=PASS
-PR_8_FROZEN=PASS
-PR_7_NOT_IN_RELEASE_STACK=PASS
-FROZEN_INSTALL=PASS
-INHERITED_PR_8_REGRESSION=PASS
-BUILD=PASS
-STATIC_ASSETS=PASS
-WRANGLER_TYPES=PASS
-ESLINT=PASS
-TYPECHECK=PASS
-DO_SQLITE_ONLY=PASS
-TESTS=PASS
-BROWSER_QA=PASS
-WORKER_SQLITE_E2E=PASS
-WRANGLER_DRY_RUN=PASS
-SECURITY_SCAN=PASS
-PREPARE_SANITIZED_ARTIFACT=PASS
-SECURITY_ARTIFACT_SCAN=PASS
-ARTIFACT_CURRENT_HEAD=PASS
-FINAL_INTEGRITY=PASS
-CI_FINAL=SUCCESS
-```
-
-## Zero-cost boundary
-
-```text
-RECURRING_INFRASTRUCTURE_COST_USD=0
-MAP_PROVIDER_COST_USD=0
-PAID_OVERAGE_ALLOWED=NO
-AUTOMATIC_UPGRADE_TO_PAID=NO
-BILLING_DEPENDENCY=NO
-WORKERS_PLAN=FREE_REQUIRED
-DURABLE_OBJECT_BACKEND=SQLITE_ONLY
-```
-
-This branch creates no billable or live resource. A future live phase must remain on Cloudflare Free and fail closed at STRACKER's own limits. No paid fallback is permitted.
 
 ## Production and live-control-plane status
 
@@ -425,43 +337,31 @@ RENDER_MODIFIED=NO
 CLOUDFLARE_LIVE_MODIFIED=NO
 WORKER_LIVE_CREATED=NO
 DURABLE_OBJECT_NAMESPACE_LIVE_CREATED=NO
-ACCESS_APPLICATION_CREATED=NO
-GOOGLE_IDP_CREATED=NO
 VERSION_UPLOAD_EXECUTED=NO
 DEPLOYMENT_EXECUTED=NO
+ACCESS_APPLICATION_CREATED=NO
+GOOGLE_IDP_CREATED=NO
 ROUTE_CREATED=NO
-DNS_CHANGED=NO
+DNS_MODIFIED=NO
 SECRET_CREATED=NO
+REAL_LOCATION_SESSION_CREATED=NO
 PRODUCTION_TRAFFIC=0%
-ROLLBACK_EXECUTED=NO
+MERGE=NO
+DEPLOY=NO
+LIVE_INFRASTRUCTURE=NO
 ```
-
-## Rollback boundary
-
-A future code rollback does not revert SQLite state. Before any live traffic, a rollback plan must verify schema compatibility, preserve revocation/generation state and smoke-test create, publish, exchange, poll, rotate and revoke. If compatibility is uncertain, traffic remains zero and the runtime stays fail closed.
 
 ## Open risks
 
-- This branch validates code and synthetic SQLite behavior, not a live Durable Object namespace.
-- Cloudflare account bindings, Free-plan enforcement and actual platform quotas remain unverified until a separately authorized non-production infrastructure phase.
-- Browser geolocation can be throttled or suspended in the background; STRACKER does not promise closed-browser tracking.
-- A recipient can intentionally redistribute a private viewer link; rotation and revocation limit exposure but cannot prevent deliberate copying.
-- Public map providers have no STRACKER-controlled SLA.
-- Physical Samsung Galaxy A22 validation remains blocked by the environment.
-- Production remains on Render.
-
-## Release posture
-
 ```text
-PR_9_TECHNICALLY_GREEN_SHA=591f976c54cda15d052a6a4c276f45be7e7b123d
-PR_9_STATE=OPEN_DRAFT
-PR_9_MERGE=NO
-PR_9_DEPLOY=NO
-NO_MORE_COMMITS=PENDING_FINAL_DOCUMENTATION_RUN
-PRODUCTION_DEPLOY=NO
-CLOUDFLARE_CUTOVER=NO_GO
+WORKERD_ATOMICITY_RESULTS=PENDING
+WRANGLER_EXPORTS_COMPATIBILITY=PENDING_CI
+FROZEN_LOCK_VALIDATION=PENDING_CI
+VIEWER_GENERATION_RACE_PROOF=PENDING_CI
+ALARM_COMPENSATION_PROOF=PENDING_CI
+A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
 ```
 
 ## Next exact step
 
-After this documentation HEAD passes the same complete pipeline, freeze PR #9. The next action would require explicit authorization to create isolated non-production Cloudflare resources: a Worker, SQLite-backed Durable Object namespace/binding and a Version upload with zero routes and zero traffic. Stop before that boundary.
+Run the intermediate Phase B pipeline on the exact current PR #9 HEAD. Correct only failures in frozen install, exports lifecycle, SQLite transaction boundaries, workerd atomicity, alarm compensation, lifecycle scanner, security scan or dry-run. Do not start quota, incremental polling, timeout/idempotency, final Browser QA or final artifact work without a new decision.
