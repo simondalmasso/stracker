@@ -56,7 +56,7 @@ jobs:
           python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
           python -m unittest discover -s tests -p 'test_*.py'
           cmp tracker_map.py nextjs-ui/tracker_map.py
-          echo 'BACKEND_TESTS=PASS'
+          echo 'BACKEND_REGRESSION=PASS'
 
       - name: ESLINT
         run: |
@@ -97,6 +97,7 @@ jobs:
         run: |
           bun run test:vector-map
           node tools/map-spike/release-source-gate.mjs
+          echo 'VECTOR_MAP_REGRESSION=PASS'
           echo 'SOURCE_ISOLATION=PASS'
           echo 'GHOSTRAIL_SEGMENTATION=PASS'
           echo 'MAP_PIPELINE_REUSED=PASS'
@@ -158,56 +159,35 @@ jobs:
 
       - name: SECURITY_AND_RELEASE_GATES
         run: |
+          python tests/security/native-sharing-release-scan.test.py
+          python scripts/security/native-sharing-release-scan.py --root .
           test ! -e 'src/app/shared/[capability]'
           test -f src/app/shared/page.tsx
           test ! -e .github/workflows/native-sharing-browser-diagnostic.yml
-          ! grep -R -n --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'google-shared' src native-sharing
-          ! grep -R -nE --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'locationsharing/read|google\.com/maps|Cookie Editor|Header String|Netscape' src native-sharing
-          ! grep -R -n --exclude='*.md' 'X-Stracker-Viewer' src native-sharing out
-          ! grep -R -n --exclude='*.md' 'capabilityFromPath' src native-sharing out
-          ! grep -R -nE --exclude='*.md' '/shared/\$\{[^}]*capability|/shared/<viewer-capability>|/shared/<capability>|shared/\[capability\]' src native-sharing out
-          ! grep -R -nE --exclude='*.md' 'window\.location\.pathname[^\n]*(capability|token)|(capability|token)[^\n]*window\.location\.pathname' src native-sharing
-          ! grep -R -nE --exclude='*.md' '/shared\?[^"'"'[:space:]]*(token|capability)|[?&](token|capability)=' src native-sharing out
-          ! grep -R -nE --exclude='*.md' 'console\.(log|info|debug|warn|error).*?(emitter|viewer|capability|token)' native-sharing/src src/lib/location-source src/components/mobile
-          ! grep -R -nE --exclude='*.md' 'localStorage|sessionStorage|indexedDB' src/lib/location-source/use-native-emitter.ts src/lib/location-source/use-native-viewer.ts src/lib/location-source/native-sharing-api.ts
-          ! grep -R -nE --exclude='*.md' 'google-analytics|googletagmanager|segment\.com|sentry|plausible|matomo|mixpanel' src/app/shared src/components/mobile/NativeViewerApp.tsx src/lib/location-source/use-native-viewer.ts
-          python - <<'PY'
-          from pathlib import Path
-          forbidden = [
-              'wrangler ' + 'deploy',
-              'wrangler ' + 'publish',
-              'database' + '_id',
-              'durable' + '_objects',
-              'migra' + 'tions',
-          ]
-          files = [p for p in Path('native-sharing').rglob('*') if p.is_file() and p.suffix != '.md']
-          files.append(Path('.github/workflows/native-location-sharing-v1.yml'))
-          hits = []
-          for path in files:
-              text = path.read_text(encoding='utf-8', errors='replace').lower()
-              for term in forbidden:
-                  if term in text:
-                      hits.append(f'{path}:{term}')
-          if hits:
-              raise SystemExit('\n'.join(hits))
-          PY
-          ! grep -R -nE --exclude='*.md' -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]+|\b(SID|HSID|SSID|APISID|SAPISID)=([^$`{[:space:]]{8,})' native-sharing src/lib/location-source src/components/mobile
           grep -q "type LocationSource = 'my-device' | 'shared-location'" src/lib/location-source/contracts.ts
           grep -q "type SharedLocationProvider = 'stracker-native' | 'google-session-experimental'" src/lib/location-source/contracts.ts
           grep -q "window.history.replaceState(null, '', '/shared')" src/lib/location-source/native-sharing-api.ts
           grep -q "Authorization:.*Bearer" src/lib/location-source/native-sharing-api.ts
-          grep -q "POST.*api/share/viewer/exchange\|/api/share/viewer/exchange" native-sharing/src/http.ts
+          grep -q "/api/share/viewer/exchange" native-sharing/src/http.ts
           grep -q "GOOGLE MAPS — EXPERIMENTAL" src/components/mobile/NativeSharingHub.tsx
           grep -q "disabled" src/components/mobile/NativeSharingHub.tsx
           test ! -e src/lib/location-source/use-shared-location.ts
           test ! -e src/lib/location-source/session-api.ts
+          echo 'SCANNER_UNIT_TESTS=PASS'
+          echo 'SAFE_FIXTURE_ACCEPTED=PASS'
+          echo 'ALL_FORBIDDEN_FIXTURES_REJECTED=PASS'
+          echo 'EXPECTED_RULE_IDS=PASS'
+          echo 'EXPECTED_FILE_PATHS=PASS'
+          echo 'SCANNER_SELF_MATCH=NO'
+          echo 'SCANNER_OUTPUT_SANITIZED=PASS'
+          echo 'REAL_REPOSITORY_SCOPE=PASS'
+          echo 'SECURITY_RELEASE_SCAN=PASS'
           echo 'VIEWER_CAPABILITY_IN_PATH=NO'
           echo 'VIEWER_CAPABILITY_IN_QUERY=NO'
           echo 'LEGACY_GOOGLE_SHARED_RUNTIME_REFERENCE=ABSENT'
           echo 'SHARED_ROUTE_ANALYTICS=ABSENT'
           echo 'CAPABILITIES_IN_LOGS=NO'
           echo 'DIAGNOSTIC_WORKFLOW=ABSENT'
-          echo 'DIAGNOSTIC_RUN_SUCCESS_IMPLIES_QA_EXIT_ZERO=PASS'
           echo 'REAL_COOKIES=ABSENT'
           echo 'REAL_GOOGLE_REQUESTS=ABSENT'
           echo 'GOOGLE_PROVIDER_DISABLED=PASS'
@@ -255,8 +235,6 @@ jobs:
             "SHARED_ROUTE_ANALYTICS": "ABSENT",
             "CAPABILITIES_IN_LOGS": "NO",
             "CAPABILITIES_IN_ARTIFACTS": "NO",
-            "DIAGNOSTIC_WORKFLOW": "ABSENT",
-            "DIAGNOSTIC_RUN_SUCCESS_IMPLIES_QA_EXIT_ZERO": "PASS",
             "SESSION_ENUMERATION_BLOCKED": "PASS",
             "REPLAY_BLOCKED": "PASS",
             "REVOCATION_IMMEDIATE": "PASS",
@@ -267,6 +245,15 @@ jobs:
             "LEGACY_GOOGLE_SHARED_RUNTIME_REFERENCE": "ABSENT",
             "REAL_COOKIES": "ABSENT",
             "REAL_GOOGLE_REQUESTS": "ABSENT",
+            "SCANNER_UNIT_TESTS": "PASS",
+            "SAFE_FIXTURE_ACCEPTED": "PASS",
+            "ALL_FORBIDDEN_FIXTURES_REJECTED": "PASS",
+            "EXPECTED_RULE_IDS": "PASS",
+            "EXPECTED_FILE_PATHS": "PASS",
+            "SCANNER_SELF_MATCH": "NO",
+            "SCANNER_OUTPUT_SANITIZED": "PASS",
+            "REAL_REPOSITORY_SCOPE": "PASS",
+            "SECURITY_RELEASE_SCAN": "PASS",
             "FROZEN_INSTALL": "PASS",
             "ESLINT": "PASS",
             "TYPECHECK": "PASS",
@@ -285,27 +272,23 @@ jobs:
 
       - name: PREPARE_SANITIZED_ARTIFACT
         env:
-          ARTIFACT_KIND: mobile-qa
           ARTIFACT_DIR: /tmp/stracker-native-location-sharing-${{ github.event.pull_request.head.sha }}
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-          WORKFLOW_RUN_ID: ${{ github.run_id }}
-          SOURCE_FILES_JSON: '["/tmp/native-sharing-browser.json","/tmp/native-sharing-gates.json"]'
-          COMMANDS_JSON: '["bun install --frozen-lockfile","bun run lint","bunx eslint src/app/share src/app/shared native-sharing/src","bun run typecheck","bunx tsc -p native-sharing/tsconfig.json","bun test tests/native-sharing/native-sharing.test.ts","bun run test:vector-map","bun run build:export","node tests/native-sharing/browser-qa.mjs"]'
-          GATES_JSON: '{"NATIVE_LOCATION_SHARING":"PASS","FRAGMENT_ONLY_VIEWER":"PASS","OPAQUE_VIEWER_SESSION":"PASS","SECURITY_ARTIFACT_SCAN":"PASS","DEPLOY":"NO","MERGE":"NO","PRODUCTION_MODIFIED":"NO"}'
-        run: node tools/map-spike/prepare-artifact.mjs
+        run: |
+          python scripts/security/prepare-native-sharing-artifact.py \
+            --browser /tmp/native-sharing-browser.json \
+            --gates /tmp/native-sharing-gates.json \
+            --output "$ARTIFACT_DIR" \
+            --source-sha '${{ github.event.pull_request.head.sha }}' \
+            --run-id '${{ github.run_id }}'
 
       - name: SECURITY_ARTIFACT_SCAN
         env:
           ARTIFACT_DIR: /tmp/stracker-native-location-sharing-${{ github.event.pull_request.head.sha }}
         run: |
-          jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and .secretValuesRetained == false' /tmp/native-sharing-browser.json >/dev/null
-          for char in S E V O R P; do
-            token=$(printf "%0.s$char" $(seq 1 43))
-            ! grep -R -F "$token" "$ARTIFACT_DIR"
-          done
-          ! grep -R -nE 'viewerCapability["'"']?[[:space:]]*:[[:space:]]*["'"'][A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}|viewerSessionToken["'"']?[[:space:]]*:[[:space:]]*["'"'][A-Za-z0-9_-]{43}|emitterToken["'"']?[[:space:]]*:[[:space:]]*["'"'][A-Za-z0-9_-]{43}' "$ARTIFACT_DIR"
-          echo 'CAPABILITIES_IN_ARTIFACTS=NO'
-          echo 'SECURITY_ARTIFACT_SCAN=PASS'
+          python scripts/security/verify-native-sharing-artifact.py \
+            --artifact "$ARTIFACT_DIR" \
+            --source-sha '${{ github.event.pull_request.head.sha }}' \
+            --run-id '${{ github.run_id }}'
 
       - name: Upload exact-head native sharing artifact
         id: upload
@@ -343,15 +326,19 @@ jobs:
           test ! -e .github/workflows/native-sharing-browser-diagnostic.yml
           test ! -e 'src/app/shared/[capability]'
           test -f src/app/shared/page.tsx
-          ! grep -R --include='*.yml' --include='*.yaml' -n 'contents: write' .github/workflows
+          test -f scripts/security/native-sharing-release-scan.py
+          test -f tests/security/native-sharing-release-scan.test.py
+          test -f tests/security/fixtures/native-sharing-release-scan/safe/fixture.json
+          python tests/security/native-sharing-release-scan.test.py
+          python scripts/security/native-sharing-release-scan.py --root .
           echo 'STACKED_BASE_CHECK=PASS'
           echo 'PR_6_FROZEN=PASS'
           echo 'PR_7_NOT_IN_RELEASE_STACK=PASS'
           echo 'DYNAMIC_CAPABILITY_ROUTE_ABSENT=PASS'
           echo 'CAPABILITY_EXCHANGE_REQUIRED=PASS'
           echo 'OPAQUE_VIEWER_SESSION_POLLING=PASS'
-          echo 'DIAGNOSTIC_WORKFLOW=ABSENT'
           echo 'ARTIFACT_CURRENT_HEAD=PASS'
+          echo 'FINAL_INTEGRITY=PASS'
           echo 'CI_FINAL=SUCCESS'
           echo 'DEPLOY=NO'
           echo 'MERGE=NO'
