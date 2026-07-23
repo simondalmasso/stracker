@@ -18,9 +18,14 @@ import {
 
 export type RuntimeSqlValue = ArrayBuffer | string | number | null
 export interface RuntimeSqlRow { [column: string]: RuntimeSqlValue }
-export interface RuntimeSqlCursor<T extends RuntimeSqlRow> { toArray(): T[] }
+export interface RuntimeSqlCursor<T extends RuntimeSqlRow> {
+  readonly rowsRead: number
+  readonly rowsWritten: number
+  toArray(): T[]
+}
 export interface RuntimeSqlExecutor {
   exec<T extends RuntimeSqlRow = RuntimeSqlRow>(query: string, ...bindings: RuntimeSqlValue[]): RuntimeSqlCursor<T>
+  transactionSync<T>(callback: () => T): T
 }
 
 export class NativeSharingStoreFault extends Error {
@@ -64,6 +69,13 @@ type ViewerRow = RuntimeSqlRow & {
   created_at: string
   expires_at: string
   revoked_at: string | null
+}
+
+export interface NativeSharingStorageCounts {
+  sessions: number
+  points: number
+  viewers: number
+  sequenceStates: number
 }
 
 function one<T extends RuntimeSqlRow>(cursor: RuntimeSqlCursor<T>): T | null {
@@ -114,72 +126,93 @@ function toViewer(row: ViewerRow): OpaqueViewerSession {
   }
 }
 
+function count(cursor: RuntimeSqlCursor<RuntimeSqlRow & { count: number }>): number {
+  return Number(one(cursor)?.count ?? 0)
+}
+
 export class SqliteNativeSharingStore implements NativeSharingStore {
   constructor(private readonly sql: RuntimeSqlExecutor) {}
 
   initializeSchema(): void {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS sharing_session (
-      id TEXT PRIMARY KEY,
-      emitter_verifier TEXT NOT NULL,
-      viewer_verifier TEXT NOT NULL,
-      viewer_generation INTEGER NOT NULL,
+      id TEXT PRIMARY KEY CHECK (length(id) = 43),
+      singleton INTEGER NOT NULL DEFAULT 1 UNIQUE CHECK (singleton = 1),
+      emitter_verifier TEXT NOT NULL UNIQUE CHECK (length(emitter_verifier) = 43),
+      viewer_verifier TEXT NOT NULL UNIQUE CHECK (length(viewer_verifier) = 43),
+      viewer_generation INTEGER NOT NULL CHECK (viewer_generation >= 1),
       state TEXT NOT NULL CHECK (state IN ('active','revoked','expired')),
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       revoked_at TEXT,
-      last_sequence INTEGER NOT NULL DEFAULT 0,
+      last_sequence INTEGER NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
       last_captured_at TEXT,
       last_received_at TEXT,
-      point_count INTEGER NOT NULL DEFAULT 0
+      point_count INTEGER NOT NULL DEFAULT 0 CHECK (point_count >= 0)
     )`)
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS points (
-      sequence INTEGER PRIMARY KEY,
-      lat REAL NOT NULL,
-      lng REAL NOT NULL,
-      accuracy_m REAL,
-      speed_mps REAL,
-      heading_deg REAL,
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS accepted_points (
+      sequence INTEGER PRIMARY KEY CHECK (sequence > 0),
+      lat REAL NOT NULL CHECK (lat >= -90 AND lat <= 90),
+      lng REAL NOT NULL CHECK (lng >= -180 AND lng <= 180),
+      accuracy_m REAL CHECK (accuracy_m IS NULL OR accuracy_m >= 0),
+      speed_mps REAL CHECK (speed_mps IS NULL OR speed_mps >= 0),
+      heading_deg REAL CHECK (heading_deg IS NULL OR (heading_deg >= 0 AND heading_deg < 360)),
       captured_at TEXT NOT NULL,
       received_at TEXT NOT NULL,
-      segment_index INTEGER NOT NULL
+      segment_index INTEGER NOT NULL CHECK (segment_index >= 0)
     )`)
     this.sql.exec(`CREATE TABLE IF NOT EXISTS viewer_sessions (
-      token_verifier TEXT PRIMARY KEY,
-      sharing_session_id TEXT NOT NULL,
-      viewer_generation INTEGER NOT NULL,
+      token_verifier TEXT PRIMARY KEY CHECK (length(token_verifier) = 43),
+      sharing_session_id TEXT NOT NULL CHECK (length(sharing_session_id) = 43),
+      viewer_generation INTEGER NOT NULL CHECK (viewer_generation >= 1),
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       revoked_at TEXT
     )`)
-    this.sql.exec('CREATE INDEX IF NOT EXISTS idx_points_segment_sequence ON points(segment_index, sequence)')
-    this.sql.exec('CREATE INDEX IF NOT EXISTS idx_viewer_generation_expiry ON viewer_sessions(viewer_generation, expires_at)')
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS rate_or_sequence_state (
+      state_key TEXT PRIMARY KEY CHECK (state_key = 'point-sequence'),
+      last_sequence INTEGER NOT NULL CHECK (last_sequence >= 0),
+      updated_at TEXT NOT NULL
+    )`)
+    this.sql.exec('CREATE INDEX IF NOT EXISTS idx_accepted_points_segment_sequence ON accepted_points(segment_index, sequence)')
+    this.sql.exec('CREATE INDEX IF NOT EXISTS idx_accepted_points_sequence ON accepted_points(sequence)')
+    this.sql.exec('CREATE INDEX IF NOT EXISTS idx_viewer_active ON viewer_sessions(viewer_generation, revoked_at, expires_at)')
   }
 
   async createSession(input: CreateSessionInput): Promise<NativeSharingSession> {
-    if (one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session LIMIT 1'))) {
-      throw new NativeSharingStoreFault('SESSION_COLLISION')
-    }
-    const session = input.session
-    this.sql.exec(
-      `INSERT INTO sharing_session (
-        id, emitter_verifier, viewer_verifier, viewer_generation, state,
-        created_at, expires_at, revoked_at, last_sequence, last_captured_at,
-        last_received_at, point_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      session.id,
-      session.emitterVerifier,
-      session.viewerVerifier,
-      session.viewerGeneration,
-      session.state,
-      session.createdAt,
-      session.expiresAt,
-      session.revokedAt,
-      session.lastSequence,
-      session.lastCapturedAt,
-      session.lastReceivedAt,
-      session.pointCount,
-    )
-    return structuredClone(session)
+    return this.sql.transactionSync(() => {
+      if (one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session LIMIT 1'))) {
+        throw new NativeSharingStoreFault('SESSION_COLLISION')
+      }
+      const session = input.session
+      const inserted = this.sql.exec(
+        `INSERT INTO sharing_session (
+          id, singleton, emitter_verifier, viewer_verifier, viewer_generation, state,
+          created_at, expires_at, revoked_at, last_sequence, last_captured_at,
+          last_received_at, point_count
+        ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        session.id,
+        session.emitterVerifier,
+        session.viewerVerifier,
+        session.viewerGeneration,
+        session.state,
+        session.createdAt,
+        session.expiresAt,
+        session.revokedAt,
+        session.lastSequence,
+        session.lastCapturedAt,
+        session.lastReceivedAt,
+        session.pointCount,
+      )
+      if (inserted.rowsWritten !== 1) throw new NativeSharingStoreFault('SESSION_CREATE_FAILED')
+      const sequenceState = this.sql.exec(
+        `INSERT INTO rate_or_sequence_state (state_key, last_sequence, updated_at)
+         VALUES ('point-sequence', ?, ?)`,
+        session.lastSequence,
+        session.createdAt,
+      )
+      if (sequenceState.rowsWritten !== 1) throw new NativeSharingStoreFault('SESSION_CREATE_FAILED')
+      return structuredClone(session)
+    })
   }
 
   async getSession(sessionId: string): Promise<NativeSharingSession | null> {
@@ -188,53 +221,77 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
   }
 
   async appendPoint(sessionId: string, expectedLastSequence: number, point: AcceptedNativePoint): Promise<AppendPointResult> {
-    const session = await this.getSession(sessionId)
-    if (!session) throw new NativeSharingStoreFault('SESSION_NOT_FOUND')
-    if (session.lastSequence !== expectedLastSequence) throw new NativeSharingStoreFault('SEQUENCE_RACE')
-    if (session.pointCount >= MAX_POINTS_PER_SESSION) throw new NativeSharingStoreFault('POINT_QUOTA_EXCEEDED')
+    return this.sql.transactionSync(() => {
+      const row = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session WHERE id = ? LIMIT 1', sessionId))
+      if (!row) throw new NativeSharingStoreFault('SESSION_NOT_FOUND')
+      const session = toSession(row)
+      if (session.state !== 'active' || Date.parse(point.receivedAt) > Date.parse(session.expiresAt)) {
+        throw new NativeSharingStoreFault('SESSION_INACTIVE')
+      }
+      if (session.lastSequence !== expectedLastSequence || point.sequence <= session.lastSequence) {
+        throw new NativeSharingStoreFault('SEQUENCE_RACE')
+      }
+      if (session.pointCount >= MAX_POINTS_PER_SESSION) throw new NativeSharingStoreFault('POINT_QUOTA_EXCEEDED')
 
-    const previous = one(this.sql.exec<PointRow>('SELECT * FROM points ORDER BY sequence DESC LIMIT 1'))
-    const segmentIndex = previous
-      ? previous.segment_index + (Date.parse(point.capturedAt) - Date.parse(previous.captured_at) > SEGMENT_GAP_MS ? 1 : 0)
-      : 0
+      const previous = one(this.sql.exec<PointRow>('SELECT * FROM accepted_points ORDER BY sequence DESC LIMIT 1'))
+      const segmentIndex = previous
+        ? previous.segment_index + (Date.parse(point.capturedAt) - Date.parse(previous.captured_at) > SEGMENT_GAP_MS ? 1 : 0)
+        : 0
 
-    this.sql.exec(
-      `INSERT INTO points (
-        sequence, lat, lng, accuracy_m, speed_mps, heading_deg,
-        captured_at, received_at, segment_index
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      point.sequence,
-      point.lat,
-      point.lng,
-      point.accuracyM,
-      point.speedMps,
-      point.headingDeg,
-      point.capturedAt,
-      point.receivedAt,
-      segmentIndex,
-    )
-    this.sql.exec(
-      `UPDATE sharing_session SET
-        last_sequence = ?, last_captured_at = ?, last_received_at = ?, point_count = point_count + 1
-       WHERE id = ? AND last_sequence = ?`,
-      point.sequence,
-      point.capturedAt,
-      point.receivedAt,
-      sessionId,
-      expectedLastSequence,
-    )
-    const updated = await this.getSession(sessionId)
-    if (!updated || updated.lastSequence !== point.sequence) throw new NativeSharingStoreFault('SEQUENCE_RACE')
-    return { session: updated, point: structuredClone(point) }
+      const updated = this.sql.exec(
+        `UPDATE sharing_session SET
+          last_sequence = ?, last_captured_at = ?, last_received_at = ?, point_count = point_count + 1
+         WHERE id = ? AND state = 'active' AND expires_at >= ?
+           AND last_sequence = ? AND point_count < ?`,
+        point.sequence,
+        point.capturedAt,
+        point.receivedAt,
+        sessionId,
+        point.receivedAt,
+        expectedLastSequence,
+        MAX_POINTS_PER_SESSION,
+      )
+      if (updated.rowsWritten !== 1) throw new NativeSharingStoreFault('SEQUENCE_RACE')
+
+      const sequenceUpdated = this.sql.exec(
+        `UPDATE rate_or_sequence_state SET last_sequence = ?, updated_at = ?
+         WHERE state_key = 'point-sequence' AND last_sequence = ?`,
+        point.sequence,
+        point.receivedAt,
+        expectedLastSequence,
+      )
+      if (sequenceUpdated.rowsWritten !== 1) throw new NativeSharingStoreFault('SEQUENCE_RACE')
+
+      const inserted = this.sql.exec(
+        `INSERT INTO accepted_points (
+          sequence, lat, lng, accuracy_m, speed_mps, heading_deg,
+          captured_at, received_at, segment_index
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        point.sequence,
+        point.lat,
+        point.lng,
+        point.accuracyM,
+        point.speedMps,
+        point.headingDeg,
+        point.capturedAt,
+        point.receivedAt,
+        segmentIndex,
+      )
+      if (inserted.rowsWritten !== 1) throw new NativeSharingStoreFault('POINT_INSERT_FAILED')
+
+      const updatedRow = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session WHERE id = ? LIMIT 1', sessionId))
+      if (!updatedRow) throw new NativeSharingStoreFault('SESSION_NOT_FOUND')
+      return { session: toSession(updatedRow), point: structuredClone(point) }
+    })
   }
 
   async getLatestPoint(sessionId: string): Promise<AcceptedNativePoint | null> {
-    const row = one(this.sql.exec<PointRow>('SELECT * FROM points ORDER BY sequence DESC LIMIT 1'))
+    const row = one(this.sql.exec<PointRow>('SELECT * FROM accepted_points ORDER BY sequence DESC LIMIT 1'))
     return row ? toPoint(sessionId, row) : null
   }
 
   async getConfirmedSegments(sessionId: string, maxSegments = MAX_GHOSTRAIL_SEGMENTS): Promise<NativeSharingSegment[]> {
-    const rows = this.sql.exec<PointRow>('SELECT * FROM points ORDER BY sequence DESC LIMIT ?', MAX_POINTS_RETURNED).toArray().reverse()
+    const rows = this.sql.exec<PointRow>('SELECT * FROM accepted_points ORDER BY sequence DESC LIMIT ?', MAX_POINTS_RETURNED).toArray().reverse()
     const grouped = new Map<number, AcceptedNativePoint[]>()
     for (const row of rows) {
       const list = grouped.get(row.segment_index) ?? []
@@ -253,27 +310,29 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
   }
 
   async createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession): Promise<OpaqueViewerSession> {
-    this.sql.exec('DELETE FROM viewer_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?', viewerSession.createdAt)
-    const countRow = one(this.sql.exec<RuntimeSqlRow & { count: number }>(
-      'SELECT COUNT(*) AS count FROM viewer_sessions WHERE viewer_generation = ? AND revoked_at IS NULL AND expires_at > ?',
-      viewerSession.viewerGeneration,
-      viewerSession.createdAt,
-    ))
-    if ((countRow?.count ?? 0) >= MAX_ACTIVE_VIEWER_SESSIONS) {
-      throw new NativeSharingStoreFault('VIEWER_SESSION_QUOTA_EXCEEDED')
-    }
-    this.sql.exec(
-      `INSERT INTO viewer_sessions (
-        token_verifier, sharing_session_id, viewer_generation, created_at, expires_at, revoked_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
-      viewerSession.tokenVerifier,
-      sessionId,
-      viewerSession.viewerGeneration,
-      viewerSession.createdAt,
-      viewerSession.expiresAt,
-      viewerSession.revokedAt,
-    )
-    return structuredClone(viewerSession)
+    return this.sql.transactionSync(() => {
+      this.sql.exec('DELETE FROM viewer_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?', viewerSession.createdAt)
+      const active = count(this.sql.exec<RuntimeSqlRow & { count: number }>(
+        `SELECT COUNT(*) AS count FROM viewer_sessions
+         WHERE viewer_generation = ? AND revoked_at IS NULL AND expires_at > ?`,
+        viewerSession.viewerGeneration,
+        viewerSession.createdAt,
+      ))
+      if (active >= MAX_ACTIVE_VIEWER_SESSIONS) throw new NativeSharingStoreFault('VIEWER_SESSION_QUOTA_EXCEEDED')
+      const inserted = this.sql.exec(
+        `INSERT INTO viewer_sessions (
+          token_verifier, sharing_session_id, viewer_generation, created_at, expires_at, revoked_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+        viewerSession.tokenVerifier,
+        sessionId,
+        viewerSession.viewerGeneration,
+        viewerSession.createdAt,
+        viewerSession.expiresAt,
+        viewerSession.revokedAt,
+      )
+      if (inserted.rowsWritten !== 1) throw new NativeSharingStoreFault('VIEWER_SESSION_CREATE_FAILED')
+      return structuredClone(viewerSession)
+    })
   }
 
   async getViewerSession(sessionId: string, tokenVerifier: string): Promise<OpaqueViewerSession | null> {
@@ -286,58 +345,95 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
   }
 
   async revokeViewerSession(sessionId: string, tokenVerifier: string, revokedAt: string): Promise<boolean> {
-    const existing = await this.getViewerSession(sessionId, tokenVerifier)
-    if (!existing) return false
-    this.sql.exec(
-      'UPDATE viewer_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE sharing_session_id = ? AND token_verifier = ?',
+    const updated = this.sql.exec(
+      `UPDATE viewer_sessions SET revoked_at = COALESCE(revoked_at, ?)
+       WHERE sharing_session_id = ? AND token_verifier = ?`,
       revokedAt,
       sessionId,
       tokenVerifier,
     )
-    return true
+    return updated.rowsWritten === 1
   }
 
   async revokeAllViewerSessions(sessionId: string, revokedAt: string): Promise<number> {
-    const rows = this.sql.exec<ViewerRow>(
-      'SELECT * FROM viewer_sessions WHERE sharing_session_id = ? AND revoked_at IS NULL',
-      sessionId,
-    ).toArray()
-    this.sql.exec(
+    const updated = this.sql.exec(
       'UPDATE viewer_sessions SET revoked_at = ? WHERE sharing_session_id = ? AND revoked_at IS NULL',
       revokedAt,
       sessionId,
     )
-    return rows.length
+    return updated.rowsWritten
   }
 
   async revokeSession(sessionId: string, revokedAt: string): Promise<NativeSharingSession | null> {
-    const session = await this.getSession(sessionId)
-    if (!session) return null
-    this.sql.exec('UPDATE sharing_session SET state = ?, revoked_at = ? WHERE id = ?', 'revoked', revokedAt, sessionId)
-    await this.revokeAllViewerSessions(sessionId, revokedAt)
-    return this.getSession(sessionId)
+    return this.sql.transactionSync(() => {
+      const session = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session WHERE id = ? LIMIT 1', sessionId))
+      if (!session) return null
+      const updated = this.sql.exec(
+        `UPDATE sharing_session SET state = 'revoked', revoked_at = COALESCE(revoked_at, ?)
+         WHERE id = ?`,
+        revokedAt,
+        sessionId,
+      )
+      if (updated.rowsWritten !== 1) throw new NativeSharingStoreFault('SESSION_REVOKE_FAILED')
+      this.sql.exec(
+        'UPDATE viewer_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE sharing_session_id = ? AND revoked_at IS NULL',
+        revokedAt,
+        sessionId,
+      )
+      const result = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session WHERE id = ? LIMIT 1', sessionId))
+      return result ? toSession(result) : null
+    })
   }
 
   async rotateViewerCapability(sessionId: string, verifier: string, revokedAt: string): Promise<NativeSharingSession | null> {
-    const session = await this.getSession(sessionId)
-    if (!session || session.state !== 'active') return null
-    await this.revokeAllViewerSessions(sessionId, revokedAt)
-    this.sql.exec(
-      'UPDATE sharing_session SET viewer_verifier = ?, viewer_generation = viewer_generation + 1 WHERE id = ?',
-      verifier,
-      sessionId,
-    )
-    return this.getSession(sessionId)
+    return this.sql.transactionSync(() => {
+      const row = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session WHERE id = ? LIMIT 1', sessionId))
+      if (!row || row.state !== 'active') return null
+      const updated = this.sql.exec(
+        `UPDATE sharing_session
+         SET viewer_verifier = ?, viewer_generation = viewer_generation + 1
+         WHERE id = ? AND state = 'active' AND viewer_generation = ?`,
+        verifier,
+        sessionId,
+        row.viewer_generation,
+      )
+      if (updated.rowsWritten !== 1) throw new NativeSharingStoreFault('VIEWER_ROTATION_RACE')
+      this.sql.exec(
+        'UPDATE viewer_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE sharing_session_id = ? AND revoked_at IS NULL',
+        revokedAt,
+        sessionId,
+      )
+      const result = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session WHERE id = ? LIMIT 1', sessionId))
+      return result ? toSession(result) : null
+    })
   }
 
   async deleteExpired(nowIso: string): Promise<number> {
-    this.sql.exec('DELETE FROM viewer_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?', nowIso)
+    return this.sql.transactionSync(() => {
+      this.sql.exec('DELETE FROM viewer_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?', nowIso)
+      const session = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session LIMIT 1'))
+      if (!session) return 0
+      const deadline = Date.parse(session.expires_at) + DELETE_AFTER_EXPIRATION_MS
+      if (Date.parse(nowIso) < deadline) return 0
+      this.sql.exec('DELETE FROM viewer_sessions')
+      this.sql.exec('DELETE FROM accepted_points')
+      this.sql.exec('DELETE FROM rate_or_sequence_state')
+      this.sql.exec('DELETE FROM sharing_session')
+      return 1
+    })
+  }
+
+  deletionDeadlineMs(): number | null {
     const session = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session LIMIT 1'))
-    if (!session) return 0
-    if (Date.parse(nowIso) <= Date.parse(session.expires_at) + DELETE_AFTER_EXPIRATION_MS) return 0
-    this.sql.exec('DELETE FROM viewer_sessions')
-    this.sql.exec('DELETE FROM points')
-    this.sql.exec('DELETE FROM sharing_session')
-    return 1
+    return session ? Date.parse(session.expires_at) + DELETE_AFTER_EXPIRATION_MS : null
+  }
+
+  storageCounts(): NativeSharingStorageCounts {
+    return {
+      sessions: count(this.sql.exec<RuntimeSqlRow & { count: number }>('SELECT COUNT(*) AS count FROM sharing_session')),
+      points: count(this.sql.exec<RuntimeSqlRow & { count: number }>('SELECT COUNT(*) AS count FROM accepted_points')),
+      viewers: count(this.sql.exec<RuntimeSqlRow & { count: number }>('SELECT COUNT(*) AS count FROM viewer_sessions')),
+      sequenceStates: count(this.sql.exec<RuntimeSqlRow & { count: number }>('SELECT COUNT(*) AS count FROM rate_or_sequence_state')),
+    }
   }
 }
