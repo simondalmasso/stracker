@@ -7,7 +7,12 @@ import type {
 } from '../../native-sharing-cloudflare/src/sqlite-store.js'
 
 class TestSqlCursor<T extends RuntimeSqlRow> implements RuntimeSqlCursor<T> {
-  constructor(private readonly rows: T[]) {}
+  constructor(
+    private readonly rows: T[],
+    readonly rowsRead: number,
+    readonly rowsWritten: number,
+  ) {}
+
   toArray(): T[] { return this.rows.map((row) => ({ ...row })) }
 }
 
@@ -24,10 +29,14 @@ export class BunSqlExecutor implements RuntimeSqlExecutor {
     const returnsRows = /^\s*(?:SELECT|PRAGMA|WITH)\b/i.test(query) || /\bRETURNING\b/i.test(query)
     if (returnsRows) {
       const rows = statement.all(...normalized) as T[]
-      return new TestSqlCursor(rows)
+      return new TestSqlCursor(rows, rows.length, 0)
     }
-    statement.run(...normalized)
-    return new TestSqlCursor<T>([])
+    const result = statement.run(...normalized)
+    return new TestSqlCursor<T>([], 0, Number(result.changes))
+  }
+
+  transactionSync<T>(callback: () => T): T {
+    return this.database.transaction(callback)()
   }
 
   close(): void { this.database.close() }
