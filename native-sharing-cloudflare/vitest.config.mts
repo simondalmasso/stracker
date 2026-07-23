@@ -6,10 +6,12 @@ export default defineConfig({
     cloudflareTest({
       wrangler: { configPath: './native-sharing-cloudflare/wrangler.jsonc' },
       miniflare: {
+        // Test-only ceiling for the bundled workerd binary; production remains defined by wrangler.jsonc.
         compatibilityDate: '2026-07-02',
         durableObjects: {
           NATIVE_SHARING: {
             className: 'NativeSharingDurableObject',
+            // Validates workerd SQLite semantics only. Lifecycle exports are gated separately.
             useSQLite: true,
           },
         },
