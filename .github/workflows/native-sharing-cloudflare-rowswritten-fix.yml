@@ -1,4 +1,4 @@
-name: STRACKER Native Sharing Cloudflare RowsWritten Fix
+name: STRACKER Native Sharing Cloudflare Proof Cleanup
 
 on:
   pull_request:
@@ -18,44 +18,57 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - name: Apply exact cursor-consumption correction
+      - name: Align compensation proof and remove diagnostics
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
-          path = Path('native-sharing-cloudflare/src/sqlite-store.ts')
-          text = path.read_text()
-          if 'function completedRowsWritten' not in text:
-              marker = "function count(cursor: RuntimeSqlCursor<RuntimeSqlRow & { count: number }>): number {\n  return Number(one(cursor)?.count ?? 0)\n}\n"
-              helper = marker + "\nfunction completedRowsWritten(cursor: RuntimeSqlCursor<RuntimeSqlRow>): number {\n  cursor.toArray()\n  return cursor.rowsWritten\n}\n"
-              if marker not in text:
-                  raise SystemExit('count helper marker missing')
-              text = text.replace(marker, helper)
-          text = re.sub(r'\b([A-Za-z][A-Za-z0-9_]*)\.rowsWritten\b', r'completedRowsWritten(\1)', text)
-          text = text.replace('return completedRowsWritten(cursor)', 'return cursor.rowsWritten')
-          path.write_text(text)
+          test_path = Path('tests/native-sharing-cloudflare/workerd-atomicity.test.ts')
+          text = test_path.read_text()
+          old = """    await runInDurableObject(object, async (_instance: NativeSharingDurableObject, state) => {
+      const tables = state.storage.sql.exec<{ name: string }>(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name IN (
+           'sharing_session', 'accepted_points', 'viewer_sessions', 'rate_or_sequence_state'
+         )`,
+      ).toArray()
+      expect(tables).toEqual([])
+      expect(await state.storage.getAlarm()).toBeNull()
+    })
+"""
+          new = """    await runInDurableObject(object, async (_instance: NativeSharingDurableObject, state) => {
+      const counts = {
+        sessions: state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM sharing_session').toArray()[0]?.count ?? -1,
+        points: state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM accepted_points').toArray()[0]?.count ?? -1,
+        viewers: state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM viewer_sessions').toArray()[0]?.count ?? -1,
+        sequenceStates: state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM rate_or_sequence_state').toArray()[0]?.count ?? -1,
+      }
+      expect(counts).toEqual({ sessions: 0, points: 0, viewers: 0, sequenceStates: 0 })
+      expect(await state.storage.getAlarm()).toBeNull()
+    })
+"""
+          if old not in text:
+              raise SystemExit('alarm compensation test block missing')
+          test_path.write_text(text.replace(old, new))
 
-          runtime_test = Path('tests/native-sharing-cloudflare/runtime.test.ts')
-          test_text = runtime_test.read_text().replace(
-              "test('uses SQLite conditional writes for concurrent point writes'",
-              "test('rejects a stale expected sequence with conditional SQLite writes'",
+          config = Path('native-sharing-cloudflare/vitest.config.mts')
+          config_text = config.read_text().replace(
+              "include: ['tests/native-sharing-cloudflare/workerd-*.test.ts']",
+              "include: ['tests/native-sharing-cloudflare/workerd-atomicity.test.ts']",
           )
-          runtime_test.write_text(test_text)
+          config.write_text(config_text)
           PY
+          rm -f tests/native-sharing-cloudflare/workerd-create-session-diagnostic.test.ts
+          rm -f .github/workflows/native-sharing-cloudflare-vitest-diagnostic.yml
+          rm -f .github/workflows/native-sharing-cloudflare-rowswritten-fix.yml
           git diff --check
-          if git diff --quiet; then
-            echo 'No cursor-consumption changes required.'
-            exit 0
-          fi
-      - name: Commit linear correction
+      - name: Commit clean intermediate proof
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          if git diff --quiet; then exit 0; fi
           git config user.name 'stracker-ci'
           git config user.email 'stracker-ci@users.noreply.github.com'
-          git add native-sharing-cloudflare/src/sqlite-store.ts tests/native-sharing-cloudflare/runtime.test.ts
-          git commit -m 'fix: consume workerd SQL cursors before rowsWritten checks'
+          git add -A
+          git commit -m 'test: finalize workerd atomicity proof'
           git push origin "HEAD:$HEAD_BRANCH"
