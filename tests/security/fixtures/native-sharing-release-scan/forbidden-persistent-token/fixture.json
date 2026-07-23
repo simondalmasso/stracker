@@ -1,0 +1,1 @@
+{"files":[{"path":"src/lib/location-source/viewer.ts","content":"localStorage.setItem('viewer-token', viewerSessionToken)\n"}],"expected":[{"ruleId":"PERSISTENT_VIEWER_TOKEN","filePath":"src/lib/location-source/viewer.ts"}]}

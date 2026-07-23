@@ -1,0 +1,1 @@
+{"files":[{"path":"src/lib/location-source/contracts.ts","content":"export type Source = 'google-shared'\n"}],"expected":[{"ruleId":"LEGACY_GOOGLE_SHARED_SOURCE","filePath":"src/lib/location-source/contracts.ts"}]}

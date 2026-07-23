@@ -1,0 +1,1 @@
+{"files":[{"path":"native-sharing/src/key.ts","content":"export const key = \"-----BEGIN PRIVATE KEY-----\"\n"}],"expected":[{"ruleId":"PRIVATE_KEY_MATERIAL","filePath":"native-sharing/src/key.ts"}]}

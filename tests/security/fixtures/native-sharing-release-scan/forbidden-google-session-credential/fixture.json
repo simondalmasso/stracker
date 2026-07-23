@@ -1,0 +1,1 @@
+{"files":[{"path":"native-sharing/src/google.ts","content":"export const headers = { Cookie: \"SID=abcdefghijklmnop\" }\n"}],"expected":[{"ruleId":"GOOGLE_SESSION_CREDENTIAL","filePath":"native-sharing/src/google.ts"}]}

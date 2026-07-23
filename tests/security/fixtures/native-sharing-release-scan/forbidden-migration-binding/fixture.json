@@ -1,0 +1,1 @@
+{"files":[{"path":"wrangler.toml","content":"[[migrations]]\ntag = \"v1\"\n"}],"expected":[{"ruleId":"INFRA_MIGRATION_BINDING","filePath":"wrangler.toml"}]}
