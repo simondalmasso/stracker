@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
-import type { CreateSessionResponse, NativeSharedLocationPoint } from '../../native-sharing/src/contracts.js'
+import type { AcceptedNativePoint, CreateSessionResponse, NativeSharedLocationPoint } from '../../native-sharing/src/contracts.js'
 import { handleNativeSharingRequest } from '../../native-sharing-cloudflare/src/worker.js'
 import {
   MAX_ACTIVE_VIEWER_SESSIONS,
@@ -9,6 +9,7 @@ import {
   VIEWER_SESSION_TTL_MS,
 } from '../../native-sharing-cloudflare/src/runtime-limits.js'
 import type { NativeSharingRpcStub, NativeSharingRuntimeBindings } from '../../native-sharing-cloudflare/src/runtime-contracts.js'
+import { NativeSharingStoreFault } from '../../native-sharing-cloudflare/src/sqlite-store.js'
 import { TestNativeSharingNamespace, createTestSessionObject, directSession, expectError, testBindings } from './test-runtime.js'
 
 const openNamespaces: TestNativeSharingNamespace[] = []
@@ -112,15 +113,38 @@ describe('SQLite Durable Object runtime', () => {
     const fixed = new Date('2026-07-22T20:00:00.000Z')
     const object = createTestSessionObject(() => fixed)
     const created = await directSession(object.runtime, fixed)
-    const attempts = await Promise.all([
-      object.runtime.appendPoint(created.input.session.id, created.emitterToken, point(1, fixed.toISOString())),
-      object.runtime.appendPoint(created.input.session.id, created.emitterToken, point(1, fixed.toISOString())),
-    ])
-    const failures = attempts.filter((result) => !result.ok)
-    expect(attempts.filter((result) => result.ok)).toHaveLength(1)
-    expect(failures).toHaveLength(1)
-    expect(['REPLAY_REJECTED', 'SEQUENCE_RACE']).toContain(failures[0].code)
-    expect((await object.store.getSession(created.input.session.id))?.pointCount).toBe(1)
+    const acceptedPoint: AcceptedNativePoint = {
+      ...point(1, fixed.toISOString()),
+      receivedAt: fixed.toISOString(),
+      sessionId: created.input.session.id,
+      acceptanceState: 'accepted',
+    }
+
+    const first = await object.store.appendPoint(created.input.session.id, 0, acceptedPoint)
+    expect(first.point.sequence).toBe(1)
+
+    let secondFailure: unknown = null
+    try {
+      await object.store.appendPoint(created.input.session.id, 0, acceptedPoint)
+    } catch (error) {
+      secondFailure = error
+    }
+    expect(secondFailure).toBeInstanceOf(NativeSharingStoreFault)
+    expect((secondFailure as NativeSharingStoreFault).code).toBe('SEQUENCE_RACE')
+
+    const session = object.sql.database.query(
+      'SELECT point_count, last_sequence FROM sharing_session WHERE id = ?',
+    ).get(created.input.session.id) as { point_count: number; last_sequence: number }
+    const pointRows = object.sql.database.query(
+      'SELECT COUNT(*) AS count FROM accepted_points',
+    ).get() as { count: number }
+    const sequenceState = object.sql.database.query(
+      `SELECT last_sequence FROM rate_or_sequence_state WHERE state_key = 'point-sequence'`,
+    ).get() as { last_sequence: number }
+
+    expect(session).toEqual({ point_count: 1, last_sequence: 1 })
+    expect(pointRows.count).toBe(1)
+    expect(sequenceState.last_sequence).toBe(1)
     object.sql.close()
   })
 
