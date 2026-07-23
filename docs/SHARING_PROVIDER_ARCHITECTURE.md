@@ -49,23 +49,61 @@ provider transport
 
 ## Native provider
 
+Emitter:
+
 ```text
-Emitter browser
-→ explicit geolocation consent
+explicit geolocation consent
 → native session creation
-→ emitter capability
+→ emitter capability in document memory
 → validated sequential point publications
 → NativeSharingStore
+```
 
-Viewer private link
-→ explicit viewer confirmation
-→ viewer capability validation
-→ sanitized confirmed points
+Viewer:
+
+```text
+/shared#v=<viewer-capability>
+→ initial HTTP request contains only /shared
+→ static inert confirmation screen
+→ explicit VER UBICACIÓN
+→ one-time POST /api/share/viewer/exchange
+→ opaque short-lived viewer session
+→ fragment removed
+→ authorized polling
 → shared-location pipeline
 → MapLibre
 ```
 
 The emitter and viewer have independent controls and no shared browser state.
+
+## Viewer authority layers
+
+```text
+VIEWER_CAPABILITY
+!=
+OPAQUE_VIEWER_SESSION
+!=
+EMITTER_CAPABILITY
+```
+
+The viewer capability:
+
+- exists only after `#v=`;
+- is never in HTTP path or query;
+- is sent once in the exchange JSON body after confirmation;
+- is cleared from browser state after exchange.
+
+The opaque viewer session:
+
+- is independently generated;
+- is stored server-side as a verifier, generation and expiration;
+- remains only in viewer document memory;
+- is sent as `Authorization: Bearer`;
+- is checked on every read;
+- is revocable immediately;
+- is invalidated by viewer-capability rotation or sharing-session revocation.
+
+No JWT-only stateless viewer authority is used.
 
 ## Google experimental provider
 
@@ -100,6 +138,7 @@ stop polling
 abort requests
 increment generation guard
 cancel timers and animations
+clear viewer session authority
 clear snapshot
 clear stable coordinate
 clear accuracy filter
@@ -108,6 +147,7 @@ clear GhostRail
 clear timestamps
 reset camera
 reject late responses
+best-effort viewer logout
 ```
 
 `my-device`, `stracker-native` and any future `google-session-experimental` provider never share observation buffers, session authority, capabilities, timestamps or GhostRail segments.
@@ -115,13 +155,49 @@ reject late responses
 ## Route ownership
 
 ```text
-/                         root source selector
-/share                    native emitter
-/shared/<capability>       native viewer confirmation and map
-/api/share/sessions...     native HTTP PoC contract
+/                              root source selector
+/share                         native emitter
+/shared                        static native viewer confirmation and map
+/shared#v=<capability>         shareable browser URL; fragment is not sent to server
+/api/share/sessions...         native sharing HTTP contract
+/api/share/viewer/exchange     one-time capability exchange
+/api/share/viewer/logout       revoke current opaque viewer session
 ```
 
-The viewer route is inert before confirmation. Merely receiving or opening the link does not validate the capability, request points or mount the map.
+Forbidden route forms:
+
+```text
+/shared/<capability>
+/shared?token=<capability>
+/shared?capability=<capability>
+```
+
+The viewer route is inert before confirmation. Opening the link does not exchange authority, request status or points, mount the map or request geolocation.
+
+## HTTP and browser security surface
+
+Shared route requirements:
+
+```text
+Cache-Control=no-store
+Referrer-Policy=no-referrer
+Content-Security-Policy=restrictive
+Permissions-Policy=geolocation=(), camera=(), microphone=()
+ANALYTICS=OFF
+ROBOTS=noindex
+```
+
+API requirements:
+
+```text
+JSON_ONLY=YES
+QUERY_PARAMETERS=REJECTED
+OPEN_CORS=NO
+REDIRECTS=NO
+SANITIZED_ERRORS=YES
+CAPABILITIES_IN_LOGS=NO
+CAPABILITIES_IN_ARTIFACTS=NO
+```
 
 ## Map invariants
 
@@ -145,10 +221,13 @@ Switching basemap modes:
 
 ## Privacy surfaces
 
-Native sharing sends coordinates only to the native session endpoint after explicit emitter action. Map providers receive viewport-derived tile requests after the viewer explicitly opens the map. Capabilities are not sent to map providers.
+Native sharing sends coordinates only to the native session endpoint after explicit emitter action. Map providers receive viewport-derived tile requests only after the viewer explicitly opens the map. No authority is sent to map providers.
 
 ```text
 EMITTER_TOKEN_IN_URL=NO
+VIEWER_CAPABILITY_IN_PATH=NO
+VIEWER_CAPABILITY_IN_QUERY=NO
+VIEWER_SESSION_TOKEN_IN_URL=NO
 VIEWER_TOKEN_IN_MAP_REQUEST=NO
 CAPABILITY_IN_LOGS=NO
 GOOGLE_REQUESTS=NO
