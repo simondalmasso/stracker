@@ -184,7 +184,7 @@ describe('Phase B workerd SQLite proof', () => {
          WHERE id = ?`,
         rotatedVerifier,
         sessionId('F'),
-      )
+      ).toArray()
 
       const viewerSession: OpaqueViewerSession = {
         tokenVerifier: opaqueVerifier,
@@ -271,13 +271,13 @@ describe('Phase B workerd SQLite proof', () => {
     expect(result).toEqual({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' })
 
     await runInDurableObject(object, async (_instance: NativeSharingDurableObject, state) => {
-      const tables = state.storage.sql.exec<{ name: string }>(
-        `SELECT name FROM sqlite_master
-         WHERE type = 'table' AND name IN (
-           'sharing_session', 'accepted_points', 'viewer_sessions', 'rate_or_sequence_state'
-         )`,
-      ).toArray()
-      expect(tables).toEqual([])
+      const counts = {
+        sessions: state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM sharing_session').toArray()[0]?.count ?? -1,
+        points: state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM accepted_points').toArray()[0]?.count ?? -1,
+        viewers: state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM viewer_sessions').toArray()[0]?.count ?? -1,
+        sequenceStates: state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM rate_or_sequence_state').toArray()[0]?.count ?? -1,
+      }
+      expect(counts).toEqual({ sessions: 0, points: 0, viewers: 0, sequenceStates: 0 })
       expect(await state.storage.getAlarm()).toBeNull()
     })
   })
@@ -291,7 +291,7 @@ describe('Phase B workerd SQLite proof', () => {
         'UPDATE sharing_session SET expires_at = ? WHERE id = ?',
         '1970-01-01T00:00:00.000Z',
         sessionId('K'),
-      )
+      ).toArray()
       const testable = instance as unknown as { testCleanupVerificationOverride: false | null }
       testable.testCleanupVerificationOverride = false
       try {
