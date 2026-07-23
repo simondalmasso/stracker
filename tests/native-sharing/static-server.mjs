@@ -21,12 +21,22 @@ const sharedCsp = [
   "manifest-src 'self'",
 ].join('; ')
 
+function safeCandidate(relative) {
+  const candidate = resolve(root, relative)
+  if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) return null
+  return existsSync(candidate) && statSync(candidate).isFile() ? candidate : null
+}
+
 function resolvePath(pathname) {
   const decoded = decodeURIComponent(pathname)
   if (decoded.includes('\0') || decoded.includes('\\')) return null
-  const relative = decoded === '/' ? 'index.html' : `${decoded.replace(/^\/+/, '').replace(/\/$/, '')}${extname(decoded) ? '' : '/index.html'}`
-  const candidate = resolve(root, relative)
-  return candidate === root || candidate.startsWith(`${root}${sep}`) ? candidate : null
+  if (decoded === '/') return safeCandidate('index.html')
+
+  const relative = decoded.replace(/^\/+/, '').replace(/\/$/, '')
+  if (!relative || relative.split('/').some((part) => part === '..')) return null
+  if (extname(relative)) return safeCandidate(relative)
+
+  return safeCandidate(`${relative}.html`) || safeCandidate(`${relative}/index.html`)
 }
 
 const server = createServer((request, response) => {
@@ -36,7 +46,7 @@ const server = createServer((request, response) => {
     return
   }
   const file = resolvePath(url.pathname)
-  if (!file || !existsSync(file) || !statSync(file).isFile()) {
+  if (!file) {
     response.writeHead(404, { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }).end()
     return
   }
