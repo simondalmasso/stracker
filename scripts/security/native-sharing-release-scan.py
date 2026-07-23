@@ -211,7 +211,7 @@ def _scan_product_file(root: Path, path: Path, findings: set[Finding]) -> None:
         _add(findings, RULE_LEGACY_GOOGLE_SHARED_SOURCE, root, path)
 
     credential_pattern = re.compile(
-        r"(?i)(?:^|[;,{\s])(?:SID|HSID|SSID|APISID|SAPISID)\s*[:=]\s*['\"][A-Za-z0-9._-]{8,}['\"]"
+        r"(?i)(?:^|[;,\{\s])(?:SID|HSID|SSID|APISID|SAPISID)\s*[:=]\s*['\"][A-Za-z0-9._-]{8,}['\"]"
     )
     cookie_header_pattern = re.compile(r"(?i)\bCookie\s*:\s*['\"][^'\"]*(?:SID|HSID|SSID|APISID|SAPISID)=")
     if credential_pattern.search(text) or cookie_header_pattern.search(text):
@@ -226,7 +226,7 @@ def _scan_product_file(root: Path, path: Path, findings: set[Finding]) -> None:
         _add(findings, RULE_VIEWER_CAPABILITY_IN_URL, root, path)
 
     persistent_pattern = re.compile(
-        r"(?is)\b(?:localStorage|sessionStorage)\s*\.\s*(?:setItem|getItem)\s*\([^)]*(?:viewer|capability|token)"
+        r"(?is)(?:\b(?:localStorage|sessionStorage)\s*\.\s*(?:setItem|getItem)\s*\([^)]*(?:viewer|capability|token)|\bindexedDB\b[^;\n]*(?:viewer|capability|token))"
     )
     if persistent_pattern.search(text):
         _add(findings, RULE_PERSISTENT_VIEWER_TOKEN, root, path)
@@ -355,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     if findings:
         emit_findings(findings)
         return 1
-    print("NATIVE_SHARING_RELEASE_SCAN=PASS")
+    print("SECURITY_RELEASE_SCAN=PASS")
     return 0
 
 
