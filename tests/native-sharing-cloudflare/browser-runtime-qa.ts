@@ -152,8 +152,11 @@ const results = {
   gates: {} as Record<string, string>,
 }
 
+let stage = 'startup'
 try {
   for (const viewport of viewports) {
+    const label = `${viewport.width}x${viewport.height}`
+    stage = `emitter-document:${label}`
     const context = await browser.createBrowserContext()
     const emitterPage = await context.newPage()
     await emitterPage.setViewport({ ...viewport, deviceScaleFactor: 1, isMobile: true, hasTouch: true })
@@ -166,13 +169,15 @@ try {
     await noOverflow(emitterPage)
     assert(observations.slice(beforeEmitter).every((entry) => !entry.pathname.startsWith('/api/share/')), 'emitter used API before confirmation')
     await clickText(emitterPage, 'INICIAR TRANSMISIÓN')
-    await emitterPage.waitForFunction(() => document.body.textContent?.includes('ENLACE PRIVADO'))
+    stage = `emitter-private-link:${label}`
+    await emitterPage.waitForSelector('input[aria-label="Enlace privado de espectador"]', { timeout: 30_000 })
     currentCapability = await emitterPage.$eval('input[aria-label="Enlace privado de espectador"]', (input) => {
       const value = (input as HTMLInputElement).value
       return new URL(value).hash.replace(/^#v=/, '')
     })
     assert(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(currentCapability), 'viewer capability format invalid')
 
+    stage = `viewer-confirmation:${label}`
     const viewerPage = await context.newPage()
     await viewerPage.setViewport({ ...viewport, deviceScaleFactor: 1, isMobile: true, hasTouch: true })
     await installSyntheticGeolocation(viewerPage)
@@ -189,9 +194,12 @@ try {
     assert((await viewerPage.$$('main[data-map-engine]')).length === 0, 'map before viewer confirmation')
 
     await clickText(viewerPage, 'VER UBICACIÓN')
-    await viewerPage.waitForFunction(() => window.location.pathname === '/shared' && window.location.search === '' && window.location.hash === '')
+    stage = `viewer-fragment-cleanup:${label}`
+    await viewerPage.waitForFunction(() => window.location.pathname === '/shared' && window.location.search === '' && window.location.hash === '', { timeout: 30_000 })
+    stage = `viewer-map:${label}`
     await viewerPage.waitForSelector('main[data-map-engine="maplibre"]', { timeout: 30_000 })
-    await viewerPage.waitForFunction(() => document.querySelector('main[data-freshness]') !== null)
+    stage = `viewer-freshness:${label}`
+    await viewerPage.waitForFunction(() => document.querySelector('main[data-freshness]') !== null, { timeout: 30_000 })
     const afterConfirmation = observations.slice(beforeViewer)
     const exchanges = afterConfirmation.filter((entry) => entry.pathname === '/api/share/viewer/exchange')
     const polls = afterConfirmation.filter((entry) => entry.method === 'GET' && (entry.pathname.endsWith('/status') || entry.pathname.endsWith('/points')))
@@ -219,6 +227,9 @@ try {
   }
   await Bun.write(outputPath, `${JSON.stringify(results, null, 2)}\n`)
   console.log('NATIVE_SHARING_CLOUDFLARE_BROWSER_QA=PASS viewports=5')
+} catch (error) {
+  console.error(`BROWSER_QA_STAGE=${stage}`)
+  throw error
 } finally {
   await browser.close()
   server.stop(true)
