@@ -105,7 +105,7 @@ describe('SQLite Durable Object runtime', () => {
     expect(ns.routedNames.every((name) => name === created.sessionId)).toBe(true)
   })
 
-  test('serializes concurrent point writes and rejects sequence race', async () => {
+  test('serializes concurrent point writes and rejects the duplicate as replay', async () => {
     const fixed = new Date('2026-07-22T20:00:00.000Z')
     const object = createTestSessionObject(() => fixed)
     const created = await directSession(object.runtime, fixed)
@@ -114,7 +114,8 @@ describe('SQLite Durable Object runtime', () => {
       object.runtime.appendPoint(created.input.session.id, created.emitterToken, point(1, fixed.toISOString())),
     ])
     expect(attempts.filter((result) => result.ok)).toHaveLength(1)
-    expect(attempts.filter((result) => !result.ok && result.code === 'SEQUENCE_RACE')).toHaveLength(1)
+    expect(attempts.filter((result) => !result.ok && result.code === 'REPLAY_REJECTED')).toHaveLength(1)
+    expect((await object.store.getSession(created.input.session.id))?.pointCount).toBe(1)
     object.sql.close()
   })
 
@@ -150,6 +151,7 @@ describe('SQLite Durable Object runtime', () => {
     object.sql.database.query('UPDATE sharing_session SET point_count = ? WHERE id = ?').run(MAX_POINTS_PER_SESSION, created.input.session.id)
     expectError(await object.runtime.appendPoint(created.input.session.id, created.emitterToken, point(1, fixed.toISOString())), 'POINT_QUOTA_EXCEEDED')
     expect((await object.store.getSession(created.input.session.id))?.pointCount).toBe(MAX_POINTS_PER_SESSION)
+    expect(await object.store.getLatestPoint(created.input.session.id)).toBeNull()
     object.sql.close()
   })
 
