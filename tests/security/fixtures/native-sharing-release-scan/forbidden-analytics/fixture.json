@@ -1,0 +1,1 @@
+{"files":[{"path":"src/app/shared/page.tsx","content":"export const analytics = \"https://www.googletagmanager.com/gtm.js\"\n"}],"expected":[{"ruleId":"SHARED_ROUTE_ANALYTICS","filePath":"src/app/shared/page.tsx"}]}

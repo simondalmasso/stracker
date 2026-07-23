@@ -1,0 +1,1 @@
+{"files":[{"path":"src/app/shared/page.tsx","content":"export const unsafe = \"/shared/<capability>\"\n"}],"expected":[{"ruleId":"VIEWER_CAPABILITY_IN_URL","filePath":"src/app/shared/page.tsx"}]}

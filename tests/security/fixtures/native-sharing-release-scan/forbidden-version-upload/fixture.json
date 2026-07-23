@@ -1,0 +1,1 @@
+{"files":[{"path":".github/workflows/native-location-sharing-v1.yml","content":"jobs:\n  release:\n    steps:\n      - name: version\n        run: wrangler versions upload\n"}],"expected":[{"ruleId":"INFRA_WRANGLER_MUTATION","filePath":".github/workflows/native-location-sharing-v1.yml"}]}

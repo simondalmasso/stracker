@@ -47,7 +47,7 @@ describe('motion classifier', () => {
   })
 
   test('keeps shared motion unknown when remote timing is not usable', () => {
-    const result = classifyMotion(initialMotionClassifierState(), sample('google-shared', null), filter('accepted', 5, 1))
+    const result = classifyMotion(initialMotionClassifierState(), sample('shared-location', null), filter('accepted', 5, 1))
     expect(result.state.motion).toBe('unknown')
     expect(result.evidence).toBe('insufficient')
   })

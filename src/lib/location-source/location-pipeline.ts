@@ -1,9 +1,9 @@
 import type {
   GhostRailSegment,
   LocationSample,
+  LocationSessionState,
   LocationSnapshot,
   LocationSource,
-  SharedSessionState,
 } from './contracts'
 import { freshnessFromTimestamp } from './contracts'
 import {
@@ -76,7 +76,7 @@ export function recordPipelineError(
 
 export function refreshPipelineTime(
   previous: LocationPipelineState,
-  sharedSession: SharedSessionState,
+  viewerSession: LocationSessionState,
   nowMs = Date.now(),
 ): LocationPipelineState {
   if (!previous.latest) return previous
@@ -89,7 +89,7 @@ export function refreshPipelineTime(
       consecutiveErrors: previous.consecutiveErrors,
       nowMs,
     }),
-    sharedSession,
+    viewerSession,
   }
   return { ...previous, latest }
 }
@@ -97,7 +97,7 @@ export function refreshPipelineTime(
 export function processLocationSample(
   previous: LocationPipelineState,
   sample: LocationSample,
-  sharedSession: SharedSessionState,
+  viewerSession: LocationSessionState,
 ): LocationPipelineResult {
   if (sample.source !== previous.source) {
     previous = initialLocationPipelineState(sample.source, previous.sessionEpoch + 1)
@@ -122,7 +122,7 @@ export function processLocationSample(
         freshness,
         health: sourceHealthFromInput({ source: sample.source, lastReceivedAt: sample.receivedAt, consecutiveErrors: 0 }),
         motion: motion.state.motion,
-        sharedSession,
+        viewerSession,
         visualUpdated: filter.decision === 'accepted',
         filterDecision: filter.decision,
         filterReason: filter.reason,
@@ -138,7 +138,7 @@ export function processLocationSample(
           freshness,
           health: sourceHealthFromInput({ source: sample.source, lastReceivedAt: sample.receivedAt, consecutiveErrors: 0 }),
           motion: motion.state.motion,
-          sharedSession,
+          viewerSession,
           visualUpdated: false,
           filterDecision: filter.decision,
           filterReason: filter.reason,

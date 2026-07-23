@@ -1,0 +1,1 @@
+{"files":[{"path":"native-sharing/src/google.ts","content":"export const endpoint = \"https://www.google.com/maps/rpc/locationsharing/read\"\n"}],"expected":[{"ruleId":"GOOGLE_INTERNAL_ENDPOINT","filePath":"native-sharing/src/google.ts"}]}

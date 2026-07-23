@@ -1,0 +1,1 @@
+{"files":[{"path":"src/lib/location-source/viewer.ts","content":"console.log(viewerToken)\n"}],"expected":[{"ruleId":"SENSITIVE_LOGGING","filePath":"src/lib/location-source/viewer.ts"}]}

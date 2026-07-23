@@ -80,7 +80,7 @@ export function classifyMotion(
   return {
     evidence,
     state: {
-      motion: sample.source === 'google-shared' ? 'unknown' : previous.motion,
+      motion: previous.motion,
       movingConfirmations: 0,
       stationaryConfirmations: 0,
     },

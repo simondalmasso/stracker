@@ -1,0 +1,1 @@
+{"files":[{"path":"wrangler.toml","content":"[durable_objects]\nbindings = []\n"}],"expected":[{"ruleId":"INFRA_DURABLE_OBJECT_BINDING","filePath":"wrangler.toml"}]}
