@@ -16,7 +16,7 @@
     "test:gateway-e2e": "node --test gateway/tests/mock-e2e.test.mjs",
     "test:gateway-invariants": "node tests/gateway_product_invariants.mjs",
     "test:vector-map": "bun test tests/vector-map",
-    "test:native-sharing-cloudflare:vitest": "vitest run --config native-sharing-cloudflare/vitest.config.ts",
+    "test:native-sharing-cloudflare:vitest": "vitest run --config native-sharing-cloudflare/vitest.config.mts",
     "gateway:syntax": "node --check gateway/src/access-jwt.mjs && node --check gateway/src/policy.mjs && node --check gateway/src/index.mjs",
     "gateway:wrangler-dry-run": "bunx wrangler@4.111.0 versions upload --dry-run --config gateway/wrangler.jsonc --outdir /tmp/stracker-gateway-dist",
     "db:push": "prisma db push",
