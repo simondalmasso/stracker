@@ -51,6 +51,18 @@ PHASE_B_FINAL_EVIDENCE=NO
 
 The legacy run and artifact must not be used to declare PR #9 technically ready. They predate the declarative `exports` lifecycle, real multi-step SQLite transaction boundaries and the workerd atomicity proof.
 
+## First intermediate green baseline
+
+The first complete intermediate pipeline for the exports, SQLite atomicity and workerd tranche is preserved as an exact baseline:
+
+```text
+FIRST_INTERMEDIATE_GREEN_HEAD=d23ac3e9e10888ad8046ba3f762e4460bb71899e
+FIRST_INTERMEDIATE_GREEN_RUN=29980429089
+FIRST_INTERMEDIATE_GREEN_CONCLUSION=success
+```
+
+This run is evidence only for that exact SHA. The helper and documentation reconciliation that follow require a new full pipeline and must not reuse run `29980429089` as evidence for their new SHA.
+
 ## Canonical product boundary
 
 Every open, reload, new tab and navigation to `/` begins at:
@@ -126,7 +138,7 @@ Deterministic routing uses `env.NATIVE_SHARING.getByName(sessionId)`. Each shari
 
 ## Declarative Durable Object lifecycle
 
-`native-sharing-cloudflare/wrangler.jsonc` now declares the class through:
+`native-sharing-cloudflare/wrangler.jsonc` declares the class through:
 
 ```json
 "exports": {
@@ -160,6 +172,15 @@ Worker-first paths remain:
 /shared/*
 ```
 
+Lifecycle evidence is separated from the workerd semantic suite:
+
+```text
+WORKERD_SQLITE_SEMANTICS=PASS
+EXPORTS_LIFECYCLE_PROOF=SCANNER+SECURITY_SCAN+WRANGLER_TYPES+WRANGLER_DRY_RUN
+EXPORTS_CONFIG_LOADS_NOT_CLAIMED_BY_WORKERD=YES
+EXACT_PRODUCTION_COMPATIBILITY_DATE_NOT_CLAIMED_BY_WORKERD=YES
+```
+
 ## SQLite schema
 
 The current per-session schema is:
@@ -172,6 +193,18 @@ rate_or_sequence_state
 ```
 
 The schema enforces a singleton sharing-session row, primary keys, unique capability verifiers where applicable, checks on state and numeric domains, point sequence indexes and active-viewer indexes. Only capability and viewer-session verifiers are stored; complete tokens and capabilities are absent.
+
+## SQLite write accounting
+
+Cloudflare SQL cursor accounting and logical mutation checks are distinct:
+
+```text
+PHYSICAL_ROWS_WRITTEN=CURSOR_ROWS_WRITTEN_INCLUDES_INDEX_ACTIVITY
+LOGICAL_ROWS_CHANGED=SELECT_CHANGES
+STRICT_LOGICAL_ROW_CHECK===1
+```
+
+`cursor.rowsWritten` remains exposed as the physical write metric and may include index activity. Multi-step mutation invariants use `SELECT changes()` to verify that exactly one logical table row changed.
 
 ## Transaction boundaries
 
@@ -197,7 +230,7 @@ EXPIRATION_SQL_CLEANUP
 
 The sharing-session row and `rate_or_sequence_state` row are inserted in one SQLite transaction. Failure of the second insert rolls back the first insert.
 
-Scheduling the alarm is not falsely described as part of the SQLite transaction. The flow is:
+Scheduling the alarm is not described as part of the SQLite transaction. The flow is:
 
 ```text
 CREATE_SQL_SESSION
@@ -205,17 +238,20 @@ CREATE_SQL_SESSION
 → SUCCESS
 ```
 
-If `setAlarm()` fails:
+If `setAlarm()` fails, the compensating path is:
 
 ```text
 ctx.storage.deleteAll()
-→ verify sharing_session absent
-→ verify accepted_points absent
-→ verify viewer_sessions absent
-→ verify rate_or_sequence_state absent
-→ verify alarm absent
+→ recreate schema
+→ sharing_session rows=0
+→ accepted_points rows=0
+→ viewer_sessions rows=0
+→ rate_or_sequence_state rows=0
+→ alarm=null
 → sanitized STORAGE_UNAVAILABLE
 ```
+
+The proof verifies empty canonical data and no alarm after schema recreation. It does not claim that the physical SQLite tables remain absent.
 
 ### Append point
 
@@ -226,11 +262,11 @@ READ_SESSION_AND_PREVIOUS_POINT
 → VALIDATE_STATE_SEQUENCE_AND_QUOTA
 → CALCULATE_SEGMENT
 → CONDITIONAL_SESSION_UPDATE
-→ REQUIRE_ROWS_WRITTEN_EQ_1
+→ REQUIRE_LOGICAL_ROWS_CHANGED_EQ_1
 → CONDITIONAL_SEQUENCE_STATE_UPDATE
-→ REQUIRE_ROWS_WRITTEN_EQ_1
+→ REQUIRE_LOGICAL_ROWS_CHANGED_EQ_1
 → INSERT_ACCEPTED_POINT
-→ REQUIRE_ROWS_WRITTEN_EQ_1
+→ REQUIRE_LOGICAL_ROWS_CHANGED_EQ_1
 → ROLLBACK_ON_ANY_FAILURE
 ```
 
@@ -255,7 +291,7 @@ PURGE_EXPIRED_VIEWERS
 COUNT_ACTIVE_VIEWERS
 ENFORCE_LIMIT
 INSERT_VIEWER_SESSION
-REQUIRE_ROWS_WRITTEN_EQ_1
+REQUIRE_LOGICAL_ROWS_CHANGED_EQ_1
 ```
 
 Rotation, revocation or expiration between preverification and insertion causes no viewer-session insert and returns a sanitized invalid or inactive result.
@@ -266,33 +302,37 @@ Viewer generation update and active-viewer invalidation are atomic. Sharing-sess
 
 ## Alarm cleanup
 
-At the cleanup deadline, the Durable Object calls `ctx.storage.deleteAll()` to remove SQL state, metadata and the alarm. Cleanup is idempotent. If post-delete verification is negative, `alarm()` throws `STORAGE_CLEANUP_UNVERIFIED`; it does not silently report success.
+At the cleanup deadline, the Durable Object calls `ctx.storage.deleteAll()` to remove canonical SQL state, metadata and the alarm. Cleanup is idempotent. The verification path recreates the schema, confirms all four canonical tables contain zero rows and confirms `alarm=null`. If verification is negative, `alarm()` throws `STORAGE_CLEANUP_UNVERIFIED`; it does not silently report success.
 
-## Validation status for current rework
+## Validation status
 
-The prior Browser QA and four-file artifact remain historical only. They are not current Phase B evidence.
+The first complete intermediate green baseline proved the following on exact SHA `d23ac3e9e10888ad8046ba3f762e4460bb71899e` in run `29980429089`:
 
 ```text
-FROZEN_INSTALL=PENDING_CURRENT_HEAD_CI
-WRANGLER_TYPES=PENDING_CURRENT_HEAD_CI
-TYPECHECK=PENDING_CURRENT_HEAD_CI
-LINT=PENDING_CURRENT_HEAD_CI
-BUN_ADAPTER_TESTS=PENDING_CURRENT_HEAD_CI
-CLOUDFLARE_WORKER_VITEST=PENDING_CURRENT_HEAD_CI
-SQLITE_TRANSACTION_TESTS=PENDING_CURRENT_HEAD_CI
-ALARM_COMPENSATION_TESTS=PENDING_CURRENT_HEAD_CI
-VIEWER_EXCHANGE_TRANSACTIONAL_REVALIDATION=PENDING_CURRENT_HEAD_CI
-LIFECYCLE_SCANNER_FIXTURES=PENDING_CURRENT_HEAD_CI
-RUNTIME_SECURITY_SCAN=PENDING_CURRENT_HEAD_CI
-WRANGLER_DRY_RUN=PENDING_CURRENT_HEAD_CI
-RUN_CONCLUSION=PENDING
+STACKED_BASE_CHECK=PASS
+FROZEN_INSTALL=PASS
+INHERITED_REGRESSION=PASS
+STATIC_EXPORT_BUILD=PASS
+WRANGLER_TYPES=PASS
+TYPECHECK=PASS
+LINT=PASS
+BUN_ADAPTER_TESTS=PASS
+CLOUDFLARE_WORKER_VITEST=PASS
+SQLITE_TRANSACTION_TESTS=PASS
+ALARM_COMPENSATION_TESTS=PASS
+VIEWER_EXCHANGE_TRANSACTIONAL_REVALIDATION=PASS
+LIFECYCLE_SCANNER_FIXTURES=PASS
+RUNTIME_SECURITY_SCAN=PASS
+WRANGLER_DRY_RUN=PASS
+STATE_TRUTH_CORRECTION=PASS
+FINAL_INTEGRITY=PASS
+RUN_CONCLUSION=success
 ```
 
-The current workerd suite is required to prove:
+The current workerd semantic suite proves:
 
 ```text
-EXPORTS_CONFIG_LOADS
-SQLITE_SCHEMA_EXISTS
+WORKERD_SQLITE_SCHEMA_EXISTS
 CREATE_SESSION_TWO_INSERT_ROLLBACK
 APPEND_POINT_ROLLBACK
 APPEND_POINT_ROWS_WRITTEN_RACE
@@ -305,6 +345,13 @@ ALARM_CLEANUP_VERIFICATION_FAILURE
 ```
 
 The Bun SQLite adapter remains Level 1 unit/adapter evidence only. It is not called Worker SQLite E2E.
+
+The helper and documentation changes after the first intermediate green baseline require a second full pipeline on their exact new SHA. Until that run succeeds:
+
+```text
+CURRENT_HELPER_AND_DOCS_PIPELINE=PENDING_NEW_HEAD_CI
+PR_9_TECHNICALLY_READY=NO
+```
 
 ## Explicitly outside the current tranche
 
@@ -354,14 +401,13 @@ LIVE_INFRASTRUCTURE=NO
 ## Open risks
 
 ```text
-WORKERD_ATOMICITY_RESULTS=PENDING
-WRANGLER_EXPORTS_COMPATIBILITY=PENDING_CI
-FROZEN_LOCK_VALIDATION=PENDING_CI
-VIEWER_GENERATION_RACE_PROOF=PENDING_CI
-ALARM_COMPENSATION_PROOF=PENDING_CI
+SECOND_EXACT_HEAD_PIPELINE=PENDING
+FINAL_BROWSER_QA=NOT_EXECUTED
+FINAL_SIX_FILE_ARTIFACT=NOT_CREATED
+PR_9_TECHNICALLY_READY=NO
 A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
 ```
 
 ## Next exact step
 
-Run the intermediate Phase B pipeline on the exact current PR #9 HEAD. Correct only failures in frozen install, exports lifecycle, SQLite transaction boundaries, workerd atomicity, alarm compensation, lifecycle scanner, security scan or dry-run. Do not start quota, incremental polling, timeout/idempotency, final Browser QA or final artifact work without a new decision.
+Run the complete intermediate Phase B pipeline on the exact helper-and-documentation reconciliation HEAD. Do not reuse run `29980429089` as evidence for that new SHA. Do not start quota, incremental polling, timeout/idempotency, final Browser QA or final artifact work without a new decision.
