@@ -22,8 +22,8 @@ function sample(overrides: Partial<LocationSample> = {}): LocationSample {
 describe('separate freshness and health state', () => {
   test('freshness depends on captured age, not transport health', () => {
     const now = Date.now()
-    expect(freshnessFromTimestamp('google-shared', new Date(now - 120_000).toISOString(), now)).toBe('stale')
-    expect(sourceHealthFromInput({ source: 'google-shared', lastReceivedAt: new Date(now).toISOString(), consecutiveErrors: 0, nowMs: now })).toBe('receiving')
+    expect(freshnessFromTimestamp('shared-location', new Date(now - 120_000).toISOString(), now)).toBe('stale')
+    expect(sourceHealthFromInput({ source: 'shared-location', lastReceivedAt: new Date(now).toISOString(), consecutiveErrors: 0, nowMs: now })).toBe('receiving')
   })
 
   test('health degrades independently after receive errors', () => {
@@ -43,21 +43,21 @@ describe('pipeline isolation', () => {
   test('source change resets stable point, movement and rail', () => {
     const initial = processLocationSample(initialLocationPipelineState('my-device'), sample(), 'not-applicable').state
     const remote = sample({
-      source: 'google-shared',
+      source: 'shared-location',
       lat: -31.62,
       lng: -60.69,
       capturedAt: new Date(Date.now() + 10_000).toISOString(),
       receivedAt: new Date().toISOString(),
     })
-    const changed = processLocationSample(initial, remote, 'valid').state
-    expect(changed.source).toBe('google-shared')
+    const changed = processLocationSample(initial, remote, 'active').state
+    expect(changed.source).toBe('shared-location')
     expect(changed.sessionEpoch).toBe(initial.sessionEpoch + 1)
     expect(changed.motion.motion).toBe('unknown')
     expect(changed.rail.segments).toHaveLength(1)
   })
 
   test('session replacement clears all shared state', () => {
-    const first = processLocationSample(initialLocationPipelineState('google-shared'), sample({ source: 'google-shared' }), 'valid').state
+    const first = processLocationSample(initialLocationPipelineState('shared-location'), sample({ source: 'shared-location' }), 'active').state
     const replaced = replacePipelineSession(first)
     expect(replaced.latest).toBeNull()
     expect(replaced.rail.segments).toHaveLength(0)
