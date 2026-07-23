@@ -156,6 +156,9 @@ const results = {
 
 let stage = 'startup'
 try {
+  const queryResponse = await fetch(`${baseUrl}/shared?token=synthetic-only`)
+  assert(queryResponse.status === 400, 'query-bearing shared route was not rejected')
+
   for (const viewport of viewports) {
     const label = `${viewport.width}x${viewport.height}`
     stage = `emitter-document:${label}`
@@ -185,7 +188,12 @@ try {
     await installSyntheticGeolocation(viewerPage)
     viewerPage.on('pageerror', (error) => errors.push(error.message))
     const beforeViewer = observations.length
-    await viewerPage.goto(`${baseUrl}/shared#v=${encodeURIComponent(currentCapability)}`, { waitUntil: 'networkidle0' })
+    const viewerDocumentResponse = await viewerPage.goto(`${baseUrl}/shared#v=${encodeURIComponent(currentCapability)}`, { waitUntil: 'networkidle0' })
+    assert(viewerDocumentResponse, 'shared document response missing')
+    const viewerHeaders = viewerDocumentResponse.headers()
+    assert(viewerHeaders['cache-control']?.includes('no-store'), 'shared document is cacheable')
+    assert(viewerHeaders['referrer-policy'] === 'no-referrer', 'shared document referrer policy missing')
+    assert(viewerHeaders['content-security-policy']?.includes("frame-ancestors 'none'"), 'shared document CSP missing')
     await noOverflow(viewerPage)
     const initial = observations.slice(beforeViewer)
     const documentRequest = initial.find((entry) => entry.method === 'GET' && (entry.pathname === '/shared' || entry.pathname === '/shared/'))
@@ -225,6 +233,9 @@ try {
     CAPABILITY_EXCHANGE_REQUIRED: 'PASS',
     OPAQUE_VIEWER_SESSION_POLLING: 'PASS',
     CAPABILITY_IN_TRANSPORT_URL: 'NO',
+    SHARED_QUERY_REJECTED: 'PASS',
+    REFERRER_POLICY_NO_REFERRER: 'PASS',
+    SHARED_CSP_STRICT: 'PASS',
     VIEWPORTS_5: 'PASS',
   }
   await Bun.write(outputPath, `${JSON.stringify(results, null, 2)}\n`)
