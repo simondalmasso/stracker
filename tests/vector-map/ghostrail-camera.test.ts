@@ -39,8 +39,8 @@ describe('GhostRail segmentation', () => {
   })
 
   test('session replacement clears all segments', () => {
-    let state = initialGhostRailState('google-shared', 1)
-    const remote = { ...sample('2026-07-21T12:00:00Z', -31.63, -60.70), source: 'google-shared' as const }
+    let state = initialGhostRailState('shared-location', 1)
+    const remote = { ...sample('2026-07-21T12:00:00Z', -31.63, -60.70), source: 'shared-location' as const }
     state = updateGhostRail(state, { sample: remote, filter: accepted(remote), freshness: 'fresh', sessionEpoch: 1 })
     state = updateGhostRail(state, { sample: remote, filter: accepted(remote), freshness: 'fresh', sessionEpoch: 2, sessionReplaced: true })
     expect(state.sessionEpoch).toBe(2)
