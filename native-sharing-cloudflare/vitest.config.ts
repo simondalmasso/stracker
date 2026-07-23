@@ -4,11 +4,11 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   plugins: [
     cloudflareTest({
-      wrangler: { configPath: './native-sharing-cloudflare/wrangler.jsonc' },
+      wrangler: { configPath: './wrangler.jsonc' },
     }),
   ],
   test: {
-    include: ['tests/native-sharing-cloudflare/workerd-atomicity.test.ts'],
+    include: ['../tests/native-sharing-cloudflare/workerd-atomicity.test.ts'],
     testTimeout: 30_000,
   },
 })
