@@ -109,7 +109,7 @@ describe('SQLite Durable Object runtime', () => {
     expect(ns.routedNames.every((name) => name === created.sessionId)).toBe(true)
   })
 
-  test('uses SQLite conditional writes for concurrent point writes', async () => {
+  test('rejects a stale expected sequence with conditional SQLite writes', async () => {
     const fixed = new Date('2026-07-22T20:00:00.000Z')
     const object = createTestSessionObject(() => fixed)
     const created = await directSession(object.runtime, fixed)
