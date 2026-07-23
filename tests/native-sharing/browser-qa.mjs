@@ -53,6 +53,19 @@ async function noOverflow(page, label) {
   assert(ok, `horizontal overflow: ${label}`)
 }
 
+async function resetServerObservations() {
+  const response = await fetch(`${baseUrl}/__qa__/request-observations`, { method: 'POST' })
+  assert(response.status === 204, 'could not reset server observations')
+}
+
+async function readServerObservations() {
+  const response = await fetch(`${baseUrl}/__qa__/request-observations`, { cache: 'no-store' })
+  assert(response.ok, 'could not read server observations')
+  const payload = await response.json()
+  assert(payload && Array.isArray(payload.observations), 'invalid server observation payload')
+  return payload.observations
+}
+
 function apiRequests(requests) {
   return requests.filter((entry) => entry.path.startsWith('/api/share/'))
 }
@@ -61,9 +74,10 @@ function mapRequests(requests) {
   return requests.filter((entry) => /openfreemap|eox\.at|cloudless/i.test(entry.url))
 }
 
-function assertNoSecretUrls(requests, label) {
+function assertNoSecretTransportUrls(requests, label) {
   for (const entry of requests) {
-    for (const secret of secrets) assert(!entry.url.includes(secret), `${label}: secret leaked in URL`)
+    if (entry.resourceType === 'document' && (entry.path === '/shared' || entry.path === '/shared/')) continue
+    for (const secret of secrets) assert(!entry.url.includes(secret), `${label}: secret leaked in transport URL`)
   }
 }
 
@@ -116,7 +130,6 @@ async function installSyntheticApi(page, requests, backend, options = {}) {
       url: request.url(),
       path: url.pathname,
       search: url.search,
-      hash: url.hash,
       method: request.method(),
       resourceType: request.resourceType(),
       headers: request.headers(),
@@ -240,7 +253,7 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--disable-setuid-sandbox', '--enable-webgl', '--ignore-gpu-blocklist', '--use-angle=swiftshader', '--disable-dev-shm-usage'],
 })
 const results = {
-  schema: 'stracker.native-sharing-browser.v3',
+  schema: 'stracker.native-sharing-browser.v4',
   generatedAt: new Date().toISOString(),
   privateDataUsed: false,
   coordinateValuesRetained: false,
@@ -300,17 +313,20 @@ try {
     assert(parsedLink.search === '', 'viewer capability entered query')
     assert(parsedLink.hash === `#v=${viewerCapability}`, 'viewer capability is not fragment-only')
     assert(!displayedLink.includes(emitterToken), 'emitter token leaked into viewer link')
-    assertNoSecretUrls(requests, 'emitter flow')
+    assertNoSecretTransportUrls(requests, 'emitter flow')
     await clickText(page, 'DETENER')
     assert((await page.evaluate(() => window.__strackerGeo.clearCalls)) >= 1, 'emitter stop did not clear watch')
 
     requests.length = 0
+    await resetServerObservations()
     const response = await page.goto(`${baseUrl}/shared#v=${encodeURIComponent(viewerCapability)}`, { waitUntil: 'networkidle0' })
     await noOverflow(page, `viewer-confirm ${viewport.width}x${viewport.height}`)
-    const documentRequest = requests.find((entry) => entry.resourceType === 'document' && entry.path === '/shared')
-    assert(documentRequest, 'shared document request was not captured')
-    assert(documentRequest.search === '' && documentRequest.hash === '', 'fragment or query entered initial HTTP request')
-    assert(!documentRequest.url.includes('#') && !documentRequest.url.includes(viewerCapability), 'viewer capability entered initial HTTP URL')
+    const observations = await readServerObservations()
+    const documentObservation = observations.find((entry) => entry.method === 'GET' && (entry.pathname === '/shared' || entry.pathname === '/shared/'))
+    assert(documentObservation, 'server did not observe shared document request')
+    assert(documentObservation.pathname === '/shared' || documentObservation.pathname === '/shared/', 'server observed incorrect shared pathname')
+    assert(documentObservation.queryPresent === false, 'server observed query on shared document request')
+    assert(documentObservation.capabilityPresent === false, 'server observed capability in shared document request')
     assert(response?.headers()['cache-control']?.includes('no-store'), 'shared route is cacheable')
     assert(response?.headers()['referrer-policy'] === 'no-referrer', 'shared route referrer policy missing')
     assert(response?.headers()['content-security-policy']?.includes("frame-ancestors 'none'"), 'shared route CSP missing')
@@ -335,7 +351,7 @@ try {
     assert(polling.every((entry) => entry.headers.authorization === `Bearer ${viewerSessionToken}`), 'polling did not use opaque viewer bearer')
     assert(polling.every((entry) => !('x-stracker-viewer' in entry.headers)), 'legacy viewer capability header was used')
     assert(polling.every((entry) => !entry.postData.includes(viewerCapability)), 'original capability was reused for polling')
-    assertNoSecretUrls(requests, 'viewer flow')
+    assertNoSecretTransportUrls(requests, 'viewer flow')
 
     const storage = await browserStorageIsClean(page)
     assert(storage.localStorage.length === 0, 'viewer session entered localStorage')
@@ -390,6 +406,9 @@ try {
       exchangeCount: 1,
       opaquePolling: true,
       logoutObserved: true,
+      documentRequestPath: documentObservation.pathname,
+      documentRequestQueryPresent: documentObservation.queryPresent,
+      documentRequestCapabilityPresent: documentObservation.capabilityPresent,
     })
     await context.close()
   }
@@ -408,7 +427,7 @@ try {
   await latePage.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'))
   await sleep(800)
   assert((await latePage.$$('main[data-map-engine]')).length === 0, 'late viewer response repopulated map')
-  assertNoSecretUrls(delayedRequests, 'late response flow')
+  assertNoSecretTransportUrls(delayedRequests, 'late response flow')
   await lateContext.close()
 
   const invalidationContext = await browser.createBrowserContext()
@@ -441,24 +460,31 @@ try {
     return response.status
   }, { id: sessionId, token: replacement.viewerSessionToken })
   assert(revokedStatus === 410, 'revocation did not invalidate active viewer session')
-  assertNoSecretUrls(invalidationRequests, 'invalidation flow')
+  assertNoSecretTransportUrls(invalidationRequests, 'invalidation flow')
   await invalidationContext.close()
 
   results.gates = {
     ROOT_SELECTOR_UNCHANGED: 'PASS',
     NO_GEOLOCATION_BEFORE_EMITTER_START: 'PASS',
     DYNAMIC_CAPABILITY_ROUTE_ABSENT: 'PASS',
+    DOCUMENT_REQUEST_PATH: '/shared',
+    DOCUMENT_REQUEST_QUERY_PRESENT: false,
+    DOCUMENT_REQUEST_CAPABILITY_PRESENT: false,
     VIEWER_CAPABILITY_IN_PATH: 'NO',
     VIEWER_CAPABILITY_IN_QUERY: 'NO',
     VIEWER_CAPABILITY_FRAGMENT_ONLY: 'PASS',
     NO_NETWORK_BEFORE_VIEWER_CONFIRMATION: 'PASS',
+    NO_API_REQUEST_BEFORE_CONFIRMATION: 'PASS',
+    NO_MAP_REQUEST_BEFORE_CONFIRMATION: 'PASS',
     NO_POINTS_BEFORE_VIEWER_CONFIRMATION: 'PASS',
     CAPABILITY_EXCHANGE_REQUIRED: 'PASS',
+    CAPABILITY_EXCHANGE_AFTER_CONFIRMATION: 'PASS',
     CAPABILITY_SENT_ONCE: 'PASS',
     FRAGMENT_REMOVED_AFTER_EXCHANGE: 'PASS',
     ORIGINAL_CAPABILITY_CLEARED_FROM_MEMORY: 'PASS',
     POLLING_USES_OPAQUE_VIEWER_SESSION: 'PASS',
     ORIGINAL_CAPABILITY_NOT_REUSED: 'PASS',
+    CAPABILITY_NOT_REUSED_FOR_POLLING: 'PASS',
     VIEWER_SESSION_MEMORY_ONLY: 'PASS',
     VIEWER_SESSION_SHORT_LIVED: 'PASS',
     VIEWER_SESSION_SERVER_REVOCABLE: 'PASS',
@@ -485,7 +511,7 @@ try {
   const serialized = `${JSON.stringify(results, null, 2)}\n`
   assert(!secrets.some((secret) => serialized.includes(secret)), 'secret retained in QA artifact')
   fs.writeFileSync(output, serialized, { mode: 0o600 })
-  console.log('NATIVE_SHARING_BROWSER_QA_PASS viewports=5 pageerror=0 overflow=0 fragment_exchange=pass')
+  console.log('NATIVE_SHARING_BROWSER_QA_PASS viewports=5 pageerror=0 overflow=0 fragment_exchange=pass server_transport=pass')
 } finally {
   await browser.close()
 }
