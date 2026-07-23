@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = ROOT / 'native-sharing-cloudflare'
 CONFIG = SOURCE_ROOT / 'wrangler.jsonc'
 WORKFLOW = ROOT / '.github/workflows/native-sharing-cloudflare-runtime-v1.yml'
+SHARED_HEADERS = ROOT / 'public/_headers'
 
 @dataclass(frozen=True, order=True)
 class Finding:
@@ -42,7 +43,7 @@ def run_blocks(text: str) -> list[str]:
         indent = len(match.group(1))
         value = match.group(2).strip()
         if value not in {'|', '>', '|-', '>-', '|+', '>+'}:
-            blocks.append(value.strip('\"\''))
+            blocks.append(value.strip('"\''))
             index += 1
             continue
         index += 1
@@ -85,6 +86,12 @@ def scan() -> list[Finding]:
         findings.add(Finding('REAL_ROUTE_OR_ACCOUNT', relative(CONFIG)))
     if config.get('vars') or config.get('secrets'):
         findings.add(Finding('REAL_SECRET_BINDING', relative(CONFIG)))
+    assets = config.get('assets', {})
+    worker_first = set(assets.get('run_worker_first', []))
+    if not {'/api/share/*', '/shared', '/shared/*'}.issubset(worker_first):
+        findings.add(Finding('WORKER_FIRST_BOUNDARY_INVALID', relative(CONFIG)))
+    if assets.get('binding') != 'ASSETS' or assets.get('directory') != '../out':
+        findings.add(Finding('STATIC_ASSETS_BINDING_INVALID', relative(CONFIG)))
     bindings = config.get('durable_objects', {}).get('bindings', [])
     if bindings != [{'name': 'NATIVE_SHARING', 'class_name': 'NativeSharingDurableObject'}]:
         findings.add(Finding('DO_BINDING_INVALID', relative(CONFIG)))
@@ -94,9 +101,26 @@ def scan() -> list[Finding]:
     if 'new_classes' in json.dumps(config):
         findings.add(Finding('KV_BACKED_DO_CLASS', relative(CONFIG)))
 
+    if not SHARED_HEADERS.is_file():
+        findings.add(Finding('SHARED_HEADERS_MISSING', relative(SHARED_HEADERS)))
+    else:
+        headers = SHARED_HEADERS.read_text(encoding='utf-8', errors='replace')
+        required = (
+            '/shared',
+            'Cache-Control: no-store, max-age=0',
+            'Referrer-Policy: no-referrer',
+            "frame-ancestors 'none'",
+            "base-uri 'none'",
+            'Permissions-Policy: geolocation=(), camera=(), microphone=()',
+            'X-Robots-Tag: noindex, nofollow, noarchive, nosnippet',
+        )
+        if any(value not in headers for value in required):
+            findings.add(Finding('SHARED_HEADERS_INVALID', relative(SHARED_HEADERS)))
+
     if WORKFLOW.is_file():
-        mutation = re.compile(r'\bwrangler\s+(?:versions\s+upload|publish)\b|\bgh\s+pr\s+merge\b|\bgit\s+push\b[^\n]*(?:--force|-f)|api\.cloudflare\.com/client/v4', re.I)
-        deploy = re.compile(r'\bwrangler\s+deploy\b', re.I)
+        wrangler = r'wrangler(?:@[A-Za-z0-9._-]+)?'
+        mutation = re.compile(rf'\b{wrangler}\s+(?:versions\s+upload|publish)\b|\bgh\s+pr\s+merge\b|\bgit\s+push\b[^\n]*(?:--force|-f)|api\.cloudflare\.com/client/v4', re.I)
+        deploy = re.compile(rf'\b{wrangler}\s+deploy\b', re.I)
         for block in run_blocks(WORKFLOW.read_text(encoding='utf-8')):
             for raw in block.splitlines():
                 line = raw.strip()
