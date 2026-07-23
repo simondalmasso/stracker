@@ -29,6 +29,7 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
   private readonly store: SqliteNativeSharingStore
   private readonly runtime: NativeSharingSessionRuntime
   private schemaDeleted = false
+  private testCleanupVerificationOverride: false | null = null
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -55,7 +56,8 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
          'sharing_session', 'accepted_points', 'viewer_sessions', 'rate_or_sequence_state'
        )`,
     ).toArray()
-    return alarm === null && tables.length === 0
+    const verified = alarm === null && tables.length === 0
+    return this.testCleanupVerificationOverride === false ? false : verified
   }
 
   async createSession(input: CreateSessionInput): Promise<RpcResult<NativeSharingSession>> {
@@ -108,7 +110,8 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
   async alarm(): Promise<void> {
     const deadline = this.store.deletionDeadlineMs()
     if (deadline === null || Date.now() >= deadline) {
-      await this.deleteAllAndVerify()
+      const clean = await this.deleteAllAndVerify()
+      if (!clean) throw new Error('STORAGE_CLEANUP_UNVERIFIED')
       return
     }
     await this.ctx.storage.setAlarm(deadline)
