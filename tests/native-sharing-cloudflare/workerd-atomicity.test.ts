@@ -61,6 +61,12 @@ function executor(state: DurableObjectState): RuntimeSqlExecutor {
     exec<T extends RuntimeSqlRow = RuntimeSqlRow>(query: string, ...bindings: RuntimeSqlValue[]) {
       return state.storage.sql.exec<T>(query, ...bindings)
     },
+    logicalRowsWritten(): number {
+      const row = state.storage.sql.exec<{ logical_rows_written: number }>(
+        'SELECT changes() AS logical_rows_written',
+      ).toArray()[0]
+      return Number(row?.logical_rows_written ?? 0)
+    },
     transactionSync<T>(callback: () => T): T {
       return state.storage.transactionSync(callback)
     },
@@ -172,19 +178,21 @@ describe('Phase B workerd SQLite proof', () => {
     const nowIso = new Date().toISOString()
 
     const code = await runInDurableObject(object, async (_instance: NativeSharingDurableObject, state) => {
-      const store = new SqliteNativeSharingStore(executor(state))
+      const sql = executor(state)
+      const store = new SqliteNativeSharingStore(sql)
       const preverified = await store.getSession(sessionId('F'))
       expect(preverified?.viewerGeneration).toBe(1)
       expect(preverified?.viewerVerifier).toBe(staleViewerVerifier)
 
       const rotatedVerifier = await capabilityVerifier('R'.repeat(43))
-      state.storage.sql.exec(
+      sql.exec(
         `UPDATE sharing_session
          SET viewer_verifier = ?, viewer_generation = viewer_generation + 1
          WHERE id = ?`,
         rotatedVerifier,
         sessionId('F'),
       ).toArray()
+      expect(sql.logicalRowsWritten()).toBe(1)
 
       const viewerSession: OpaqueViewerSession = {
         tokenVerifier: opaqueVerifier,
