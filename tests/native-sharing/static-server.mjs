@@ -40,22 +40,27 @@ function resolvePath(pathname) {
 }
 
 const server = createServer((request, response) => {
-  const url = new URL(request.url || '/', 'http://127.0.0.1')
+  const requestTarget = request.url || '/'
+  const url = new URL(requestTarget, 'http://127.0.0.1')
+  const baseHeaders = {
+    'Cache-Control': 'no-store, max-age=0',
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Stracker-QA-Request-Target': requestTarget,
+  }
   if (url.search) {
-    response.writeHead(400, { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }).end()
+    response.writeHead(400, baseHeaders).end()
     return
   }
   const file = resolvePath(url.pathname)
   if (!file) {
-    response.writeHead(404, { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }).end()
+    response.writeHead(404, baseHeaders).end()
     return
   }
   const isShared = url.pathname === '/shared' || url.pathname === '/shared/'
   const headers = {
+    ...baseHeaders,
     'Content-Type': types[extname(file)] || 'application/octet-stream',
-    'Cache-Control': 'no-store, max-age=0',
-    'Referrer-Policy': 'no-referrer',
-    'X-Content-Type-Options': 'nosniff',
   }
   if (isShared) {
     headers['Content-Security-Policy'] = sharedCsp
