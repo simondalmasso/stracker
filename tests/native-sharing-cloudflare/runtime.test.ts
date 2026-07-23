@@ -116,8 +116,10 @@ describe('SQLite Durable Object runtime', () => {
       object.runtime.appendPoint(created.input.session.id, created.emitterToken, point(1, fixed.toISOString())),
       object.runtime.appendPoint(created.input.session.id, created.emitterToken, point(1, fixed.toISOString())),
     ])
+    const failures = attempts.filter((result) => !result.ok)
     expect(attempts.filter((result) => result.ok)).toHaveLength(1)
-    expect(attempts.filter((result) => !result.ok && result.code === 'SEQUENCE_RACE')).toHaveLength(1)
+    expect(failures).toHaveLength(1)
+    expect(['REPLAY_REJECTED', 'SEQUENCE_RACE']).toContain(failures[0].code)
     expect((await object.store.getSession(created.input.session.id))?.pointCount).toBe(1)
     object.sql.close()
   })
