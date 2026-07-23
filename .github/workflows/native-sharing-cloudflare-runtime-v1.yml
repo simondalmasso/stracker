@@ -17,7 +17,7 @@ concurrency:
 jobs:
   intermediate-gates:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,6 +38,7 @@ jobs:
           test "$(git rev-list --count HEAD..origin/feat/stracker-native-location-sharing-v1)" = '0'
           git diff --check origin/feat/stracker-native-location-sharing-v1...HEAD
           test ! -e .github/workflows/native-sharing-cloudflare-lockgen.yml
+          test ! -e .github/workflows/native-sharing-cloudflare-bun-diagnostic.yml
           echo 'STACKED_BASE_CHECK=PASS'
           echo 'LOCKGEN_WORKFLOW_REMOVED=YES'
 
@@ -48,6 +49,28 @@ jobs:
           grep -q '"tw-animate-css": "\^1.3.5"' package.json
           echo 'FROZEN_INSTALL=PASS'
           echo 'PACKAGE_LOCK_SYNCHRONIZED=YES'
+
+      - name: INHERITED_REGRESSION
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
+          python -m unittest discover -s tests -p 'test_*.py'
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          bunx tsc -p native-sharing/tsconfig.json
+          bun test tests/native-sharing/native-sharing.test.ts
+          bun run test:vector-map
+          echo 'INHERITED_REGRESSION=PASS'
+
+      - name: STATIC_EXPORT_BUILD
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          bun run build:export
+          test -f out/index.html
+          test -f out/share/index.html
+          test -f out/shared/index.html
+          node tools/map-spike/release-bundle-gate.mjs
+          echo 'STATIC_EXPORT_BUILD=PASS'
 
       - name: WRANGLER_TYPES
         run: |
@@ -138,9 +161,11 @@ jobs:
           test "$(git rev-parse HEAD)" = '${{ github.event.pull_request.head.sha }}'
           test "$(git merge-base HEAD origin/feat/stracker-native-location-sharing-v1)" = 'b001814b675fb8c8cf2713ff4728cd250e8a25c8'
           test ! -e .github/workflows/native-sharing-cloudflare-lockgen.yml
+          test ! -e .github/workflows/native-sharing-cloudflare-bun-diagnostic.yml
           test ! -e .github/workflows/native-sharing-cloudflare-browser-diagnostic.yml
           python scripts/security/native-sharing-cloudflare-release-scan.py --root .
           git diff --check
+          echo 'FINAL_INTEGRITY=PASS'
           echo 'CI_FINAL=SUCCESS'
           echo 'MERGE=NO'
           echo 'DEPLOY=NO'
