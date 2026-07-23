@@ -6,6 +6,7 @@ import type {
   NativeSharingSession,
   NativeSharingStore,
   OpaqueViewerSession,
+  ViewerSessionCreationExpectation,
 } from '../../native-sharing/src/contracts.js'
 import {
   DELETE_AFTER_EXPIRATION_MS,
@@ -309,14 +310,33 @@ export class SqliteNativeSharingStore implements NativeSharingStore {
       }))
   }
 
-  async createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession): Promise<OpaqueViewerSession> {
+  async createViewerSession(
+    sessionId: string,
+    viewerSession: OpaqueViewerSession,
+    expectation: ViewerSessionCreationExpectation,
+  ): Promise<OpaqueViewerSession> {
     return this.sql.transactionSync(() => {
-      this.sql.exec('DELETE FROM viewer_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?', viewerSession.createdAt)
+      const row = one(this.sql.exec<SessionRow>('SELECT * FROM sharing_session WHERE id = ? LIMIT 1', sessionId))
+      if (
+        !row ||
+        expectation.sessionId !== sessionId ||
+        row.id !== sessionId ||
+        row.state !== 'active' ||
+        Date.parse(row.expires_at) <= Date.parse(expectation.nowIso) ||
+        row.viewer_verifier !== expectation.expectedViewerVerifier ||
+        row.viewer_generation !== expectation.expectedViewerGeneration ||
+        viewerSession.sharingSessionId !== sessionId ||
+        viewerSession.viewerGeneration !== expectation.expectedViewerGeneration
+      ) {
+        throw new NativeSharingStoreFault('VIEWER_GENERATION_RACE')
+      }
+
+      this.sql.exec('DELETE FROM viewer_sessions WHERE revoked_at IS NOT NULL OR expires_at <= ?', expectation.nowIso)
       const active = count(this.sql.exec<RuntimeSqlRow & { count: number }>(
         `SELECT COUNT(*) AS count FROM viewer_sessions
          WHERE viewer_generation = ? AND revoked_at IS NULL AND expires_at > ?`,
-        viewerSession.viewerGeneration,
-        viewerSession.createdAt,
+        expectation.expectedViewerGeneration,
+        expectation.nowIso,
       ))
       if (active >= MAX_ACTIVE_VIEWER_SESSIONS) throw new NativeSharingStoreFault('VIEWER_SESSION_QUOTA_EXCEEDED')
       const inserted = this.sql.exec(
