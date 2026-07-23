@@ -14,10 +14,13 @@ import { NativeSharingSessionRuntime } from './session-runtime.js'
 import type { RuntimeSqlExecutor, RuntimeSqlRow, RuntimeSqlValue } from './sqlite-store.js'
 import { SqliteNativeSharingStore } from './sqlite-store.js'
 
-function sqlExecutor(sql: DurableObjectStorage['sql']): RuntimeSqlExecutor {
+function sqlExecutor(storage: DurableObjectStorage): RuntimeSqlExecutor {
   return {
     exec<T extends RuntimeSqlRow = RuntimeSqlRow>(query: string, ...bindings: RuntimeSqlValue[]) {
-      return sql.exec<T>(query, ...bindings)
+      return storage.sql.exec<T>(query, ...bindings)
+    },
+    transactionSync<T>(callback: () => T): T {
+      return storage.transactionSync(callback)
     },
   }
 }
@@ -25,24 +28,51 @@ function sqlExecutor(sql: DurableObjectStorage['sql']): RuntimeSqlExecutor {
 export class NativeSharingDurableObject extends DurableObject<Env> {
   private readonly store: SqliteNativeSharingStore
   private readonly runtime: NativeSharingSessionRuntime
+  private schemaDeleted = false
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
-    this.store = new SqliteNativeSharingStore(sqlExecutor(this.ctx.storage.sql))
+    this.store = new SqliteNativeSharingStore(sqlExecutor(this.ctx.storage))
     this.runtime = new NativeSharingSessionRuntime(this.store)
     this.ctx.blockConcurrencyWhile(async () => {
       this.store.initializeSchema()
     })
   }
 
+  private ensureSchema(): void {
+    if (!this.schemaDeleted) return
+    this.store.initializeSchema()
+    this.schemaDeleted = false
+  }
+
+  private async deleteAllAndVerify(): Promise<boolean> {
+    await this.ctx.storage.deleteAll()
+    this.schemaDeleted = true
+    const alarm = await this.ctx.storage.getAlarm()
+    const tables = this.ctx.storage.sql.exec<{ name: string }>(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name IN (
+         'sharing_session', 'accepted_points', 'viewer_sessions', 'rate_or_sequence_state'
+       )`,
+    ).toArray()
+    return alarm === null && tables.length === 0
+  }
+
   async createSession(input: CreateSessionInput): Promise<RpcResult<NativeSharingSession>> {
+    this.ensureSchema()
     const result = await this.runtime.createSession(input)
     if (!result.ok) return result
+    const deadline = Date.parse(result.value.expiresAt) + DELETE_AFTER_EXPIRATION_MS
     try {
-      await this.ctx.storage.setAlarm(Date.parse(result.value.expiresAt) + DELETE_AFTER_EXPIRATION_MS)
+      await this.ctx.storage.setAlarm(deadline)
       return result
     } catch {
-      await this.runtime.forceRevoke(result.value.id, new Date().toISOString())
+      try {
+        const clean = await this.deleteAllAndVerify()
+        if (!clean) return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
+      } catch {
+        return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
+      }
       return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
     }
   }
@@ -76,13 +106,11 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    const now = new Date()
-    const deleted = await this.store.deleteExpired(now.toISOString())
-    if (deleted > 0) {
-      await this.ctx.storage.deleteAlarm()
+    const deadline = this.store.deletionDeadlineMs()
+    if (deadline === null || Date.now() >= deadline) {
+      await this.deleteAllAndVerify()
       return
     }
-    const session = this.ctx.storage.sql.exec<{ expires_at: string }>('SELECT expires_at FROM sharing_session LIMIT 1').toArray()[0]
-    if (session) await this.ctx.storage.setAlarm(Date.parse(session.expires_at) + DELETE_AFTER_EXPIRATION_MS)
+    await this.ctx.storage.setAlarm(deadline)
   }
 }
