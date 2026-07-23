@@ -122,6 +122,7 @@ jobs:
         env:
           QA_BASE_URL: http://127.0.0.1:4173
           QA_NATIVE_OUTPUT: /tmp/native-sharing-browser.json
+          QA_SYNTHETIC_CAPABILITY: SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS.VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
         run: |
           node tests/native-sharing/static-server.mjs >/tmp/native-sharing-http.log 2>&1 &
           server_pid=$!
@@ -133,18 +134,24 @@ jobs:
           curl --fail --silent http://127.0.0.1:4173/ >/dev/null
           node tests/native-sharing/browser-qa.mjs
           jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and .secretValuesRetained == false and (.viewports | length == 5)' /tmp/native-sharing-browser.json >/dev/null
-          jq -e '[.viewports[] | select(.pageErrors != 0 or .consoleErrors != 0 or .noOverflow != true or .exchangeCount != 1 or .opaquePolling != true or .logoutObserved != true)] | length == 0' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '[.viewports[] | select(.pageErrors != 0 or .consoleErrors != 0 or .noOverflow != true or .exchangeCount != 1 or .opaquePolling != true or .logoutObserved != true or .documentRequestQueryPresent != false or .documentRequestCapabilityPresent != false)] | length == 0' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.DOCUMENT_REQUEST_PATH == "/shared" and .gates.DOCUMENT_REQUEST_QUERY_PRESENT == false and .gates.DOCUMENT_REQUEST_CAPABILITY_PRESENT == false' /tmp/native-sharing-browser.json >/dev/null
           jq -e '.gates.DYNAMIC_CAPABILITY_ROUTE_ABSENT == "PASS" and .gates.VIEWER_CAPABILITY_IN_PATH == "NO" and .gates.VIEWER_CAPABILITY_IN_QUERY == "NO" and .gates.VIEWER_CAPABILITY_FRAGMENT_ONLY == "PASS"' /tmp/native-sharing-browser.json >/dev/null
-          jq -e '.gates.NO_NETWORK_BEFORE_VIEWER_CONFIRMATION == "PASS" and .gates.CAPABILITY_EXCHANGE_REQUIRED == "PASS" and .gates.CAPABILITY_SENT_ONCE == "PASS" and .gates.FRAGMENT_REMOVED_AFTER_EXCHANGE == "PASS"' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.NO_NETWORK_BEFORE_VIEWER_CONFIRMATION == "PASS" and .gates.NO_API_REQUEST_BEFORE_CONFIRMATION == "PASS" and .gates.NO_MAP_REQUEST_BEFORE_CONFIRMATION == "PASS" and .gates.CAPABILITY_EXCHANGE_AFTER_CONFIRMATION == "PASS"' /tmp/native-sharing-browser.json >/dev/null
+          jq -e '.gates.CAPABILITY_EXCHANGE_REQUIRED == "PASS" and .gates.CAPABILITY_SENT_ONCE == "PASS" and .gates.FRAGMENT_REMOVED_AFTER_EXCHANGE == "PASS" and .gates.CAPABILITY_NOT_REUSED_FOR_POLLING == "PASS"' /tmp/native-sharing-browser.json >/dev/null
           jq -e '.gates.ORIGINAL_CAPABILITY_CLEARED_FROM_MEMORY == "PASS" and .gates.POLLING_USES_OPAQUE_VIEWER_SESSION == "PASS" and .gates.ORIGINAL_CAPABILITY_NOT_REUSED == "PASS" and .gates.VIEWER_SESSION_MEMORY_ONLY == "PASS"' /tmp/native-sharing-browser.json >/dev/null
           jq -e '.gates.VIEWER_SESSION_SHORT_LIVED == "PASS" and .gates.VIEWER_SESSION_SERVER_REVOCABLE == "PASS" and .gates.VIEWER_LOGOUT == "PASS" and .gates.ROTATION_INVALIDATES_ACTIVE_VIEWERS == "PASS" and .gates.REVOCATION_INVALIDATES_ACTIVE_VIEWERS == "PASS"' /tmp/native-sharing-browser.json >/dev/null
           jq -e '.gates.REFERRER_POLICY_NO_REFERRER == "PASS" and .gates.SHARED_ROUTE_ANALYTICS == "ABSENT" and .gates.CAPABILITY_IN_LOGS == "NO" and .gates.CAPABILITY_IN_ARTIFACTS == "NO"' /tmp/native-sharing-browser.json >/dev/null
           jq -e '.gates.ROOT_SELECTOR_UNCHANGED == "PASS" and .gates.NO_GEOLOCATION_BEFORE_EMITTER_START == "PASS" and .gates.SOURCE_ISOLATION == "PASS" and .gates.SOURCE_SWITCH_CLEANUP == "PASS" and .gates.LATE_RESPONSE_BLOCKED == "PASS" and .gates.STALE_NOT_LIVE == "PASS" and .gates.GHOSTRAIL_SEGMENTATION == "PASS" and .gates.MAP_MODES_PRESERVED == "PASS" and .gates.MANUAL_CAMERA_PRESERVED == "PASS" and .gates.GOOGLE_PROVIDER_DISABLED == "PASS" and .gates.MOBILE_QA == "PASS"' /tmp/native-sharing-browser.json >/dev/null
           echo 'NATIVE_SHARING_BROWSER_QA=PASS'
+          echo 'DOCUMENT_REQUEST_PATH=/shared'
+          echo 'DOCUMENT_REQUEST_QUERY_PRESENT=FALSE'
+          echo 'DOCUMENT_REQUEST_CAPABILITY_PRESENT=FALSE'
           echo 'VIEWER_CAPABILITY_FRAGMENT_ONLY=PASS'
           echo 'NO_NETWORK_BEFORE_VIEWER_CONFIRMATION=PASS'
           echo 'CAPABILITY_EXCHANGE_REQUIRED=PASS'
           echo 'FRAGMENT_REMOVED_AFTER_EXCHANGE=PASS'
+          echo 'CAPABILITY_NOT_REUSED_FOR_POLLING=PASS'
           echo 'OPAQUE_VIEWER_SESSION_POLLING=PASS'
           echo 'LATE_RESPONSE_BLOCKED=PASS'
           echo 'MOBILE_QA=PASS'
@@ -153,6 +160,7 @@ jobs:
         run: |
           test ! -e 'src/app/shared/[capability]'
           test -f src/app/shared/page.tsx
+          test ! -e .github/workflows/native-sharing-browser-diagnostic.yml
           ! grep -R -n --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'google-shared' src native-sharing
           ! grep -R -nE --exclude-dir=.next --exclude-dir=out --exclude='*.md' 'locationsharing/read|google\.com/maps|Cookie Editor|Header String|Netscape' src native-sharing
           ! grep -R -n --exclude='*.md' 'X-Stracker-Viewer' src native-sharing out
@@ -163,7 +171,26 @@ jobs:
           ! grep -R -nE --exclude='*.md' 'console\.(log|info|debug|warn|error).*?(emitter|viewer|capability|token)' native-sharing/src src/lib/location-source src/components/mobile
           ! grep -R -nE --exclude='*.md' 'localStorage|sessionStorage|indexedDB' src/lib/location-source/use-native-emitter.ts src/lib/location-source/use-native-viewer.ts src/lib/location-source/native-sharing-api.ts
           ! grep -R -nE --exclude='*.md' 'google-analytics|googletagmanager|segment\.com|sentry|plausible|matomo|mixpanel' src/app/shared src/components/mobile/NativeViewerApp.tsx src/lib/location-source/use-native-viewer.ts
-          ! grep -R -nE --exclude='*.md' 'wrangler[[:space:]]+(deploy|publish)|database_id|durable_objects|migrations' native-sharing .github/workflows/native-location-sharing-v1.yml
+          python - <<'PY'
+          from pathlib import Path
+          forbidden = [
+              'wrangler ' + 'deploy',
+              'wrangler ' + 'publish',
+              'database' + '_id',
+              'durable' + '_objects',
+              'migra' + 'tions',
+          ]
+          files = [p for p in Path('native-sharing').rglob('*') if p.is_file() and p.suffix != '.md']
+          files.append(Path('.github/workflows/native-location-sharing-v1.yml'))
+          hits = []
+          for path in files:
+              text = path.read_text(encoding='utf-8', errors='replace').lower()
+              for term in forbidden:
+                  if term in text:
+                      hits.append(f'{path}:{term}')
+          if hits:
+              raise SystemExit('\n'.join(hits))
+          PY
           ! grep -R -nE --exclude='*.md' -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]+|\b(SID|HSID|SSID|APISID|SAPISID)=([^$`{[:space:]]{8,})' native-sharing src/lib/location-source src/components/mobile
           grep -q "type LocationSource = 'my-device' | 'shared-location'" src/lib/location-source/contracts.ts
           grep -q "type SharedLocationProvider = 'stracker-native' | 'google-session-experimental'" src/lib/location-source/contracts.ts
@@ -179,6 +206,8 @@ jobs:
           echo 'LEGACY_GOOGLE_SHARED_RUNTIME_REFERENCE=ABSENT'
           echo 'SHARED_ROUTE_ANALYTICS=ABSENT'
           echo 'CAPABILITIES_IN_LOGS=NO'
+          echo 'DIAGNOSTIC_WORKFLOW=ABSENT'
+          echo 'DIAGNOSTIC_RUN_SUCCESS_IMPLIES_QA_EXIT_ZERO=PASS'
           echo 'REAL_COOKIES=ABSENT'
           echo 'REAL_GOOGLE_REQUESTS=ABSENT'
           echo 'GOOGLE_PROVIDER_DISABLED=PASS'
@@ -199,16 +228,23 @@ jobs:
             "NO_GEOLOCATION_BEFORE_START": "PASS",
             "EMITTER_VIEWER_CAPABILITIES_SEPARATED": "PASS",
             "DYNAMIC_CAPABILITY_ROUTE_ABSENT": "PASS",
+            "DOCUMENT_REQUEST_PATH": "/shared",
+            "DOCUMENT_REQUEST_QUERY_PRESENT": false,
+            "DOCUMENT_REQUEST_CAPABILITY_PRESENT": false,
             "VIEWER_CAPABILITY_IN_PATH": "NO",
             "VIEWER_CAPABILITY_IN_QUERY": "NO",
             "VIEWER_CAPABILITY_FRAGMENT_ONLY": "PASS",
             "NO_NETWORK_BEFORE_VIEWER_CONFIRMATION": "PASS",
+            "NO_API_REQUEST_BEFORE_CONFIRMATION": "PASS",
+            "NO_MAP_REQUEST_BEFORE_CONFIRMATION": "PASS",
             "CAPABILITY_EXCHANGE_REQUIRED": "PASS",
+            "CAPABILITY_EXCHANGE_AFTER_CONFIRMATION": "PASS",
             "CAPABILITY_SENT_ONCE": "PASS",
             "FRAGMENT_REMOVED_AFTER_EXCHANGE": "PASS",
             "ORIGINAL_CAPABILITY_CLEARED_FROM_MEMORY": "PASS",
             "POLLING_USES_OPAQUE_VIEWER_SESSION": "PASS",
             "ORIGINAL_CAPABILITY_NOT_REUSED": "PASS",
+            "CAPABILITY_NOT_REUSED_FOR_POLLING": "PASS",
             "VIEWER_SESSION_MEMORY_ONLY": "PASS",
             "VIEWER_SESSION_SHORT_LIVED": "PASS",
             "VIEWER_SESSION_SERVER_REVOCABLE": "PASS",
@@ -219,6 +255,8 @@ jobs:
             "SHARED_ROUTE_ANALYTICS": "ABSENT",
             "CAPABILITIES_IN_LOGS": "NO",
             "CAPABILITIES_IN_ARTIFACTS": "NO",
+            "DIAGNOSTIC_WORKFLOW": "ABSENT",
+            "DIAGNOSTIC_RUN_SUCCESS_IMPLIES_QA_EXIT_ZERO": "PASS",
             "SESSION_ENUMERATION_BLOCKED": "PASS",
             "REPLAY_BLOCKED": "PASS",
             "REVOCATION_IMMEDIATE": "PASS",
@@ -302,6 +340,7 @@ jobs:
           test -n '${{ needs.local-gates.outputs.artifact-id }}'
           test -n '${{ needs.local-gates.outputs.artifact-digest }}'
           test ! -e .github/workflows/vector-map-snapshot.yml
+          test ! -e .github/workflows/native-sharing-browser-diagnostic.yml
           test ! -e 'src/app/shared/[capability]'
           test -f src/app/shared/page.tsx
           ! grep -R --include='*.yml' --include='*.yaml' -n 'contents: write' .github/workflows
@@ -311,6 +350,7 @@ jobs:
           echo 'DYNAMIC_CAPABILITY_ROUTE_ABSENT=PASS'
           echo 'CAPABILITY_EXCHANGE_REQUIRED=PASS'
           echo 'OPAQUE_VIEWER_SESSION_POLLING=PASS'
+          echo 'DIAGNOSTIC_WORKFLOW=ABSENT'
           echo 'ARTIFACT_CURRENT_HEAD=PASS'
           echo 'CI_FINAL=SUCCESS'
           echo 'DEPLOY=NO'
