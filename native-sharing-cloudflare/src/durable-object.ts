@@ -30,6 +30,7 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
   private readonly runtime: NativeSharingSessionRuntime
   private schemaDeleted = false
   private testCleanupVerificationOverride: false | null = null
+  private testSetAlarmFailure = false
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -66,6 +67,7 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
     if (!result.ok) return result
     const deadline = Date.parse(result.value.expiresAt) + DELETE_AFTER_EXPIRATION_MS
     try {
+      if (this.testSetAlarmFailure) throw new Error('SYNTHETIC_SET_ALARM_FAILURE')
       await this.ctx.storage.setAlarm(deadline)
       return result
     } catch {
