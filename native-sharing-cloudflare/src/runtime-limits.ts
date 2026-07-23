@@ -1,0 +1,15 @@
+export const MAX_SESSION_DURATION_MS = 4 * 60 * 60 * 1000
+export const DEFAULT_SESSION_DURATION_MS = 60 * 60 * 1000
+export const MIN_SESSION_DURATION_MS = 5 * 60 * 1000
+export const MAX_POINTS_PER_SESSION = 2_880
+export const MAX_POINTS_RETURNED = 600
+export const MIN_PUBLISH_INTERVAL_MS = 5_000
+export const MAX_ACTIVE_VIEWER_SESSIONS = 16
+export const VIEWER_SESSION_TTL_MS = 10 * 60 * 1000
+export const EXPIRATION_GRACE_MS = 60_000
+export const DELETE_AFTER_EXPIRATION_MS = 24 * 60 * 60 * 1000
+export const MAX_GHOSTRAIL_SEGMENTS = 64
+export const MAX_REQUEST_BODY_BYTES = 16 * 1024
+export const RPC_TIMEOUT_MS = 1_500
+export const MAX_CREATE_ATTEMPTS = 3
+export const SEGMENT_GAP_MS = 120_000
