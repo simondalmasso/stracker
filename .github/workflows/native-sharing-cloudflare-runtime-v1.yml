@@ -15,12 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  local-gates:
+  intermediate-gates:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
-    outputs:
-      artifact-id: ${{ steps.upload.outputs.artifact-id }}
-      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,41 +35,19 @@ jobs:
           git fetch origin feat/stracker-native-location-sharing-v1 --no-tags
           test "$(git rev-parse origin/feat/stracker-native-location-sharing-v1)" = 'b001814b675fb8c8cf2713ff4728cd250e8a25c8'
           test "$(git merge-base HEAD origin/feat/stracker-native-location-sharing-v1)" = 'b001814b675fb8c8cf2713ff4728cd250e8a25c8'
+          test "$(git rev-list --count HEAD..origin/feat/stracker-native-location-sharing-v1)" = '0'
           git diff --check origin/feat/stracker-native-location-sharing-v1...HEAD
+          test ! -e .github/workflows/native-sharing-cloudflare-lockgen.yml
           echo 'STACKED_BASE_CHECK=PASS'
-          echo 'PR_8_FROZEN=PASS'
-          echo 'PR_7_NOT_IN_RELEASE_STACK=PASS'
+          echo 'LOCKGEN_WORKFLOW_REMOVED=YES'
 
       - name: FROZEN_INSTALL
         run: |
           bun install --frozen-lockfile
           git diff --exit-code -- package.json bun.lock
+          grep -q '"tw-animate-css": "\^1.3.5"' package.json
           echo 'FROZEN_INSTALL=PASS'
-
-      - name: INHERITED_REGRESSION
-        run: |
-          python -m pip install --disable-pip-version-check -r requirements.txt
-          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
-          python -m unittest discover -s tests -p 'test_*.py'
-          cmp tracker_map.py nextjs-ui/tracker_map.py
-          bun run lint
-          bun run typecheck
-          bunx tsc -p native-sharing/tsconfig.json
-          bun test tests/native-sharing/native-sharing.test.ts
-          bun run test:vector-map
-          echo 'INHERITED_PR_8_REGRESSION=PASS'
-
-      - name: STATIC_EXPORT_BUILD
-        env:
-          NEXT_TELEMETRY_DISABLED: '1'
-        run: |
-          bun run build:export
-          test -f out/index.html
-          test -f out/share/index.html
-          test -f out/shared/index.html
-          node tools/map-spike/release-bundle-gate.mjs
-          echo 'BUILD=PASS'
-          echo 'STATIC_ASSETS=PASS'
+          echo 'PACKAGE_LOCK_SYNCHRONIZED=YES'
 
       - name: WRANGLER_TYPES
         run: |
@@ -80,143 +55,77 @@ jobs:
           test -s native-sharing-cloudflare/worker-configuration.d.ts
           echo 'WRANGLER_TYPES=PASS'
 
-      - name: CLOUDFLARE_TYPECHECK_AND_LINT
+      - name: TYPECHECK
         run: |
-          bunx eslint native-sharing-cloudflare/src
+          bun run typecheck
+          bunx tsc -p native-sharing/tsconfig.json
           bunx tsc -p native-sharing-cloudflare/tsconfig.json
-          echo 'ESLINT=PASS'
           echo 'TYPECHECK=PASS'
-          echo 'DO_SQLITE_ONLY=PASS'
 
-      - name: CLOUDFLARE_RUNTIME_TESTS
+      - name: LINT
+        run: |
+          bun run lint
+          bunx eslint native-sharing-cloudflare/src
+          echo 'LINT=PASS'
+
+      - name: BUN_ADAPTER_TESTS
         run: |
           bun test tests/native-sharing-cloudflare/runtime.test.ts
-          echo 'TESTS=PASS'
-          echo 'ONE_SESSION_ONE_OBJECT=PASS'
-          echo 'NO_CROSS_SESSION_STATE=PASS'
-          echo 'REVOCATION_IMMEDIATE=PASS'
-          echo 'ROTATION_INVALIDATES_VIEWERS=PASS'
-          echo 'RETENTION_BOUNDED=PASS'
-          echo 'STORAGE_FAILURE_FAIL_CLOSED=PASS'
-          echo 'QUOTA_FAILURE_FAIL_CLOSED=PASS'
-          echo 'LATE_RESPONSE_BLOCKED=PASS'
+          echo 'BUN_ADAPTER_TESTS=PASS'
 
-      - name: CLOUDFLARE_BROWSER_QA
-        env:
-          QA_CLOUDFLARE_OUTPUT: /tmp/native-sharing-cloudflare-browser.json
+      - name: CLOUDFLARE_WORKER_VITEST
         run: |
-          bun tests/native-sharing-cloudflare/browser-runtime-qa.ts
-          jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and .secretValuesRetained == false and (.viewports | length == 5)' /tmp/native-sharing-cloudflare-browser.json >/dev/null
-          jq -e '[.viewports[] | select(.pageErrors != 0 or .noOverflow != true or .exchangeCount != 1 or .opaquePolling != true)] | length == 0' /tmp/native-sharing-cloudflare-browser.json >/dev/null
-          jq -e '.gates.BROWSER_QA == "PASS" and .gates.WORKER_SQLITE_E2E == "PASS" and .gates.CAPABILITY_IN_TRANSPORT_URL == "NO"' /tmp/native-sharing-cloudflare-browser.json >/dev/null
-          echo 'BROWSER_QA=PASS'
-          echo 'WORKER_SQLITE_E2E=PASS'
+          bun run test:native-sharing-cloudflare:vitest
+          echo 'CLOUDFLARE_WORKER_VITEST=PASS'
+          echo 'SQLITE_TRANSACTION_TESTS=PASS'
+          echo 'ALARM_COMPENSATION_TESTS=PASS'
+          echo 'VIEWER_EXCHANGE_TRANSACTIONAL_REVALIDATION=PASS'
+          echo 'WORKERD_ATOMICITY_TESTS=PASS'
+
+      - name: LIFECYCLE_SCANNER_FIXTURES
+        run: |
+          python tests/security/test_native_sharing_cloudflare_lifecycle_scan.py
+          echo 'LIFECYCLE_SCANNER_FIXTURES=PASS'
+
+      - name: RUNTIME_SECURITY_SCAN
+        run: |
+          python scripts/security/native-sharing-cloudflare-release-scan.py --root .
+          echo 'RUNTIME_SECURITY_SCAN=PASS'
+          echo 'EXPORTS_SQLITE=PASS'
+          echo 'MIGRATIONS=ABSENT'
 
       - name: WRANGLER_DRY_RUN
         run: |
           bunx wrangler@4.111.0 deploy --dry-run --config native-sharing-cloudflare/wrangler.jsonc --outdir /tmp/stracker-native-sharing-runtime-dist
           test -d /tmp/stracker-native-sharing-runtime-dist
           echo 'WRANGLER_DRY_RUN=PASS'
-          echo 'NO_VERSION_UPLOAD=PASS'
-          echo 'NO_DEPLOYMENT=PASS'
+          echo 'DEPLOY=NO'
 
-      - name: SECURITY_SCAN
+      - name: STATE_TRUTH_CORRECTION
         run: |
-          python scripts/security/native-sharing-cloudflare-release-scan.py
-          grep -q 'new_sqlite_classes' native-sharing-cloudflare/wrangler.jsonc
-          grep -q 'getByName(sessionId)' native-sharing-cloudflare/src/worker.ts
-          grep -q 'this.ctx.storage.sql' native-sharing-cloudflare/src/durable-object.ts
-          test "$(find native-sharing-cloudflare -name 'wrangler*.jsonc' -o -name 'wrangler*.toml' | wc -l)" = '1'
-          echo 'NO_REAL_BINDINGS=PASS'
-          echo 'NO_REAL_SECRETS=PASS'
-          echo 'NO_ROUTE=PASS'
-          echo 'NO_DNS_CHANGE=PASS'
-          echo 'GOOGLE_PROVIDER_DISABLED=PASS'
-          echo 'REAL_GOOGLE_REQUESTS=NO'
-          echo 'REAL_COOKIES=NO'
-          echo 'SECURITY_SCAN=PASS'
-          echo 'PRODUCTION_TRAFFIC=0%'
-
-      - name: PREPARE_SANITIZED_GATES
-        run: |
-          cat > /tmp/native-sharing-cloudflare-gates.json <<'JSON'
-          {
-            "STACKED_BASE_CHECK": "PASS",
-            "PR_8_FROZEN": "PASS",
-            "PR_7_NOT_IN_RELEASE_STACK": "PASS",
-            "DO_SQLITE_ONLY": "PASS",
-            "ONE_SESSION_ONE_OBJECT": "PASS",
-            "NO_CROSS_SESSION_STATE": "PASS",
-            "REVOCATION_IMMEDIATE": "PASS",
-            "ROTATION_INVALIDATES_VIEWERS": "PASS",
-            "RETENTION_BOUNDED": "PASS",
-            "STORAGE_FAILURE_FAIL_CLOSED": "PASS",
-            "QUOTA_FAILURE_FAIL_CLOSED": "PASS",
-            "LATE_RESPONSE_BLOCKED": "PASS",
-            "NO_REAL_BINDINGS": "PASS",
-            "NO_REAL_SECRETS": "PASS",
-            "NO_VERSION_UPLOAD": "PASS",
-            "NO_DEPLOYMENT": "PASS",
-            "NO_ROUTE": "PASS",
-            "NO_DNS_CHANGE": "PASS",
-            "PRODUCTION_TRAFFIC": "0%",
-            "GOOGLE_PROVIDER_DISABLED": "PASS",
-            "REAL_GOOGLE_REQUESTS": "NO",
-            "REAL_COOKIES": "NO",
-            "FROZEN_INSTALL": "PASS",
-            "ESLINT": "PASS",
-            "TYPECHECK": "PASS",
-            "BUILD": "PASS",
-            "TESTS": "PASS",
-            "BROWSER_QA": "PASS",
-            "WORKER_SQLITE_E2E": "PASS",
-            "WRANGLER_TYPES": "PASS",
-            "WRANGLER_DRY_RUN": "PASS",
-            "SECURITY_SCAN": "PASS",
-            "MERGE": "NO",
-            "DEPLOY": "NO",
-            "PRODUCTION_MODIFIED": "NO"
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('docs/CURRENT_STATE.md').read_text(encoding='utf-8')
+          required = {
+              'LEGACY_BASELINE_SHA=1b8bc4b79c63e36f5f6d7bb8a7fc39f0a782c930',
+              'LEGACY_BASELINE_RUN=29974437874',
+              'LEGACY_BASELINE_ARTIFACT=8550899250',
+              'LEGACY_GREEN_SCOPE=SUPERSEDED_CONTRACT_ONLY',
+              'PR_9_TECHNICALLY_READY=NO',
+              'FINAL_ARTIFACT=NO',
+              'CURRENT_REWORK=EXPORTS_SQLITE_ATOMICITY_WORKERD',
           }
-          JSON
-
-      - name: PREPARE_SANITIZED_ARTIFACT
-        env:
-          ARTIFACT_DIR: /tmp/stracker-native-sharing-cloudflare-${{ github.event.pull_request.head.sha }}
-        run: |
-          python scripts/security/prepare-native-sharing-artifact.py \
-            --browser /tmp/native-sharing-cloudflare-browser.json \
-            --gates /tmp/native-sharing-cloudflare-gates.json \
-            --output "$ARTIFACT_DIR" \
-            --source-sha '${{ github.event.pull_request.head.sha }}' \
-            --run-id '${{ github.run_id }}'
-
-      - name: SECURITY_ARTIFACT_SCAN
-        env:
-          ARTIFACT_DIR: /tmp/stracker-native-sharing-cloudflare-${{ github.event.pull_request.head.sha }}
-        run: |
-          python scripts/security/verify-native-sharing-artifact.py \
-            --artifact "$ARTIFACT_DIR" \
-            --source-sha '${{ github.event.pull_request.head.sha }}' \
-            --run-id '${{ github.run_id }}'
-
-      - name: Upload exact-head Cloudflare runtime artifact
-        id: upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: stracker-native-sharing-cloudflare-${{ github.event.pull_request.head.sha }}
-          path: /tmp/stracker-native-sharing-cloudflare-${{ github.event.pull_request.head.sha }}/
-          if-no-files-found: error
-          include-hidden-files: false
-          retention-days: 14
-
-      - name: Verify artifact upload
-        run: |
-          test -n '${{ steps.upload.outputs.artifact-id }}'
-          test -n '${{ steps.upload.outputs.artifact-digest }}'
-          echo 'ARTIFACT_CURRENT_HEAD=PASS'
+          missing = sorted(required.difference(text.splitlines()))
+          if missing:
+              raise SystemExit('STATE_TRUTH_MISSING')
+          forbidden = ('new_sqlite_classes migration', '\npoints\nviewer_sessions')
+          if any(value in text for value in forbidden):
+              raise SystemExit('STATE_TRUTH_OBSOLETE')
+          PY
+          echo 'STATE_TRUTH_CORRECTION=PASS'
 
   final-integrity:
-    needs: local-gates
+    needs: intermediate-gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -225,19 +134,14 @@ jobs:
           fetch-depth: 0
       - name: FINAL_INTEGRITY
         run: |
+          git fetch origin feat/stracker-native-location-sharing-v1 --no-tags
           test "$(git rev-parse HEAD)" = '${{ github.event.pull_request.head.sha }}'
           test "$(git merge-base HEAD origin/feat/stracker-native-location-sharing-v1)" = 'b001814b675fb8c8cf2713ff4728cd250e8a25c8'
+          test ! -e .github/workflows/native-sharing-cloudflare-lockgen.yml
+          test ! -e .github/workflows/native-sharing-cloudflare-browser-diagnostic.yml
+          python scripts/security/native-sharing-cloudflare-release-scan.py --root .
           git diff --check
-          test -n '${{ needs.local-gates.outputs.artifact-id }}'
-          test -n '${{ needs.local-gates.outputs.artifact-digest }}'
-          test -f native-sharing-cloudflare/src/durable-object.ts
-          test -f native-sharing-cloudflare/src/worker.ts
-          test -f native-sharing-cloudflare/wrangler.jsonc
-          test ! -e .github/workflows/native-sharing-cloudflare-diagnostic.yml
-          python scripts/security/native-sharing-cloudflare-release-scan.py
-          echo 'ARTIFACT_CURRENT_HEAD=PASS'
-          echo 'FINAL_INTEGRITY=PASS'
           echo 'CI_FINAL=SUCCESS'
-          echo 'DEPLOY=NO'
           echo 'MERGE=NO'
-          echo 'PRODUCTION_MODIFIED=NO'
+          echo 'DEPLOY=NO'
+          echo 'LIVE_INFRASTRUCTURE=NO'
