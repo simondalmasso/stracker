@@ -59,7 +59,10 @@ describe('SQLite Durable Object runtime', () => {
       exports?: Record<string, { type?: string; storage?: string }>
       migrations?: unknown
     }
-    expect(source).toContain('this.ctx.storage.sql')
+    expect(source).toContain('function sqlExecutor(storage: DurableObjectStorage)')
+    expect(source).toContain('return storage.sql.exec<T>(query, ...bindings)')
+    expect(source).toContain('return storage.transactionSync(callback)')
+    expect(source).toContain('new SqliteNativeSharingStore(sqlExecutor(this.ctx.storage))')
     expect(source).not.toMatch(/storage\.(?:get|put|list)\s*\(/)
     expect(config.exports?.NativeSharingDurableObject).toEqual({ type: 'durable-object', storage: 'sqlite' })
     expect(config).not.toHaveProperty('migrations')
