@@ -17,12 +17,15 @@ A native session has:
 
 - one emitter publishing sequential observations;
 - multiple viewers reading status and confirmed points;
+- one-time viewer-capability exchanges;
+- multiple short-lived opaque viewer sessions;
 - strict monotonic sequence and replay rejection;
 - immediate viewer-capability rotation;
-- immediate session revocation;
+- immediate invalidation of prior viewer generations;
+- immediate sharing-session revocation;
 - bounded expiry and cleanup;
 - per-session rate and retention state;
-- concurrent requests that must not cross a revocation or sequence boundary.
+- concurrent requests that must not cross a revocation, generation or sequence boundary.
 
 The primary consistency atom is one sharing session.
 
@@ -31,9 +34,11 @@ The primary consistency atom is one sharing session.
 A Durable Object can be addressed deterministically from the random session ID and act as the serialized authority for that one session. This matches:
 
 ```text
-one session
+one sharing session
 → one coordination object
-→ one ordered write stream
+→ one ordered emitter stream
+→ one viewer-generation authority
+→ one opaque viewer-session registry
 → one revocation/rotation authority
 ```
 
@@ -41,8 +46,10 @@ Expected advantages:
 
 - serialized per-session mutations;
 - atomic sequence advancement and point insertion;
-- rotation and revocation ordered against concurrent publications;
-- local SQLite tables for session metadata and bounded points;
+- capability exchange ordered against rotation and revocation;
+- viewer-session issuance, logout and bulk invalidation under one authority;
+- rotation and revocation ordered against concurrent publications and reads;
+- local SQLite tables for session metadata, viewer sessions and bounded points;
 - no global object bottleneck when objects are sharded by session ID;
 - direct mapping between domain consistency and storage ownership.
 
@@ -54,12 +61,13 @@ D1 remains technically capable of relational persistence, querying and cleanup, 
 
 - conditional monotonic sequence updates under concurrency;
 - ordering publication against revocation;
-- atomic viewer-verifier rotation;
+- atomic viewer-verifier rotation and generation increment;
+- invalidating every active viewer session from an older generation;
 - avoiding duplicate acceptance during concurrent writes;
 - per-session hot-write behavior;
 - deterministic cleanup without widening authority.
 
-A D1 implementation would need transactions or conditional update patterns that are tested against concurrent requests, not only unit-tested SQL. The present `D1NativeSharingStoreCandidate` is intentionally fail-closed and cannot be enabled accidentally.
+A D1 implementation would need transactional or conditional-update patterns tested against concurrent requests, not only unit-tested SQL. The present `D1NativeSharingStoreCandidate` is intentionally fail-closed and cannot be enabled accidentally.
 
 D1 may remain useful later for sanitized operational indexes or asynchronous aggregate data, but it is not the session authority selected here.
 
@@ -67,12 +75,14 @@ D1 may remain useful later for sanitized operational indexes or asynchronous agg
 
 `InMemoryNativeSharingStore` is the only executable adapter in this PoC. It provides:
 
-- create/get session;
+- create/get sharing session;
 - expected-sequence append;
 - latest point;
 - confirmed segmentation;
-- revoke;
-- rotate viewer verifier;
+- create/get opaque viewer session;
+- revoke one viewer session on logout;
+- revoke all viewer sessions on rotation or sharing revocation;
+- rotate viewer verifier and generation;
 - expiry deletion.
 
 It is suitable only for deterministic tests. It is not durable, multi-instance safe or production eligible.
@@ -96,6 +106,17 @@ CREATE TABLE session_state (
   point_count INTEGER NOT NULL
 );
 
+CREATE TABLE viewer_sessions (
+  token_verifier TEXT PRIMARY KEY,
+  viewer_generation INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+
+CREATE INDEX viewer_sessions_expiry
+  ON viewer_sessions(expires_at);
+
 CREATE TABLE points (
   sequence INTEGER PRIMARY KEY,
   payload_ciphertext BLOB NOT NULL,
@@ -105,7 +126,29 @@ CREATE TABLE points (
 );
 ```
 
-Before any live implementation, coordinate payloads must be encrypted at rest with authenticated encryption and a key supplied through a secret binding. The current PoC intentionally does not create that binding or persist real coordinates.
+Complete emitter, viewer and viewer-session tokens must never be stored. Before any live implementation, coordinate payloads must be encrypted at rest with authenticated encryption and a key supplied through a secret binding. The current PoC intentionally does not create that binding or persist real coordinates.
+
+## Required read transaction
+
+Every status or points read must atomically establish:
+
+```text
+sharing session exists and is active
+viewer session verifier exists
+viewer session is not revoked
+viewer session is not expired
+viewer session generation equals current session generation
+```
+
+Rotation must atomically:
+
+```text
+replace viewer capability verifier
+increment viewer generation
+revoke or delete all older viewer sessions
+```
+
+Sharing revocation must atomically mark the session revoked and invalidate every viewer session before subsequent reads can succeed.
 
 ## Retention and cleanup
 
@@ -113,13 +156,14 @@ The object must enforce domain limits before insertion:
 
 ```text
 MAX_SESSION_DURATION=4h
+VIEWER_SESSION_TTL=10m, capped by sharing expiration
 MAX_POINTS_PER_SESSION=2880
 MIN_POINT_INTERVAL=5s
 MAX_GHOSTRAIL_SEGMENTS=64
 DELETE_AFTER_EXPIRATION=24h
 ```
 
-An alarm or bounded cleanup operation may remove expired state. An alarm is an implementation candidate, not part of this PoC. Expired and revoked states must block reads/writes immediately even before physical deletion.
+An alarm or bounded cleanup operation may remove expired viewer sessions, points and sharing state. An alarm is an implementation candidate, not part of this PoC. Expired and revoked states must block reads/writes immediately even before physical deletion.
 
 ## Zero-cost boundary
 
@@ -139,11 +183,12 @@ No assumption that a paid plan will remain unused is acceptable. The experiment 
 Code rollback does not automatically revert or delete persistent object storage. A future live plan must separately define:
 
 - schema migration rollback;
-- capability invalidation;
+- viewer-generation invalidation;
+- opaque viewer-session deletion;
 - point deletion;
 - expiry cleanup;
 - secret rotation;
-- evidence that no old version can continue accepting writes.
+- evidence that no old version can continue accepting writes or reads.
 
 ## Status
 
