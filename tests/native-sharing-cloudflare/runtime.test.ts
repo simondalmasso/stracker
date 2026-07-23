@@ -52,13 +52,16 @@ function point(sequence: number, capturedAt = new Date().toISOString()): NativeS
 }
 
 describe('SQLite Durable Object runtime', () => {
-  test('uses SQLite source and no KV-backed storage calls', async () => {
+  test('uses declarative SQLite exports and no KV-backed storage calls', async () => {
     const source = await readFile('native-sharing-cloudflare/src/durable-object.ts', 'utf8')
-    const config = await readFile('native-sharing-cloudflare/wrangler.jsonc', 'utf8')
+    const config = JSON.parse(await readFile('native-sharing-cloudflare/wrangler.jsonc', 'utf8')) as {
+      exports?: Record<string, { type?: string; storage?: string }>
+      migrations?: unknown
+    }
     expect(source).toContain('this.ctx.storage.sql')
     expect(source).not.toMatch(/storage\.(?:get|put|list)\s*\(/)
-    expect(config).toContain('new_sqlite_classes')
-    expect(config).not.toContain('new_classes')
+    expect(config.exports?.NativeSharingDurableObject).toEqual({ type: 'durable-object', storage: 'sqlite' })
+    expect(config).not.toHaveProperty('migrations')
   })
 
   test('routes one session to one isolated object', async () => {
@@ -105,7 +108,7 @@ describe('SQLite Durable Object runtime', () => {
     expect(ns.routedNames.every((name) => name === created.sessionId)).toBe(true)
   })
 
-  test('serializes concurrent point writes and rejects the duplicate as replay', async () => {
+  test('uses SQLite conditional writes for concurrent point writes', async () => {
     const fixed = new Date('2026-07-22T20:00:00.000Z')
     const object = createTestSessionObject(() => fixed)
     const created = await directSession(object.runtime, fixed)
@@ -114,7 +117,7 @@ describe('SQLite Durable Object runtime', () => {
       object.runtime.appendPoint(created.input.session.id, created.emitterToken, point(1, fixed.toISOString())),
     ])
     expect(attempts.filter((result) => result.ok)).toHaveLength(1)
-    expect(attempts.filter((result) => !result.ok && result.code === 'REPLAY_REJECTED')).toHaveLength(1)
+    expect(attempts.filter((result) => !result.ok && result.code === 'SEQUENCE_RACE')).toHaveLength(1)
     expect((await object.store.getSession(created.input.session.id))?.pointCount).toBe(1)
     object.sql.close()
   })
