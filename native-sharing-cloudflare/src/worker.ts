@@ -236,6 +236,9 @@ export async function handleNativeSharingRequest(request: Request, env: NativeSh
   const url = new URL(request.url)
   try {
     if (url.pathname.startsWith('/api/share/')) return await routeApi(request, env, url)
+    if ((url.pathname === '/shared' || url.pathname === '/shared/') && url.search) {
+      return errorResponse(400, 'REQUEST_INVALID')
+    }
     if (!env.ASSETS) return errorResponse(503, 'BINDING_UNAVAILABLE')
     return await env.ASSETS.fetch(request)
   } catch (error) {
