@@ -51,13 +51,13 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
     await this.ctx.storage.deleteAll()
     this.schemaDeleted = true
     const alarm = await this.ctx.storage.getAlarm()
-    const tables = this.ctx.storage.sql.exec<{ name: string }>(
-      `SELECT name FROM sqlite_master
-       WHERE type = 'table' AND name IN (
-         'sharing_session', 'accepted_points', 'viewer_sessions', 'rate_or_sequence_state'
-       )`,
-    ).toArray()
-    const verified = alarm === null && tables.length === 0
+    this.ensureSchema()
+    const counts = this.store.storageCounts()
+    const verified = alarm === null
+      && counts.sessions === 0
+      && counts.points === 0
+      && counts.viewers === 0
+      && counts.sequenceStates === 0
     return this.testCleanupVerificationOverride === false ? false : verified
   }
 
