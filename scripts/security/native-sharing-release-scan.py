@@ -274,7 +274,7 @@ def _extract_run_blocks(workflow_text: str) -> list[str]:
     index = 0
     while index < len(lines):
         line = lines[index]
-        match = re.match(r"^(\s*)run\s*:\s*(.*)$", line)
+        match = re.match(r"^(\s*)(?:-\s*)?run\s*:\s*(.*)$", line)
         if not match:
             index += 1
             continue
@@ -316,9 +316,10 @@ def _scan_workflow(root: Path, path: Path, findings: set[Finding]) -> None:
     if not path.is_file():
         return
     mutation_pattern = re.compile(
-        r"(?i)(?:^|[;&|]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*(?:bunx\s+|npx\s+|pnpm\s+exec\s+)?wrangler\s+(?:deploy|publish|versions\s+upload)\b|"
-        r"(?i)(?:^|[;&|]\s*)gh\s+pr\s+merge\b|"
-        r"(?i)(?:^|[;&|]\s*)git\s+push\b[^\n]*(?:--force|-f)(?:\s|$)"
+        r"(?:^|[;&|]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*(?:bunx\s+|npx\s+|pnpm\s+exec\s+)?wrangler\s+(?:deploy|publish|versions\s+upload)\b|"
+        r"(?:^|[;&|]\s*)gh\s+pr\s+merge\b|"
+        r"(?:^|[;&|]\s*)git\s+push\b[^\n]*(?:--force|-f)(?:\s|$)",
+        flags=re.IGNORECASE,
     )
     for block in _extract_run_blocks(_read_text(path)):
         for line in _effective_shell_lines(block):
