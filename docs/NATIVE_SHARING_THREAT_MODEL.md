@@ -2,7 +2,7 @@
 
 ## Security objective
 
-A viewer may read only a currently valid session for which it possesses the active viewer capability. An emitter may publish, rotate or revoke only with the independent emitter capability. No observation is accepted solely because the client labels it valid.
+A viewer may read only through a current, short-lived, server-revocable opaque viewer session issued after explicit confirmation and a one-time viewer-capability exchange. An emitter may publish, rotate or revoke only with the independent emitter capability. No point is accepted solely because the client labels it valid.
 
 ## Trust boundaries
 
@@ -13,22 +13,25 @@ Emitter browser
 → NativeSharingService
 → NativeSharingStore
 
-Viewer browser
-→ untrusted network
-→ native HTTP boundary
-→ NativeSharingService
-→ sanitized point response
-→ existing STRACKER location pipeline
+Viewer browser opens /shared#v=<capability>
+→ initial HTTP request contains only /shared
+→ static confirmation screen
+→ explicit VER UBICACIÓN
+→ one-time JSON capability exchange
+→ opaque viewer session in memory
+→ authorized polling
+→ canonical shared-location pipeline
 ```
 
-Map providers are a separate boundary and receive ordinary tile/style requests derived from the viewport. They never receive emitter or viewer capabilities.
+Map providers are a separate boundary and receive ordinary tile/style requests derived from the viewport only after viewer confirmation. They never receive emitter capabilities, viewer capabilities or viewer-session tokens.
 
 ## Assets
 
 - current and historical coordinates;
 - emitter capability;
 - viewer capability;
-- session identifier and expiration;
+- opaque viewer-session token;
+- session identifier, viewer generation and expiration;
 - sequence and timing integrity;
 - revocation and rotation state;
 - confirmed GhostRail segments.
@@ -37,67 +40,115 @@ Map providers are a separate boundary and receive ordinary tile/style requests d
 
 ### IDOR and session enumeration
 
-Threat: changing a session identifier reveals whether another session exists or returns its data.
+Threat: changing a session identifier reveals another session or its data.
 
 Controls:
 
 - 256-bit random session identifiers;
-- strict fixed-length path parser;
-- possession of the correct emitter or viewer capability is also required;
-- unknown session and wrong capability return the same `404 NOT_FOUND` envelope;
-- no list or search endpoint exists;
-- query parameters and client-selected upstreams are rejected.
+- strict fixed-length path parser for API session identifiers;
+- status and points require a valid opaque viewer session bound to that sharing session;
+- unknown sessions, invalid viewer capabilities and unknown viewer sessions use sanitized non-enumerating envelopes;
+- no list or search endpoint;
+- query parameters are rejected.
 
 ### Capability guessing
 
-Threat: brute-force discovery of emitter or viewer access.
+Threat: brute-force discovery of emitter or viewer authority.
 
 Controls:
 
 - independently generated 256-bit values;
-- rate limits by operation and session;
+- operation-specific rate limits;
 - verifier-only storage;
-- no capability prefix, counter or derivation relationship;
+- no derivation relationship or predictable prefix;
 - no capability logging or artifact retention.
 
-### Viewer capability leak
+### Viewer capability in HTTP URL
 
-Threat: a copied or observed viewer link grants reading access.
+Threat: a viewer capability leaks through server/CDN logs, history, Referer, analytics, observability or copied URLs.
 
 Controls:
 
-- viewer capability grants read-only access;
-- it cannot publish, rotate or revoke;
-- bounded session duration and retention;
-- immediate viewer rotation invalidates the old link;
-- immediate session revocation stops reads;
-- the UI labels the URL as a private link and does not claim user identity.
+```text
+ALLOWED=/shared#v=<capability>
+FORBIDDEN=/shared/<capability>
+FORBIDDEN=/shared?token=<capability>
+```
 
-Residual risk: anyone possessing an active viewer link can use it. This is inherent to capability links and must remain explicit.
+- fragment data is not sent in the initial HTTP request;
+- `/shared` is a static confirmation route;
+- `Referrer-Policy: no-referrer`;
+- `Cache-Control: no-store`;
+- restrictive CSP;
+- no analytics on shared routes;
+- browser QA verifies that request URLs never contain emitter, viewer or viewer-session secrets.
+
+Residual risk: the complete private link can still leak through user screenshots, clipboard history or deliberate forwarding. Rotation and bounded duration are the available controls.
+
+### Viewer capability reuse
+
+Threat: the original capability becomes a long-lived polling credential.
+
+Controls:
+
+- the capability is sent once in the JSON body of `POST /api/share/viewer/exchange`;
+- the server compares its verifier and issues a new opaque session token;
+- the browser immediately calls `history.replaceState(null, '', '/shared')`;
+- the original capability variable is cleared;
+- status, points and logout accept only `Authorization: Bearer <opaque-session>`;
+- `X-Stracker-Viewer` is absent from the release runtime.
+
+### Opaque viewer-session theft
+
+Threat: an attacker obtains the in-memory viewer-session token.
+
+Controls:
+
+- independent random token;
+- verifier-only server storage;
+- ten-minute maximum TTL, capped by sharing-session expiration;
+- document-memory-only client storage;
+- no localStorage, sessionStorage, IndexedDB, URL or JavaScript-readable cookie;
+- no token reflection in errors, DOM, logs or artifacts;
+- logout, rotation and revocation invalidate it server-side.
+
+Residual risk: same-origin XSS can access document memory. CSP, dependency review and same-origin isolation remain mandatory for live deployment.
+
+### Rotation and revocation race
+
+Threat: a viewer continues reading after link rotation or session revocation.
+
+Controls:
+
+- viewer sessions carry the sharing session's viewer generation;
+- rotation increments generation and revokes all active viewer sessions;
+- sharing revocation changes authoritative state and revokes all viewer sessions;
+- every read checks sharing state, viewer generation, viewer-session revocation and expiration;
+- frontend generation guards ignore stale responses;
+- future live storage must serialize these mutations per sharing session.
 
 ### Emitter capability leak
 
-Threat: an attacker publishes false points or revokes/rotates the session.
+Threat: an attacker publishes false points or rotates/revokes the session.
 
 Controls:
 
 - emitter capability never appears in URL, link text, logs or artifacts;
-- it is held only in emitter document memory;
+- it is kept only in emitter document memory;
 - it is sent only in the emitter header;
 - viewer responses never include it;
-- storage holds only its verifier;
-- closing/reloading the document loses emitter control unless a future secure recovery design is added.
+- storage holds only its verifier.
 
 ### Replay and sequence rollback
 
-Threat: reuse of accepted requests or old points.
+Threat: reuse of accepted requests or older points.
 
 Controls:
 
 - positive integer sequence;
 - strict monotonic sequence per session;
 - captured timestamp must advance;
-- store append uses expected previous sequence to detect concurrent races;
+- append uses expected previous sequence to detect concurrent races;
 - duplicate, rollback and timestamp replay are rejected.
 
 ### Fake points and timestamp manipulation
@@ -106,102 +157,80 @@ Threat: the emitter supplies arbitrary but syntactically valid observations.
 
 Controls:
 
-- latitude/longitude, accuracy, speed and heading bounds;
+- coordinate, accuracy, speed and heading bounds;
 - bounded future skew and maximum age;
 - minimum publication interval;
 - impossible inter-point speed rejection;
 - server-generated `receivedAt`, session identity and acceptance state;
-- no client-provided acceptance or freshness state is trusted.
+- no client-provided freshness or acceptance state is trusted.
 
-Residual risk: a compromised emitter browser can provide plausible fabricated points within physical bounds. Native V1 does not provide hardware attestation and must not claim it does.
+Residual risk: a compromised emitter can fabricate physically plausible points. Native V1 provides no hardware attestation.
 
 ### CSRF and open CORS
 
-Threat: another origin causes publication, rotation or revocation.
+Threat: another origin causes publication, exchange, logout, rotation or revocation.
 
 Controls:
 
 - no permissive CORS headers;
 - explicit mismatched `Origin` rejection;
-- no cookies are used for emitter/viewer authority;
-- capabilities are required in explicit headers;
-- `OPTIONS` does not authorize methods;
-- JSON-only mutation bodies.
+- no authority cookie;
+- explicit capability or bearer headers;
+- JSON-only mutation bodies;
+- `OPTIONS` does not grant authorization.
 
 ### XSS
 
-Threat: injected script steals capabilities from document memory or URL.
+Threat: injected script steals in-memory secrets.
 
 Controls:
 
 - capability values are never inserted as HTML;
-- React text/input escaping is used;
-- API errors are generic and not reflected from request data;
-- strict Content-Type responses and `X-Content-Type-Options: nosniff`;
-- future deployment must preserve a restrictive CSP and prohibit third-party scripts on emitter/viewer pages.
-
-Residual risk: an application-origin XSS can access in-memory capabilities. CSP and dependency review remain release requirements for live deployment.
+- React escaping is used;
+- errors are generic and do not reflect request values;
+- `X-Content-Type-Options: nosniff`;
+- restrictive shared-route CSP;
+- no analytics or third-party script requirement on `/shared`.
 
 ### Rate abuse and storage exhaustion
-
-Threat: session creation, publication or viewer polling consumes limits.
 
 Controls:
 
 - operation-specific rate limits;
 - 16 KiB body limit;
-- store timeout;
-- hard point and session-duration limits;
-- bounded response points and GhostRail segments;
+- storage timeout;
+- hard session, point, response and GhostRail limits;
 - no WebSocket or unbounded stream;
-- expiry cleanup contract.
-
-### Revocation race
-
-Threat: publication or read succeeds after revocation because concurrent operations observe stale state.
-
-Controls:
-
-- all service operations re-read current session state;
-- future live storage must provide per-session serialized writes;
-- append includes expected last sequence;
-- viewer rotation replaces the verifier atomically at the store boundary;
-- revocation changes the authoritative session state before subsequent operations.
-
-This is a principal reason Durable Objects are preferred for a future live adapter.
+- bounded expiration cleanup.
 
 ### Late responses
 
-Threat: an aborted viewer request updates UI after changing source or closing the viewer.
+Threat: an aborted or prior-generation request updates UI after closing or changing source.
 
 Controls:
 
 - AbortController per request;
-- generation counter incremented on stop/change;
-- every response checks generation and abort state;
-- stop clears polling, freshness timers, snapshot, buffers and GhostRail.
+- local generation incremented on stop/change;
+- responses verify generation, abort state and active viewer-session reference;
+- cleanup clears polling, timers, viewer authority, snapshot, filters and GhostRail;
+- logout failure never blocks local cleanup.
 
 ### Stale shown as live
-
-Threat: old points are displayed as current.
 
 Controls:
 
 - captured and received timestamps remain separate;
-- existing freshness classifier derives fresh/stale/expired;
+- canonical freshness classifier derives fresh/stale/expired;
 - viewer status may be stale independently of source health;
-- UI visibly labels stale and never uses a fabricated `LIVE` state;
-- no interpolation is performed.
+- UI labels stale and never fabricates `LIVE`;
+- no interpolation.
 
 ### Storage compromise
 
-Threat: storage contents reveal authority or complete location history.
+PoC controls:
 
-Controls in this PoC:
-
-- emitter/viewer tokens are not stored, only verifiers;
+- emitter, viewer and viewer-session tokens are stored only as verifiers;
 - retention is bounded;
-- response sizes are bounded;
 - no real storage or data is used.
 
 Required before live deployment:
@@ -209,56 +238,49 @@ Required before live deployment:
 - encrypt coordinate payloads at rest with a key outside the database;
 - document key rotation and recovery;
 - restrict operator access;
-- verify deletion behavior and backups;
-- validate storage export/artifact sanitization.
+- verify deletion and backup behavior;
+- validate export and artifact sanitization.
 
-### Logs and artifacts
-
-Threat: capabilities or coordinates leak through CI, logs or diagnostics.
+### Logs, errors and artifacts
 
 Controls:
 
-- code does not log request bodies or capability headers;
-- errors do not echo tokens, paths or points;
-- browser QA marks all data synthetic and artifacts as coordinate-values-not-retained;
-- security scans reject cookie material, bearer values, private keys, `.env` and source archives;
-- artifacts contain only allowlisted sanitized reports and hashes.
+- code does not log request bodies or authorization headers;
+- errors never echo capabilities, session tokens or points;
+- browser QA checks console, page errors and every request URL;
+- artifacts contain only allowlisted sanitized reports and hashes;
+- security gates scan source, static export, logs and artifact staging;
+- synthetic token values are asserted absent before artifact upload.
 
 ### Multiple viewers
 
-Threat: several viewers race reads, amplify traffic or infer one another.
-
-Controls:
-
-- viewers are read-only and share no client state;
+- each exchange creates an independent opaque viewer session;
+- viewers share no browser state;
 - no viewer list, count or identity is exposed;
-- polling is bounded;
-- rotation invalidates all holders of the prior capability simultaneously.
+- rotation invalidates all sessions from the prior generation;
+- session revocation invalidates all viewer sessions.
 
-Residual limitation: V1 cannot revoke a single viewer without rotating the common viewer link.
+Native V1 does not provide selective per-viewer revocation without identifying viewers; logout revokes only the presented viewer session.
 
 ### Background suspension
 
-Threat: users believe transmission continues while the browser is suspended or closed.
-
-Controls:
-
-- explicit UI warning before consent;
-- visibility changes mark emitter state paused;
+- explicit warning before emitter consent;
+- hidden/suspended browsers may pause publication;
 - freshness and last update remain visible;
 - no service-worker or background-tracking claim;
-- viewer displays stale when updates stop.
+- viewer becomes stale when updates stop.
 
-## Abuse cases deliberately unsupported
+## Deliberately unsupported
 
 - anonymous public broadcasting;
-- searchable or enumerable sessions;
+- searchable sessions;
 - permanent location history;
 - third-party embeds;
 - wildcard CORS;
 - tracking without explicit emitter action;
-- viewer auto-open on link receipt;
-- recovery of emitter authority from URL or browser persistence;
+- viewer auto-exchange on link receipt;
+- viewer capabilities in path or query;
+- persistent viewer authority;
 - Google cookies or Google accounts in the native provider.
 
 ## Validation status
