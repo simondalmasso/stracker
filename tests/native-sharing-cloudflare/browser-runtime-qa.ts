@@ -58,7 +58,9 @@ async function assetResponse(request: Request): Promise<Response> {
     if (url.pathname === '/shared' || url.pathname === '/shared/') {
       headers.set('Cache-Control', 'no-store, max-age=0')
       headers.set('Referrer-Policy', 'no-referrer')
-      headers.set('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+      headers.set('Permissions-Policy', 'geolocation=(), camera=(), microphone=()')
+      headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet')
+      headers.set('Content-Security-Policy', "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.openfreemap.org https://*.eox.at; connect-src 'self' https://*.openfreemap.org https://*.eox.at; font-src 'self' data:; worker-src 'self' blob:; child-src blob:; manifest-src 'self'")
     }
     return new Response(body, { status: 200, headers })
   } catch {
