@@ -4,7 +4,8 @@ import { extname, resolve, sep } from 'node:path'
 
 const root = resolve(process.env.STATIC_ROOT || 'out')
 const port = Number(process.env.PORT || 4173)
-const syntheticCapability = process.env.QA_SYNTHETIC_CAPABILITY || ''
+const defaultSyntheticCapability = `${'S'.repeat(43)}.${'V'.repeat(43)}`
+const syntheticCapability = process.env.QA_SYNTHETIC_CAPABILITY || defaultSyntheticCapability
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' }
 const sharedCsp = [
   "default-src 'self'",
@@ -73,7 +74,7 @@ const server = createServer((request, response) => {
     method: request.method || 'GET',
     pathname: url.pathname,
     queryPresent: Boolean(url.search),
-    capabilityPresent: Boolean(syntheticCapability && requestTarget.includes(syntheticCapability)),
+    capabilityPresent: requestTarget.includes(syntheticCapability),
   })
 
   const baseHeaders = qaHeaders('application/octet-stream')
