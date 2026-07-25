@@ -11,7 +11,6 @@ const root = process.cwd()
 const sizes = [[320,568],[360,640],[375,812],[390,844],[412,915]]
 const style = JSON.stringify({version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#050505'}}]})
 const caps = new Set()
-const seen = []
 const ns = new TestNativeSharingNamespace()
 const env = {NATIVE_SHARING:ns,ASSETS:{fetch:asset}}
 
@@ -23,7 +22,6 @@ class AssertionFailure extends Error {
 }
 
 const ok = (value,code) => { if (!value) throw new AssertionFailure(code) }
-const observations = client => seen.filter(item=>item.client===client)
 const stageName = (name,width,height) => `${name}:${width}x${height}`
 function type(path) {
   return ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.woff2':'font/woff2'})[extname(path)] || 'application/octet-stream'
@@ -72,14 +70,13 @@ async function page(context,width,height,errors,requests,client) {
   const p=await context.newPage()
   await p.setViewport({width,height,deviceScaleFactor:1,isMobile:true,hasTouch:true})
   await p.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'reduce'}])
-  await p.setExtraHTTPHeaders({'x-stracker-qa-client':client})
   await geo(p)
   await p.setRequestInterception(true)
   p.on('pageerror',()=>errors.push('PAGE_ERROR'))
   p.on('request',r=>{ void (async()=>{
     const u=new URL(r.url()), map=u.hostname.endsWith('openfreemap.org')||u.hostname.endsWith('eox.at')||u.hostname.endsWith('openstreetmap.org')
     const body=r.postData()||''
-    requests.push({api:u.pathname.startsWith('/api/share/'),map,coordinate:['10.1234','20.5678'].some(v=>r.url().includes(v)||body.includes(v))})
+    requests.push({client,method:r.method(),path:u.pathname,query:!!u.search,api:u.pathname.startsWith('/api/share/'),map,coordinate:['10.1234','20.5678'].some(v=>r.url().includes(v)||body.includes(v)),urlCap:[...caps].some(c=>r.url().includes(c)),bodyCap:[...caps].some(c=>body.includes(c)),auth:/^Bearer [A-Za-z0-9_-]{43}$/.test(r.headers()['authorization']||'')})
     if(u.hostname==='tiles.openfreemap.org'&&u.pathname.replace(/\/$/,'')==='/styles/liberty') return r.respond({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:style})
     if(map) return r.abort()
     return r.continue()
@@ -95,15 +92,6 @@ const memory=async(p,cap)=>{const s=await p.evaluate(async c=>({local:localStora
 const server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
   const u=new URL(request.url); let bodyCap=false
   if(u.pathname==='/api/share/viewer/exchange'){const body=await request.clone().text();bodyCap=[...caps].some(c=>body.includes(c))}
-  seen.push({
-    client:request.headers.get('x-stracker-qa-client')||'unattributed',
-    method:request.method,
-    path:u.pathname,
-    query:!!u.search,
-    urlCap:[...caps].some(c=>request.url.includes(c)),
-    bodyCap,
-    auth:/^Bearer [A-Za-z0-9_-]{43}$/.test(request.headers.get('Authorization')||''),
-  })
   return handleNativeSharingRequest(request,env)
 }})
 const base=`http://${server.hostname}:${server.port}`
@@ -125,7 +113,7 @@ try {
     let g=await stats(rootPage)
     ok(!g.get&&!g.watch,'ROOT_GEOLOCATION_BEFORE_SELECTION')
     ok(!(await rootPage.$$('main[data-map-engine]')).length,'ROOT_MAP_BEFORE_SELECTION')
-    ok(observations(rootClient).every(x=>!x.path.startsWith('/api/share/')),'ROOT_API_BEFORE_SELECTION')
+    ok(rootReq.every(x=>!x.api),'ROOT_API_BEFORE_SELECTION')
     ok(rootReq.every(x=>!x.api&&!x.map),'ROOT_NETWORK_BEFORE_SELECTION')
 
     stage=stageName('my-device-permission',width,height)
@@ -164,7 +152,7 @@ try {
     await overflow(emitter)
     g=await stats(emitter)
     ok(!g.get&&!g.watch,'EMITTER_GEOLOCATION_BEFORE_START')
-    ok(observations(emitterClient).every(x=>!x.path.startsWith('/api/share/')),'EMITTER_SESSION_BEFORE_START')
+    ok(emitterReq.every(x=>!x.api),'EMITTER_SESSION_BEFORE_START')
 
     stage=stageName('emitter-start',width,height)
     await click(emitter,'INICIAR TRANSMISIÓN')
@@ -182,20 +170,18 @@ try {
     const h=response.headers()
     ok(h['cache-control']?.includes('no-store')&&h['referrer-policy']==='no-referrer'&&h['content-security-policy']?.includes("frame-ancestors 'none'"),'VIEWER_SECURITY_HEADERS')
     await overflow(viewer)
-    const viewerInitial=observations(viewerClient)
+    const viewerInitial=viewerReq.slice()
     const doc=viewerInitial.find(x=>x.method==='GET'&&(x.path==='/shared'||x.path==='/shared/'))
     ok(doc&&!doc.query&&!doc.urlCap,'CAPABILITY_FRAGMENT_TRANSPORT')
     ok(viewerInitial.every(x=>!x.path.startsWith('/api/share/')),'VIEWER_API_BEFORE_CONFIRMATION')
     ok(!(await viewer.$$('main[data-map-engine]')).length,'VIEWER_MAP_BEFORE_CONFIRMATION')
-    const preconfirmClients=new Set([rootClient,emitterClient,viewerClient])
-    const preconfirmApi=seen.filter(x=>preconfirmClients.has(x.client)&&x.path.startsWith('/api/share/'))
-    ok(preconfirmApi.length>0&&preconfirmApi.every(x=>x.client===emitterClient),'PRECONFIRM_ONLY_EMITTER_API')
+    ok(emitterReq.some(x=>x.api)&&rootReq.every(x=>!x.api)&&viewerInitial.every(x=>!x.api),'PRECONFIRM_ONLY_EMITTER_API')
 
     stage=stageName('viewer-exchange',width,height)
     await click(viewer,'VER UBICACIÓN')
     await viewer.waitForFunction(()=>location.pathname==='/shared'&&!location.search&&!location.hash,{timeout:30000})
     await viewer.waitForSelector('main[data-map-engine="maplibre"][data-location-source="shared-location"]',{timeout:30000})
-    const viewerAfter=observations(viewerClient)
+    const viewerAfter=viewerReq.slice()
     const ex=viewerAfter.filter(x=>x.path==='/api/share/viewer/exchange')
     const poll=viewerAfter.filter(x=>x.method==='GET'&&(x.path.endsWith('/status')||x.path.endsWith('/points')))
     ok(ex.length===1&&ex[0].bodyCap,'VIEWER_EXCHANGE')
@@ -220,11 +206,11 @@ try {
 
       stage=stageName('second-viewer',width,height)
       const viewer2Client=`qa-${index}-viewer-2`
-      const viewer2=await page(context,width,height,errors,[],viewer2Client)
+      const viewer2Req=[],viewer2=await page(context,width,height,errors,viewer2Req,viewer2Client)
       await viewer2.goto(`${base}/shared#v=${encodeURIComponent(cap)}`,{waitUntil:'networkidle0'})
       await click(viewer2,'VER UBICACIÓN')
       await viewer2.waitForSelector('main[data-map-engine="maplibre"]',{timeout:30000})
-      ok(observations(viewer2Client).filter(x=>x.path==='/api/share/viewer/exchange').length===1,'SECOND_VIEWER_EXCHANGE')
+      ok(viewer2Req.filter(x=>x.path==='/api/share/viewer/exchange').length===1,'SECOND_VIEWER_EXCHANGE')
 
       stage=stageName('revocation',width,height)
       await click(emitter,'REVOCAR ENLACE')
