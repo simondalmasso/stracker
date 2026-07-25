@@ -68,8 +68,8 @@ async function page(context,width,height,errors,requests,clientId) {
   p.on('pageerror',()=>errors.push(true))
   p.on('request',r=>{ void (async()=>{
     const u=new URL(r.url()), map=u.hostname.endsWith('openfreemap.org')||u.hostname.endsWith('eox.at')||u.hostname.endsWith('openstreetmap.org')
-    const body=r.postData()||''
-    requests.push({client:clientId,method:r.method(),path:u.pathname,query:!!u.search,api:u.pathname.startsWith('/api/share/'),map,coordinate:['10.1234','20.5678'].some(v=>r.url().includes(v)||body.includes(v)),urlCap:[...caps].some(c=>r.url().includes(c)),bodyCap:[...caps].some(c=>body.includes(c)),auth:/^Bearer [A-Za-z0-9_-]{43}$/.test(r.headers()['authorization']||'')})
+    const body=r.postData()||'',transportUrl=`${u.origin}${u.pathname}${u.search}`
+    requests.push({client:clientId,method:r.method(),path:u.pathname,query:!!u.search,api:u.pathname.startsWith('/api/share/'),map,coordinate:['10.1234','20.5678'].some(v=>transportUrl.includes(v)||body.includes(v)),urlCap:[...caps].some(c=>transportUrl.includes(c)),bodyCap:[...caps].some(c=>body.includes(c)),auth:/^Bearer [A-Za-z0-9_-]{43}$/.test(r.headers()['authorization']||'')})
     if(u.hostname==='tiles.openfreemap.org'&&u.pathname.replace(/\/$/,'')==='/styles/liberty') return r.respond({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:style})
     if(map) return r.abort()
     return r.continue()
