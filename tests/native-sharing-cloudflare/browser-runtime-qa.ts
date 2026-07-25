@@ -15,10 +15,10 @@ const ns = new TestNativeSharingNamespace()
 const env = {NATIVE_SHARING:ns,ASSETS:{fetch:asset}}
 class QaFailure extends Error { constructor(code) { super(code); this.code=code } }
 const ok = (value,code) => { if (!value) throw new QaFailure(code) }
-const waitFor = async (predicate,timeout=30000) => {
+const waitFor = async (predicate,code='observation-timeout',timeout=30000) => {
   const deadline=Date.now()+timeout
   while(Date.now()<deadline){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,25))}
-  throw new QaFailure('observation-timeout')
+  throw new QaFailure(code)
 }
 
 function type(path) {
@@ -109,7 +109,8 @@ try {
     const emitterClient=`emitter-${index}`,emitterReq=[],emitter=await page(context,width,height,errors,emitterReq,emitterClient)
     stage=`emitter-prestart:${width}x${height}`;await emitter.goto(`${base}/share`,{waitUntil:'networkidle0'});await overflow(emitter);g=await stats(emitter);ok(!g.get&&!g.watch,'emitter-prestart-geo');ok(emitterReq.every(x=>!x.api),'emitter-prestart-session')
 
-    stage=`emitter-start:${width}x${height}`;await click(emitter,'INICIAR TRANSMISIÓN');await emitter.waitForSelector('input[aria-label="Enlace privado de espectador"]',{timeout:30000});let cap=await emitter.$eval('input[aria-label="Enlace privado de espectador"]',i=>new URL(i.value).hash.replace(/^#v=/,''));ok(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(cap),'cap-format');caps.add(cap);g=await stats(emitter);ok(g.get===1&&g.watch===1,'emitter-geo-start');await emitter.waitForSelector('main[data-sharing-state="active"]',{timeout:30000});ok(emitterReq.some(x=>x.method==='POST'&&x.path.endsWith('/points')),'emitter-point-publication')
+    stage=`emitter-start:${width}x${height}`;await click(emitter,'INICIAR TRANSMISIÓN');await emitter.waitForSelector('input[aria-label="Enlace privado de espectador"]',{timeout:30000});let cap=await emitter.$eval('input[aria-label="Enlace privado de espectador"]',i=>new URL(i.value).hash.replace(/^#v=/,''));ok(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(cap),'cap-format');caps.add(cap);g=await stats(emitter);ok(g.get===1&&g.watch===1,'emitter-geo-start');await emitter.waitForSelector('main[data-sharing-state="active"]',{timeout:30000})
+    stage=`emitter-point-publication:${width}x${height}`;await waitFor(()=>emitterReq.some(x=>x.method==='POST'&&x.path.endsWith('/points')),'emitter-point-publication')
 
     const viewerClient=`viewer-${index}`,viewerReq=[],viewer=await page(context,width,height,errors,viewerReq,viewerClient)
     stage=`viewer-preconfirm:${width}x${height}`;const response=await viewer.goto(`${base}/shared#v=${encodeURIComponent(cap)}`,{waitUntil:'networkidle0'});ok(response,'viewer-response');const h=response.headers();ok(h['cache-control']?.includes('no-store')&&h['referrer-policy']==='no-referrer'&&h['content-security-policy']?.includes("frame-ancestors 'none'"),'viewer-headers');await overflow(viewer)
