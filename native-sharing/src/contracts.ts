@@ -58,6 +58,13 @@ export interface OpaqueViewerSession {
   revokedAt: string | null
 }
 
+export interface ViewerSessionCreationExpectation {
+  sessionId: string
+  expectedViewerVerifier: string
+  expectedViewerGeneration: number
+  nowIso: string
+}
+
 export interface NativeSharingSegment {
   id: string
   points: AcceptedNativePoint[]
@@ -80,7 +87,11 @@ export interface NativeSharingStore {
   appendPoint(sessionId: string, expectedLastSequence: number, point: AcceptedNativePoint): Promise<AppendPointResult>
   getLatestPoint(sessionId: string): Promise<AcceptedNativePoint | null>
   getConfirmedSegments(sessionId: string, maxSegments?: number): Promise<NativeSharingSegment[]>
-  createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession): Promise<OpaqueViewerSession>
+  createViewerSession(
+    sessionId: string,
+    viewerSession: OpaqueViewerSession,
+    expectation: ViewerSessionCreationExpectation,
+  ): Promise<OpaqueViewerSession>
   getViewerSession(sessionId: string, tokenVerifier: string): Promise<OpaqueViewerSession | null>
   revokeViewerSession(sessionId: string, tokenVerifier: string, revokedAt: string): Promise<boolean>
   revokeAllViewerSessions(sessionId: string, revokedAt: string): Promise<number>

@@ -6,6 +6,7 @@ import type {
   NativeSharingSession,
   NativeSharingStore,
   OpaqueViewerSession,
+  ViewerSessionCreationExpectation,
 } from './contracts.js'
 import { DELETE_AFTER_EXPIRATION_MS, MAX_GHOSTRAIL_SEGMENTS } from './limits.js'
 
@@ -66,9 +67,23 @@ export class InMemoryNativeSharingStore implements NativeSharingStore {
     return structuredClone(segments.slice(-Math.max(1, Math.min(maxSegments, MAX_GHOSTRAIL_SEGMENTS))))
   }
 
-  async createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession): Promise<OpaqueViewerSession> {
+  async createViewerSession(
+    sessionId: string,
+    viewerSession: OpaqueViewerSession,
+    expectation: ViewerSessionCreationExpectation,
+  ): Promise<OpaqueViewerSession> {
     const bucket = this.buckets.get(sessionId)
     if (!bucket) throw new Error('SESSION_NOT_FOUND')
+    if (
+      expectation.sessionId !== sessionId ||
+      bucket.session.id !== sessionId ||
+      bucket.session.state !== 'active' ||
+      Date.parse(bucket.session.expiresAt) <= Date.parse(expectation.nowIso) ||
+      bucket.session.viewerVerifier !== expectation.expectedViewerVerifier ||
+      bucket.session.viewerGeneration !== expectation.expectedViewerGeneration
+    ) {
+      throw new Error('VIEWER_GENERATION_RACE')
+    }
     bucket.viewerSessions.set(viewerSession.tokenVerifier, structuredClone(viewerSession))
     return structuredClone(viewerSession)
   }
@@ -159,7 +174,7 @@ export class D1NativeSharingStoreCandidate implements NativeSharingStore {
   async appendPoint(sessionId: string, expectedLastSequence: number, point: AcceptedNativePoint) { void sessionId; void expectedLastSequence; void point; return this.unavailable() }
   async getLatestPoint(sessionId: string) { void sessionId; return this.unavailable() }
   async getConfirmedSegments(sessionId: string, maxSegments?: number) { void sessionId; void maxSegments; return this.unavailable() }
-  async createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession) { void sessionId; void viewerSession; return this.unavailable() }
+  async createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession, expectation: ViewerSessionCreationExpectation) { void sessionId; void viewerSession; void expectation; return this.unavailable() }
   async getViewerSession(sessionId: string, tokenVerifier: string) { void sessionId; void tokenVerifier; return this.unavailable() }
   async revokeViewerSession(sessionId: string, tokenVerifier: string, revokedAt: string) { void sessionId; void tokenVerifier; void revokedAt; return this.unavailable() }
   async revokeAllViewerSessions(sessionId: string, revokedAt: string) { void sessionId; void revokedAt; return this.unavailable() }
@@ -181,7 +196,7 @@ export class DurableObjectNativeSharingStoreCandidate implements NativeSharingSt
   appendPoint(sessionId: string, expectedLastSequence: number, point: AcceptedNativePoint) { return this.stub().appendPoint(sessionId, expectedLastSequence, point) }
   getLatestPoint(sessionId: string) { return this.stub().getLatestPoint(sessionId) }
   getConfirmedSegments(sessionId: string, maxSegments?: number) { return this.stub().getConfirmedSegments(sessionId, maxSegments) }
-  createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession) { return this.stub().createViewerSession(sessionId, viewerSession) }
+  createViewerSession(sessionId: string, viewerSession: OpaqueViewerSession, expectation: ViewerSessionCreationExpectation) { return this.stub().createViewerSession(sessionId, viewerSession, expectation) }
   getViewerSession(sessionId: string, tokenVerifier: string) { return this.stub().getViewerSession(sessionId, tokenVerifier) }
   revokeViewerSession(sessionId: string, tokenVerifier: string, revokedAt: string) { return this.stub().revokeViewerSession(sessionId, tokenVerifier, revokedAt) }
   revokeAllViewerSessions(sessionId: string, revokedAt: string) { return this.stub().revokeAllViewerSessions(sessionId, revokedAt) }

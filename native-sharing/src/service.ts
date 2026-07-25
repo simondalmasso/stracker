@@ -126,7 +126,12 @@ export class NativeSharingService {
       expiresAt: new Date(expiresAtMs).toISOString(),
       revokedAt: null,
     }
-    await this.store.createViewerSession(session.id, viewerSession)
+    await this.store.createViewerSession(session.id, viewerSession, {
+      sessionId: session.id,
+      expectedViewerVerifier: session.viewerVerifier,
+      expectedViewerGeneration: session.viewerGeneration,
+      nowIso: now.toISOString(),
+    })
     return {
       sessionId: session.id,
       viewerSessionToken,

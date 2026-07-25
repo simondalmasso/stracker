@@ -3,43 +3,55 @@
 ## Canonical milestone
 
 ```text
-ACTIVE_PHASE=NATIVE_LOCATION_SHARING_V1
-ACTIVE_BRANCH=feat/stracker-native-location-sharing-v1
-ACTIVE_DRAFT_PR=8
-PR_BASE=feat/stracker-vector-map-engine-v1
-PR_BASE_SHA=8a3ac8d750b107e24f5ce744f15a0bbae9767f1f
-CURRENT_HEAD_SHA=SEE_DRAFT_PR_8_HEAD
-TECHNICAL_GREEN_SHA=35826d7bdf5a7546cbaf8d9b1795d4210ba6fed5
-TECHNICAL_GREEN_RUN_ID=29971586732
-TECHNICAL_GREEN_CONCLUSION=success
-TECHNICAL_GREEN_ARTIFACT_ID=8549891196
-TECHNICAL_GREEN_ARTIFACT_DIGEST=sha256:d58664df8415d872a9b49710860fa7724ac718bfcec324d2587c0c0f9ef237ac
+ACTIVE_PHASE=NATIVE_SHARING_CLOUDFLARE_RUNTIME_V1_AUD_HANDOFF
+ACTIVE_BRANCH=feat/stracker-native-sharing-cloudflare-runtime-v1
+ACTIVE_DRAFT_PR=9
 PR_STATE=OPEN_DRAFT
+PR_BASE=feat/stracker-native-location-sharing-v1
+PR_BASE_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
+CURRENT_HEAD_SHA=SEE_DRAFT_PR_9_HEAD
+CURRENT_HEAD_VALIDATION=GITHUB_PR_CHECKS_ARE_AUTHORITATIVE
+PR_9_TECHNICALLY_READY=YES
+AUD_HANDOFF_READY=YES
 MERGE_EXECUTED=NO
 DEPLOYMENT_EXECUTED=NO
 PRODUCTION_MODIFIED=NO
 PRODUCTION_TRAFFIC=0%
 ```
 
-PR #8 is stacked directly on the exact frozen head of PR #6. It is not based on PR #7 and does not merge or cherry-pick PR #7.
+PR #9 remains stacked directly on the frozen native-sharing product branch. It is not based on the experimental Google runtime branch.
+
+## Exact validated lineage
 
 ```text
 PR_6_ROLE=FROZEN_VECTOR_MAP_ENGINE_BASE
 PR_6_HEAD_SHA=8a3ac8d750b107e24f5ce744f15a0bbae9767f1f
-PR_6_MERGE=NO
-PR_6_DEPLOY=NO
 
 PR_7_ROLE=EXPERIMENTAL_GOOGLE_RUNTIME_SPIKE
 PR_7_RELEASE_DEPENDENCY=NO
 PR_7_PRODUCTION_CANDIDATE=NO
-PR_7_LIVE_INFRASTRUCTURE=NO
-PR_7_MERGE=NO
-PR_7_DEPLOY=NO
+PR_7_IN_PR_9_ANCESTRY=NO
+
+PR_8_ROLE=FROZEN_NATIVE_LOCATION_SHARING_PRODUCT
+PR_8_HEAD_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
+PR_8_FINAL_RUN_ID=29971797092
+
+FINAL_IMPLEMENTATION_SHA=51430f03c00483135671b9c16c13e185f0b4b3a2
+FINAL_IMPLEMENTATION_RUN=30169341844
+FINAL_IMPLEMENTATION_CONCLUSION=success
+
+DOCUMENTATION_FINALIZATION_SHA=af2fcd74b188edf3820344765ae093ab0abb9a16
+DOCUMENTATION_FINALIZATION_RUN=30169563978
+DOCUMENTATION_FINALIZATION_CONCLUSION=success
+
+STATUS_RECONCILIATION_SHA=420b5b6cac8728434f0aaf2a166034d83b383094
+STATUS_RECONCILIATION_RUN=30169717480
+STATUS_RECONCILIATION_CONCLUSION=success
 ```
 
-PR #1, PR #2, PR #4, PR #6 and PR #7 remain frozen and unmerged.
+The current document is the final audit-handoff reconciliation. Its own exact-head pipeline must remain green in GitHub; no product code changed after `FINAL_IMPLEMENTATION_SHA`.
 
-## Canonical product entry
+## Product boundary
 
 Every open, reload, new tab and navigation to `/` begins at:
 
@@ -58,7 +70,7 @@ SESSION_REQUEST=NO
 POINTS_REQUEST=NO
 ```
 
-The canonical source and provider model is:
+Source and provider remain separate:
 
 ```ts
 type LocationSource =
@@ -70,373 +82,295 @@ type SharedLocationProvider =
   | 'google-session-experimental'
 ```
 
-`google-shared` is absent from executable release code. Provider, motion, freshness, source health, camera, sharing-session state and viewer-session state remain independent.
-
-## Shared-location product
-
-Inside `UBICACIÓN COMPARTIDA`:
-
-```text
-[ ABRIR ENLACE STRACKER ]
-[ COMPARTIR MI UBICACIÓN ]
-[ GOOGLE MAPS — EXPERIMENTAL ]
-```
-
-The Google option is disabled and displays `No disponible en esta versión`. The release flow contains no Google cookie importer, Google account dependency, Google Location Sharing request or Google session credential.
+Google remains outside the native release:
 
 ```text
 GOOGLE_PROVIDER_DISABLED=YES
+RELEASE_DEPENDENCY=NO
+DEFAULT_PROVIDER=NO
+PRODUCTION_ELIGIBLE=NO_WITHOUT_SEPARATE_EVIDENCE
 REAL_GOOGLE_REQUESTS=NO
+REAL_GOOGLE_CREDENTIALS=NO
 REAL_COOKIES=NO
 ```
 
-## Native emitter
+## Native sharing contract
 
-Route:
+Emitter:
 
 ```text
 /share
+→ explicit INICIAR TRANSMISIÓN
+→ create session and independent capabilities
+→ request geolocation
+→ publish confirmed points
+→ expose /shared#v=<viewer-capability>
 ```
 
-`COMPARTIR MI UBICACIÓN` does not request geolocation or create a session before explicit activation.
+Viewer:
 
 ```text
-explicit action
-→ geolocation permission
-→ session creation
-→ independent capabilities
-→ watchPosition()
-→ bounded point publication
-→ private viewer link
-```
-
-The UI shows status, remaining duration, last update, stop and revoke controls. It does not promise tracking while the browser is closed or suspended.
-
-Capabilities are independently generated with at least 256 bits of entropy:
-
-```text
-SESSION_ID
-EMITTER_TOKEN
-VIEWER_TOKEN
-```
-
-Only verifiers/hashes are stored. The emitter token never enters a URL. Tokens and capabilities are not logged.
-
-## Native viewer security boundary
-
-The only shareable viewer link is:
-
-```text
-/shared#v=<capability>
+/shared#v=<viewer-capability>
+→ explicit VER UBICACIÓN
+→ POST /api/share/viewer/exchange with capability in JSON
+→ opaque short-lived in-memory viewer session
+→ history.replaceState('/shared')
+→ authenticated polling with Authorization: Bearer
 ```
 
 ```text
 VIEWER_CAPABILITY_IN_PATH=NO
 VIEWER_CAPABILITY_IN_QUERY=NO
-VIEWER_CAPABILITY_FRAGMENT_ONLY=PASS
+CAPABILITY_FRAGMENT_ONLY=YES
+CAPABILITY_EXCHANGE_REQUIRED=YES
+FRAGMENT_REMOVED_AFTER_EXCHANGE=YES
+CAPABILITY_NOT_REUSED_FOR_POLLING=YES
+VIEWER_SESSION=OPAQUE_SHORT_LIVED_MEMORY_ONLY
+WEBSOCKET_V1=NO
+BACKGROUND_TRACKING_PROMISED=NO
 ```
 
-Initial navigation serves only the static confirmation screen. Before `VER UBICACIÓN`:
+Capabilities, tokens, viewer sessions, cookies and coordinates are not persisted in localStorage, sessionStorage, IndexedDB, JS-readable cookies, URL, DOM, logs or release artifacts.
+
+## Code-only Cloudflare architecture
 
 ```text
-NO_STATUS_REQUEST=PASS
-NO_POINTS_REQUEST=PASS
-NO_MAP_REQUEST=PASS
-NO_CAPABILITY_EXCHANGE=PASS
-```
-
-After confirmation:
-
-```text
-fragment capability
-→ POST /api/share/viewer/exchange
-→ short-lived opaque viewer session
-→ history.replaceState(null, '', '/shared')
-→ original capability cleared
-→ authorized status/points polling
-```
-
-Polling and logout use:
-
-```http
-Authorization: Bearer <opaque-viewer-session>
-```
-
-The original capability is sent once in the exchange JSON body and is never reused for polling. The viewer session remains only in document memory and is server-revocable.
-
-Rotation increments viewer generation and invalidates the old capability and every active viewer session from the previous generation. Revocation and expiration stop reads and writes immediately. Late responses are ignored.
-
-Shared routes apply:
-
-```text
-Cache-Control=no-store
-Referrer-Policy=no-referrer
-Content-Security-Policy=STRICT
-ANALYTICS_ON_SHARED_ROUTES=OFF
-```
-
-## Native HTTP PoC
-
-```text
-POST   /api/share/sessions
-POST   /api/share/sessions/:id/points
-POST   /api/share/viewer/exchange
-POST   /api/share/viewer/logout
-GET    /api/share/sessions/:id/status
-GET    /api/share/sessions/:id/points
-POST   /api/share/sessions/:id/rotate-viewer
-DELETE /api/share/sessions/:id
-```
-
-The boundary is JSON-only, `no-store`, strict-method, strict-path, same-origin, body-limited, rate-limited, timeout-bounded and fail-closed. Public errors are sanitized and session identifiers are not enumerable.
-
-## Point validation and retention
-
-```ts
-interface NativeSharedLocationPoint {
-  version: 1
-  sequence: number
-  lat: number
-  lng: number
-  accuracyM: number | null
-  speedMps: number | null
-  headingDeg: number | null
-  capturedAt: string
-}
-```
-
-The server supplies `receivedAt`, session identity and acceptance state. It independently validates coordinates, age, future timestamps, monotonic sequence, replay, duplicates, frequency, accuracy, speed, impossible jumps and payload size.
-
-Hard limits exist for session duration, points per session, points returned, publish frequency, GhostRail segments, expiration grace and deletion after expiration. Location is not retained indefinitely.
-
-## Storage decision for native sharing
-
-```text
-EXECUTABLE_POC_STORE=InMemoryNativeSharingStore
-LIVE_CANDIDATE=Durable Objects with SQLite
-D1_CANDIDATE=DOCUMENTED_NOT_SELECTED
-LIVE_STORAGE_CREATED=NO
-```
-
-Durable Objects are the future candidate because one sharing session is the serialization and consistency atom. This decision is specific to native sequential writes, viewer generation, immediate revocation, expiration and concurrent viewers; it is not inherited from PR #7.
-
-No D1 database, Durable Object namespace, migration, binding or live Worker exists in PR #8.
-
-## Renderer and source isolation
-
-PR #8 reuses the PR #6 MapLibre pipeline without duplicating renderer or classifiers:
-
-```text
-RENDERER=MapLibre GL JS
-BASEMAP_MODES=vector-3d|satellite|hybrid
-UI_LABELS=MAPA 3D|SATÉLITE|HÍBRIDO
-SECOND_RENDERER=ABSENT
+Browser
+→ stateless Worker gateway
+→ Native Sharing API
+→ one NativeSharingDurableObject per SESSION_ID
+→ private SQLite database attached to that object
+→ Static Assets
 ```
 
 ```text
-VECTOR_STYLE_PROVIDER=OpenFreeMap
-BASE_DATA=OpenStreetMap/OpenMapTiles-compatible
-SATELLITE_PROVIDER=eox-s2cloudless-2016
-SATELLITE_PERIOD=2016-2017 mosaic
-SATELLITE_RESOLUTION=10 m
-SATELLITE_MAX_ZOOM=14
-RECENT_IMAGERY_CLAIM=NO
+DO_LIFECYCLE_CONFIG=EXPORTS
+SQLITE_STORAGE_DECLARED=YES
+MIGRATIONS_PRESENT=NO
+NATIVE_SHARING_BINDING=PRESENT
+workers_dev=false
+preview_urls=false
+observability.enabled=false
+routes=ABSENT
+custom_domains=ABSENT
+account_id=ABSENT
+zone_id=ABSENT
 ```
 
-Motion classification, freshness, source health, segmented GhostRail, camera modes, manual mode and late-response protection are preserved. Switching sources clears watcher, polling, abort controllers, timers, marker, GhostRail, buffers, stable coordinate and camera state before entering the new source.
+Deterministic routing uses `env.NATIVE_SHARING.getByName(sessionId)`. Complete capabilities and tokens are not stored; only verifiers are stored.
 
-## Zero-cost and live-infrastructure boundary
+The per-session SQLite schema is:
 
 ```text
-RECURRING_INFRASTRUCTURE_COST_USD=0
-MAP_PROVIDER_COST_USD=0
-PAID_OVERAGE_ALLOWED=NO
-AUTOMATIC_UPGRADE_TO_PAID=NO
-BILLING_DEPENDENCY=NO
-
-WORKER_LIVE_CREATED=NO
-DURABLE_OBJECT_LIVE_CREATED=NO
-ACCESS_APPLICATION_CREATED=NO
-GOOGLE_IDP_CREATED=NO
-VERSION_UPLOAD_EXECUTED=NO
-DEPLOYMENT_EXECUTED=NO
-ROUTE_CREATED=NO
-DNS_CHANGED=NO
-SECRET_CREATED=NO
+sharing_session
+accepted_points
+viewer_sessions
+rate_or_sequence_state
 ```
 
-## Browser QA
+Atomic transaction boundaries cover session creation state, point append, viewer exchange revalidation and quota enforcement, viewer rotation and invalidation, session revocation and invalidation, and expiration cleanup.
 
-The exact technical-green SHA was validated at:
+## Final validation gates
 
-```text
-320x568
-360x640
-375x812
-390x844
-412x915
-```
-
-```text
-ROOT_SELECTOR_UNCHANGED=PASS
-NO_GEOLOCATION_BEFORE_EMITTER_START=PASS
-DYNAMIC_CAPABILITY_ROUTE_ABSENT=PASS
-DOCUMENT_REQUEST_PATH=/shared
-DOCUMENT_REQUEST_QUERY_PRESENT=FALSE
-DOCUMENT_REQUEST_CAPABILITY_PRESENT=FALSE
-NO_NETWORK_BEFORE_VIEWER_CONFIRMATION=PASS
-NO_API_REQUEST_BEFORE_CONFIRMATION=PASS
-NO_MAP_REQUEST_BEFORE_CONFIRMATION=PASS
-CAPABILITY_EXCHANGE_REQUIRED=PASS
-CAPABILITY_SENT_ONCE=PASS
-FRAGMENT_REMOVED_AFTER_EXCHANGE=PASS
-ORIGINAL_CAPABILITY_CLEARED_FROM_MEMORY=PASS
-CAPABILITY_NOT_REUSED_FOR_POLLING=PASS
-POLLING_USES_OPAQUE_VIEWER_SESSION=PASS
-VIEWER_SESSION_MEMORY_ONLY=PASS
-VIEWER_LOGOUT=PASS
-ROTATION_INVALIDATES_ACTIVE_VIEWERS=PASS
-REVOCATION_INVALIDATES_ACTIVE_VIEWERS=PASS
-SOURCE_ISOLATION=PASS
-SOURCE_SWITCH_CLEANUP=PASS
-LATE_RESPONSE_BLOCKED=PASS
-STALE_NOT_LIVE=PASS
-GHOSTRAIL_SEGMENTATION=PASS
-MAP_MODES_PRESERVED=PASS
-MANUAL_CAMERA_PRESERVED=PASS
-PAGEERROR=0
-HORIZONTAL_OVERFLOW=0
-MOBILE_QA=PASS
-A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
-```
-
-## Semantic security scanner
-
-The release scanner is implemented at:
-
-```text
-scripts/security/native-sharing-release-scan.py
-scripts/security/native_sharing_release_scan_core.py
-tests/security/native-sharing-release-scan.test.py
-tests/security/fixtures/native-sharing-release-scan/
-```
-
-It separately analyzes executable product code, structural Cloudflare configuration and effective workflow `run` commands. Findings emit only:
-
-```json
-{"ruleId":"RULE_ID","filePath":"relative/path"}
-```
-
-```text
-SCANNER_UNIT_TESTS=PASS
-SAFE_FIXTURE_ACCEPTED=PASS
-ALL_FORBIDDEN_FIXTURES_REJECTED=PASS
-EXPECTED_RULE_IDS=PASS
-EXPECTED_FILE_PATHS=PASS
-SCANNER_SELF_MATCH=NO
-SCANNER_OUTPUT_SANITIZED=PASS
-REAL_REPOSITORY_SCOPE=PASS
-SECURITY_RELEASE_SCAN=PASS
-```
-
-## Exact technical-green evidence
-
-```text
-TECHNICAL_GREEN_SHA=35826d7bdf5a7546cbaf8d9b1795d4210ba6fed5
-WORKFLOW_RUN_ID=29971586732
-WORKFLOW_CONCLUSION=success
-ARTIFACT_ID=8549891196
-ARTIFACT_DIGEST=sha256:d58664df8415d872a9b49710860fa7724ac718bfcec324d2587c0c0f9ef237ac
-```
-
-Artifact contents are exactly:
-
-```text
-browser-qa.json
-_gates.json=ABSENT
-gates.json
-manifest.json
-sha256sums.txt
-```
-
-The `_gates.json=ABSENT` line is an explicit negative invariant; the archive itself contains exactly four files: `browser-qa.json`, `gates.json`, `manifest.json` and `sha256sums.txt`.
-
-```text
-ARTIFACT_HEAD_SHA_MATCH=PASS
-ARTIFACT_RUN_ID_MATCH=PASS
-ZIP_DIGEST_MATCH=PASS
-INTERNAL_SHA256SUMS=PASS
-PRIVATE_DATA_USED=FALSE
-REAL_COORDINATES=ABSENT
-COOKIES=ABSENT
-TOKENS=ABSENT
-CAPABILITIES=ABSENT
-AUTHORIZATION_HEADERS=ABSENT
-RAW_LOGS=ABSENT
-ENV_FILES=ABSENT
-SOURCE_ARCHIVE=ABSENT
-```
-
-## Technical validation state
+The full workflow passed on the implementation, documentation-finalization and status-reconciliation SHAs listed above. Required gates were:
 
 ```text
 STACKED_BASE_CHECK=PASS
-PR_6_FROZEN=PASS
-PR_7_NOT_IN_RELEASE_STACK=PASS
+PR_8_FROZEN_CHECK=PASS
+PR_7_NOT_IN_STACK=PASS
 FROZEN_INSTALL=PASS
 BACKEND_REGRESSION=PASS
 ESLINT=PASS
 TYPECHECK=PASS
 NATIVE_SHARING_TYPECHECK=PASS
 NATIVE_SHARING_TESTS=PASS
-VECTOR_MAP_REGRESSION=PASS
+CLOUDFLARE_RUNTIME_TYPECHECK=PASS
+CLOUDFLARE_RUNTIME_UNIT_TESTS=PASS
+CLOUDFLARE_WORKER_VITEST=PASS
+CONCURRENCY_TESTS=PASS
 STATIC_EXPORT_BUILD=PASS
-NATIVE_SHARING_BROWSER_QA=PASS
-SECURITY_AND_RELEASE_GATES=PASS
+BROWSER_QA=PASS
+SECURITY_SCANNER_TESTS=PASS
+SECURITY_RELEASE_SCAN=PASS
+WRANGLER_TYPES=PASS
+WRANGLER_DRY_RUN=PASS
+ZERO_COST_MODEL=PASS
 PREPARE_SANITIZED_ARTIFACT=PASS
 SECURITY_ARTIFACT_SCAN=PASS
-ARTIFACT_CURRENT_HEAD=PASS
+UPLOAD_ARTIFACT=PASS
+VERIFY_ARTIFACT=PASS
 FINAL_INTEGRITY=PASS
-CI_FINAL=SUCCESS
 ```
 
-## Runtime and production status
+## Browser QA evidence
 
 ```text
-POC_RUNTIME=IN_MEMORY_AND_MOCKS_ONLY
+VIEWPORTS=320x568,360x640,375x812,390x844,412x915
+VIEWPORT_COUNT=5
+PAGEERROR_TOTAL=0
+HORIZONTAL_OVERFLOW_TOTAL=0
+PRIVATE_DATA_USED=false
+COORDINATE_VALUES_RETAINED=false
+SECRET_VALUES_RETAINED=false
+```
+
+Verified contracts:
+
+```text
+ROOT_SELECTOR_BEFORE_NETWORK=PASS
+ROOT_SELECTOR_BEFORE_GEOLOCATION=PASS
+ROOT_SELECTOR_BEFORE_MAP=PASS
+MY_DEVICE_EXPLICIT_SELECTION=PASS
+MY_DEVICE_SYNTHETIC_WATCH_POSITION=PASS
+MY_DEVICE_COORDINATES_NOT_TRANSMITTED=PASS
+SOURCE_SWITCH_CLEANUP=PASS
+LATE_RESPONSE_BLOCKED=PASS
+SHARE_EXPLICIT_START_REQUIRED=PASS
+SHARE_NO_GEOLOCATION_BEFORE_START=PASS
+SHARE_NO_SESSION_BEFORE_START=PASS
+VIEWER_CONFIRMATION_REQUIRED=PASS
+NO_API_BEFORE_VIEWER_CONFIRMATION=PASS
+NO_MAP_BEFORE_VIEWER_CONFIRMATION=PASS
+CAPABILITY_FRAGMENT_ONLY=PASS
+FRAGMENT_REMOVED_AFTER_EXCHANGE=PASS
+OPAQUE_BEARER_POLLING=PASS
+CAPABILITY_IN_TRANSPORT_URL=NO
+ROTATION_INVALIDATES_VIEWER=PASS
+REVOCATION_INVALIDATES_VIEWER=PASS
+GHOSTRAIL_CLEARED_ON_INVALIDATION=PASS
+PREFERS_REDUCED_MOTION=PASS
+MAP_ATTRIBUTION_PRESENT=PASS
+SHARED_QUERY_REJECTED=PASS
+REFERRER_POLICY_NO_REFERRER=PASS
+SHARED_CSP_STRICT=PASS
+```
+
+Evidence boundary:
+
+```text
+BROWSER_SYNTHETIC_INTEGRATION=PASS
+WORKERD_SQLITE_SEMANTICS=PASS
+WORKER_SQLITE_E2E_NOT_CLAIMED=YES
+WORKER_SQLITE_E2E=null
+```
+
+## Latest sanitized artifact
+
+The latest fully inspected artifact before this final documentation-only reconciliation belongs to exact SHA `420b5b6cac8728434f0aaf2a166034d83b383094` and run `30169717480`:
+
+```text
+ARTIFACT_ID=8622591293
+ARTIFACT_NAME=stracker-native-sharing-final-420b5b6cac8728434f0aaf2a166034d83b383094-30169717480
+ARTIFACT_EXPIRES_AT=2026-08-01T18:31:07Z
+GITHUB_ARTIFACT_DIGEST_SHA256=54f1499705f3738f7857db27825f32bc7749518bec3f8fbad6b9dccddd513ad6
+INNER_VALIDATION_ZIP_SHA256=ad4ebf8aa5df4cab3be0650bf272df02f3bdb9fcb15849990e644b33324a1e43
+FINAL_SIX_FILE_ARTIFACT=PASS
+```
+
+The deterministic inner ZIP contains exactly:
+
+```text
+browser-qa.json
+  sha256=2c7434c9924bb2328d84a3cf7b41ad753aded2fe252a1b1397ee9e5b6a0c7b93
+gates.json
+  sha256=016876e0957314a60172c9f43f06ab27bcacdd60f4d2f5a3c4515686c3a4f9c5
+manifest.json
+  sha256=3c9253dfe922bf32d230c282c36d848dc1fe85cc3211500081509beef41fd2ef
+quota-model.json
+  sha256=c0d9411b1079f809cb24a8b19b526ea2749e89049f6718ebb27db80f53eff5da
+runtime-tests.json
+  sha256=26a5721d1d30af60671ba1b35853d586e33670c3eacec8e7fa94839e2e086663
+sha256sums.txt
+  sha256=5bbd6158d7de4368a604ee0c78928801f7e340b5538e5c27ef88165cb0f41f12
+```
+
+Independent inspection confirmed:
+
+```text
+ARTIFACT_SOURCE_SHA_MATCH=PASS
+ARTIFACT_WORKFLOW_RUN_MATCH=PASS
+INTERNAL_SHA256SUMS=PASS
+RAW_LOGS_INCLUDED=false
+ENV_FILES_INCLUDED=false
+SOURCE_ARCHIVE_INCLUDED=false
+ACCOUNT_IDENTIFIERS_INCLUDED=false
+NAMESPACE_IDENTIFIERS_INCLUDED=false
+AUTHORIZATION_VALUES_INCLUDED=false
+CAPABILITIES_INCLUDED=false
+TOKENS_INCLUDED=false
+COOKIES_INCLUDED=false
+REAL_COORDINATES_INCLUDED=false
+```
+
+## Cost boundary
+
+```text
+RECURRING_INFRASTRUCTURE_COST_USD=0
+MAP_PROVIDER_COST_USD=0
+WORKERS_PLAN=FREE_REQUIRED
+PAID_OVERAGE_ALLOWED=NO
+AUTOMATIC_UPGRADE_TO_PAID=NO
+FAIL_CLOSED_ON_FREE_QUOTA=YES
+FINAL_BUNDLE_SINGLE_ENGINE=PASS
+UNSELECTED_ENGINE_ABSENT=PASS
+```
+
+## Production and live infrastructure
+
+```text
 PRODUCTION_RUNTIME=RENDER
 PRODUCTION_URL=https://strackerglm.onrender.com/
 PRODUCTION_MODIFIED=NO
+RENDER_MODIFIED=NO
 CLOUDFLARE_LIVE_MODIFIED=NO
+WORKER_LIVE_CREATED=NO
+DURABLE_OBJECT_NAMESPACE_LIVE_CREATED=NO
+VERSION_UPLOAD_EXECUTED=NO
+DEPLOYMENT_EXECUTED=NO
+ACCESS_APPLICATION_CREATED=NO
+GOOGLE_IDP_CREATED=NO
+ROUTE_CREATED=NO
+DNS_MODIFIED=NO
+SECRET_CREATED=NO
+REAL_LOCATION_SESSION_CREATED=NO
 PRODUCTION_TRAFFIC=0%
-ROLLBACK_EXECUTED=NO
+MERGE=NO
+DEPLOY=NO
+LIVE_INFRASTRUCTURE=NO
 ```
 
-Production remains on the previous Render runtime. PR #8 was not merged or deployed.
-
-## Open risks
-
-- Browser geolocation can be throttled or suspended in the background; STRACKER does not promise closed-browser tracking.
-- Capability leakage through the recipient's own screenshots or intentional redistribution cannot be prevented; rotation and revocation limit exposure.
-- The in-memory PoC is not durable and is not a production runtime.
-- Durable Object SQLite behavior, alarms, concurrency and quotas are not yet implemented or validated in this branch.
-- OpenFreeMap and EOx public services have no STRACKER-controlled SLA.
-- EOxCloudless is historical 10 m imagery, not current high-resolution imagery.
-- Physical Samsung Galaxy A22 performance remains unverified.
-- Production remains on Render until a separately authorized cutover phase.
-
-## Release posture
+No production rollback is required because no production or live Cloudflare surface changed.
 
 ```text
-PR_8_TECHNICALLY_GREEN_SHA=35826d7bdf5a7546cbaf8d9b1795d4210ba6fed5
-PR_8_STATE=OPEN_DRAFT
-PR_8_MERGE=NO
-PR_8_DEPLOY=NO
-NO_MORE_COMMITS=PENDING_FINAL_DOCUMENTATION_RUN
-PRODUCTION_DEPLOY=NO
-FULL_CLOUDFLARE_CUTOVER=NO_GO
+ROLLBACK_BASE_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
+ROLLBACK_ACTION_IF_REJECTED=CLOSE_DRAFT_PR_WITHOUT_MERGE
 ```
 
-## Next exact phase
+## Remaining limits
 
-After the documentation HEAD passes the same complete pipeline, freeze PR #8. Then create a separate Draft PR stacked on the final PR #8 HEAD for a code-only Cloudflare runtime with a SQLite-backed `NativeSharingDurableObject`, placeholder non-routable configuration, synthetic tests and dry-run validation only. Stop before creating any live Cloudflare resource.
+```text
+A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
+LIVE_CLOUDFLARE_RUNTIME_VALIDATION=NOT_EXECUTED
+WORKER_SQLITE_E2E_NOT_CLAIMED=YES
+PRODUCTION_DEPLOYMENT_AUTHORIZED=NO
+MERGE_AUTHORIZED=NO
+```
+
+## Decisions
+
+```text
+NATIVE_PROVIDER=stracker-native
+GOOGLE_EXPERIMENTAL_RELEASE_DEPENDENCY=NO
+MAP_ENGINE=MapLibre_GL_JS
+MAP_PROVIDER=OpenFreeMap
+MAP_DATA=OpenStreetMap
+PMTILES_ADAPTER=DECOUPLED_FUTURE_OPTION
+WEBSOCKET_V1=NO
+FAIL_CLOSED=YES
+```
+
+## Next exact step
+
+```text
+NEXT_EXACT_STEP=AUD_INDEPENDENT_REVIEW_OF_FINAL_EXACT_HEAD
+```
