@@ -203,7 +203,7 @@ try {
     stage=stageName('viewer-exchange',width,height)
     await click(viewer,'VER UBICACIÓN')
     await viewer.waitForFunction(()=>location.pathname==='/shared'&&!location.search&&!location.hash,{timeout:30000})
-    await waitFor(()=>{const items=observations(viewerClient);return items.some(x=>x.path==='/api/share/viewer/exchange')&&items.some(x=>x.method==='GET'&&x.path.endsWith('/status'))&&items.some(x=>x.method==='GET'&&x.path.endsWith('/points'))},'VIEWER_TRANSPORT_READY')
+    await waitFor(()=>{const items=observations(viewerClient);return items.some(x=>x.path==='/api/share/viewer/exchange')&&items.filter(x=>x.method==='GET'&&(x.path.endsWith('/status')||x.path.endsWith('/points'))).length>=2},'VIEWER_TRANSPORT_READY')
     const viewerAfter=observations(viewerClient)
     const ex=viewerAfter.filter(x=>x.path==='/api/share/viewer/exchange')
     const poll=viewerAfter.filter(x=>x.method==='GET'&&(x.path.endsWith('/status')||x.path.endsWith('/points')))
