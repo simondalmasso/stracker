@@ -3,21 +3,16 @@
 ## Canonical milestone
 
 ```text
-ACTIVE_PHASE=NATIVE_SHARING_CLOUDFLARE_RUNTIME_V1_FINALIZATION
+ACTIVE_PHASE=NATIVE_SHARING_CLOUDFLARE_RUNTIME_V1_AUD_HANDOFF
 ACTIVE_BRANCH=feat/stracker-native-sharing-cloudflare-runtime-v1
 ACTIVE_DRAFT_PR=9
 PR_STATE=OPEN_DRAFT
 PR_BASE=feat/stracker-native-location-sharing-v1
 PR_BASE_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
 CURRENT_HEAD_SHA=SEE_DRAFT_PR_9_HEAD
-VALIDATED_IMPLEMENTATION_SHA=51430f03c00483135671b9c16c13e185f0b4b3a2
-VALIDATED_IMPLEMENTATION_RUN=30169341844
-VALIDATED_IMPLEMENTATION_CONCLUSION=success
-FINALIZATION_VALIDATED_SHA=af2fcd74b188edf3820344765ae093ab0abb9a16
-FINALIZATION_VALIDATED_RUN=30169563978
-FINALIZATION_VALIDATED_CONCLUSION=success
 CURRENT_HEAD_VALIDATION=GITHUB_PR_CHECKS_ARE_AUTHORITATIVE
-PR_9_TECHNICALLY_READY=YES_IF_CURRENT_HEAD_PIPELINE_SUCCESS
+PR_9_TECHNICALLY_READY=YES
+AUD_HANDOFF_READY=YES
 MERGE_EXECUTED=NO
 DEPLOYMENT_EXECUTED=NO
 PRODUCTION_MODIFIED=NO
@@ -26,7 +21,7 @@ PRODUCTION_TRAFFIC=0%
 
 PR #9 remains stacked directly on the frozen native-sharing product branch. It is not based on the experimental Google runtime branch.
 
-## Branch and PR lineage
+## Exact validated lineage
 
 ```text
 PR_6_ROLE=FROZEN_VECTOR_MAP_ENGINE_BASE
@@ -40,18 +35,25 @@ PR_7_IN_PR_9_ANCESTRY=NO
 PR_8_ROLE=FROZEN_NATIVE_LOCATION_SHARING_PRODUCT
 PR_8_HEAD_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
 PR_8_FINAL_RUN_ID=29971797092
-PR_8_MERGE=NO
-PR_8_DEPLOY=NO
 
-PR_9_ROLE=NATIVE_SHARING_CLOUDFLARE_RUNTIME_V1
-PR_9_BASE_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
-PR_9_MERGE=NO
-PR_9_DEPLOY=NO
+FINAL_IMPLEMENTATION_SHA=51430f03c00483135671b9c16c13e185f0b4b3a2
+FINAL_IMPLEMENTATION_RUN=30169341844
+FINAL_IMPLEMENTATION_CONCLUSION=success
+
+DOCUMENTATION_FINALIZATION_SHA=af2fcd74b188edf3820344765ae093ab0abb9a16
+DOCUMENTATION_FINALIZATION_RUN=30169563978
+DOCUMENTATION_FINALIZATION_CONCLUSION=success
+
+STATUS_RECONCILIATION_SHA=420b5b6cac8728434f0aaf2a166034d83b383094
+STATUS_RECONCILIATION_RUN=30169717480
+STATUS_RECONCILIATION_CONCLUSION=success
 ```
+
+The current document is the final audit-handoff reconciliation. Its own exact-head pipeline must remain green in GitHub; no product code changed after `FINAL_IMPLEMENTATION_SHA`.
 
 ## Product boundary
 
-Every open, reload, new tab and navigation to `/` begins at the source selector:
+Every open, reload, new tab and navigation to `/` begins at:
 
 ```text
 ¿QUÉ UBICACIÓN QUERÉS VER?
@@ -59,7 +61,7 @@ MI UBICACIÓN
 UBICACIÓN COMPARTIDA
 ```
 
-The selection is memory-only. Before choosing a source:
+Selection is memory-only. Before choosing a source:
 
 ```text
 MAP_REQUEST=NO
@@ -68,7 +70,7 @@ SESSION_REQUEST=NO
 POINTS_REQUEST=NO
 ```
 
-Source and provider remain separate states:
+Source and provider remain separate:
 
 ```ts
 type LocationSource =
@@ -92,9 +94,9 @@ REAL_GOOGLE_CREDENTIALS=NO
 REAL_COOKIES=NO
 ```
 
-## Native sharing and viewer contract
+## Native sharing contract
 
-Canonical emitter flow:
+Emitter:
 
 ```text
 /share
@@ -105,7 +107,7 @@ Canonical emitter flow:
 → expose /shared#v=<viewer-capability>
 ```
 
-Canonical viewer flow:
+Viewer:
 
 ```text
 /shared#v=<viewer-capability>
@@ -155,7 +157,7 @@ account_id=ABSENT
 zone_id=ABSENT
 ```
 
-Deterministic routing uses `env.NATIVE_SHARING.getByName(sessionId)`. Tokens are never stored complete; only capability and viewer-session verifiers are stored.
+Deterministic routing uses `env.NATIVE_SHARING.getByName(sessionId)`. Complete capabilities and tokens are not stored; only verifiers are stored.
 
 The per-session SQLite schema is:
 
@@ -166,18 +168,13 @@ viewer_sessions
 rate_or_sequence_state
 ```
 
-Atomic transaction boundaries cover session creation state, point append, viewer exchange revalidation and limit enforcement, viewer rotation and invalidation, session revocation and invalidation, and expiration cleanup.
+Atomic transaction boundaries cover session creation state, point append, viewer exchange revalidation and quota enforcement, viewer rotation and invalidation, session revocation and invalidation, and expiration cleanup.
 
-## Final validated implementation evidence
+## Final validation gates
 
-The first complete final pipeline is green for exact implementation SHA `51430f03c00483135671b9c16c13e185f0b4b3a2`:
+The full workflow passed on the implementation, documentation-finalization and status-reconciliation SHAs listed above. Required gates were:
 
 ```text
-WORKFLOW=STRACKER Native Sharing Cloudflare Runtime V1
-RUN_ID=30169341844
-RUN_NUMBER=107
-RUN_CONCLUSION=success
-
 STACKED_BASE_CHECK=PASS
 PR_8_FROZEN_CHECK=PASS
 PR_7_NOT_IN_STACK=PASS
@@ -205,8 +202,6 @@ VERIFY_ARTIFACT=PASS
 FINAL_INTEGRITY=PASS
 ```
 
-This implementation evidence belongs only to the exact SHA and run above. The canonical documentation finalization then passed the same full workflow on exact SHA `af2fcd74b188edf3820344765ae093ab0abb9a16` in run `30169563978`. The current status-reconciliation commit changes documentation only; GitHub checks on the current PR head remain authoritative before handoff.
-
 ## Browser QA evidence
 
 ```text
@@ -219,7 +214,7 @@ COORDINATE_VALUES_RETAINED=false
 SECRET_VALUES_RETAINED=false
 ```
 
-Verified browser contracts include:
+Verified contracts:
 
 ```text
 ROOT_SELECTOR_BEFORE_NETWORK=PASS
@@ -250,23 +245,25 @@ REFERRER_POLICY_NO_REFERRER=PASS
 SHARED_CSP_STRICT=PASS
 ```
 
-Browser QA is synthetic integration evidence. It does not claim Worker SQLite E2E:
+Evidence boundary:
 
 ```text
 BROWSER_SYNTHETIC_INTEGRATION=PASS
+WORKERD_SQLITE_SEMANTICS=PASS
 WORKER_SQLITE_E2E_NOT_CLAIMED=YES
 WORKER_SQLITE_E2E=null
-WORKERD_SQLITE_SEMANTICS=PASS
 ```
 
-## Sanitized final artifact
+## Latest sanitized artifact
+
+The latest fully inspected artifact before this final documentation-only reconciliation belongs to exact SHA `420b5b6cac8728434f0aaf2a166034d83b383094` and run `30169717480`:
 
 ```text
-ARTIFACT_ID=8622485707
-ARTIFACT_NAME=stracker-native-sharing-final-51430f03c00483135671b9c16c13e185f0b4b3a2-30169341844
-ARTIFACT_EXPIRES_AT=2026-08-01T18:19:56Z
-GITHUB_ARTIFACT_DIGEST_SHA256=eafc3010ae72ec7381325542e4a09cf19c5e503901866c4428cea961eeecc505
-INNER_VALIDATION_ZIP_SHA256=1c5a6294122e4c40a93488cbfe65379f583c369280ddf79b5346c34021c13c73
+ARTIFACT_ID=8622591293
+ARTIFACT_NAME=stracker-native-sharing-final-420b5b6cac8728434f0aaf2a166034d83b383094-30169717480
+ARTIFACT_EXPIRES_AT=2026-08-01T18:31:07Z
+GITHUB_ARTIFACT_DIGEST_SHA256=54f1499705f3738f7857db27825f32bc7749518bec3f8fbad6b9dccddd513ad6
+INNER_VALIDATION_ZIP_SHA256=ad4ebf8aa5df4cab3be0650bf272df02f3bdb9fcb15849990e644b33324a1e43
 FINAL_SIX_FILE_ARTIFACT=PASS
 ```
 
@@ -278,18 +275,21 @@ browser-qa.json
 gates.json
   sha256=016876e0957314a60172c9f43f06ab27bcacdd60f4d2f5a3c4515686c3a4f9c5
 manifest.json
-  sha256=e15b0e4f97223bac12de71fdc280d7e0ca484114772754786baaebc040287fb7
+  sha256=3c9253dfe922bf32d230c282c36d848dc1fe85cc3211500081509beef41fd2ef
 quota-model.json
   sha256=c0d9411b1079f809cb24a8b19b526ea2749e89049f6718ebb27db80f53eff5da
 runtime-tests.json
   sha256=26a5721d1d30af60671ba1b35853d586e33670c3eacec8e7fa94839e2e086663
 sha256sums.txt
-  sha256=fe5f6a4271681213d8f2bcab7a68c05aa3743d4fdb2bd15f1a92237e498d24f1
+  sha256=5bbd6158d7de4368a604ee0c78928801f7e340b5538e5c27ef88165cb0f41f12
 ```
 
 Independent inspection confirmed:
 
 ```text
+ARTIFACT_SOURCE_SHA_MATCH=PASS
+ARTIFACT_WORKFLOW_RUN_MATCH=PASS
+INTERNAL_SHA256SUMS=PASS
 RAW_LOGS_INCLUDED=false
 ENV_FILES_INCLUDED=false
 SOURCE_ARCHIVE_INCLUDED=false
@@ -339,20 +339,16 @@ DEPLOY=NO
 LIVE_INFRASTRUCTURE=NO
 ```
 
-No production rollback is required because no production or Cloudflare live surface was changed. The code rollback boundary remains the frozen PR #8 base SHA:
+No production rollback is required because no production or live Cloudflare surface changed.
 
 ```text
 ROLLBACK_BASE_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
 ROLLBACK_ACTION_IF_REJECTED=CLOSE_DRAFT_PR_WITHOUT_MERGE
 ```
 
-## Remaining risks and limits
+## Remaining limits
 
 ```text
-FINALIZATION_HEAD_PIPELINE=PASS
-FINALIZATION_VALIDATED_SHA=af2fcd74b188edf3820344765ae093ab0abb9a16
-FINALIZATION_VALIDATED_RUN=30169563978
-PR_9_TECHNICALLY_READY=YES_IF_CURRENT_HEAD_PIPELINE_SUCCESS
 A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
 LIVE_CLOUDFLARE_RUNTIME_VALIDATION=NOT_EXECUTED
 WORKER_SQLITE_E2E_NOT_CLAIMED=YES
@@ -376,5 +372,5 @@ FAIL_CLOSED=YES
 ## Next exact step
 
 ```text
-NEXT_EXACT_STEP=RUN_FULL_EXACT_HEAD_PIPELINE_FOR_STATUS_RECONCILIATION_THEN_UPDATE_DRAFT_PR_BODY_WITH_FINAL_SHA_AND_HAND_OFF_TO_AUD
+NEXT_EXACT_STEP=AUD_INDEPENDENT_REVIEW_OF_FINAL_EXACT_HEAD
 ```
