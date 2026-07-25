@@ -124,7 +124,8 @@ try {
 
     if(index===0){
       stage=`rotation-trigger:${width}x${height}`;const old=await emitter.$eval('input[aria-label="Enlace privado de espectador"]',i=>i.value);await click(emitter,'ROTAR ENLACE')
-      stage=`rotation-link:${width}x${height}`;await emitter.waitForFunction(v=>{const i=document.querySelector('input[aria-label="Enlace privado de espectador"]');return i?.value&&i.value!==v},{timeout:30000},old);cap=await emitter.$eval('input[aria-label="Enlace privado de espectador"]',i=>new URL(i.value).hash.replace(/^#v=/,''));caps.add(cap)
+      stage=`rotation-request:${width}x${height}`;await waitFor(()=>emitterReq.some(x=>x.method==='POST'&&x.path.endsWith('/rotate-viewer')),'rotation-request')
+      stage=`rotation-link:${width}x${height}`;await emitter.waitForFunction(v=>{const i=document.querySelector('input[aria-label="Enlace privado de espectador"]');return i?.value&&i.value!==v},{timeout:30000,polling:100},old);cap=await emitter.$eval('input[aria-label="Enlace privado de espectador"]',i=>new URL(i.value).hash.replace(/^#v=/,''));caps.add(cap)
       stage=`rotation-viewer-invalidation:${width}x${height}`;await viewer.waitForFunction(()=>document.querySelector('main[data-viewer-state="revoked"]')&&!document.querySelector('main[data-map-engine]'),{timeout:25000,polling:250})
       stage=`rotation-rail:${width}x${height}`;ok(!(await viewer.$$('[data-ghostrail-segments]')).length,'rotation-rail')
 
