@@ -94,7 +94,17 @@ jobs:
 
       - name: CLOUDFLARE_RUNTIME_TYPECHECK
         run: |
+          generated_types='native-sharing-cloudflare/worker-configuration.d.ts'
+          cleanup_generated_types() {
+            rm -f "$generated_types"
+          }
+          trap cleanup_generated_types EXIT
+          bunx wrangler@4.111.0 types "$generated_types" --config native-sharing-cloudflare/wrangler.jsonc
+          test -s "$generated_types"
           bunx tsc -p native-sharing-cloudflare/tsconfig.json
+          trap - EXIT
+          cleanup_generated_types
+          test ! -e "$generated_types"
           echo 'CLOUDFLARE_RUNTIME_TYPECHECK=PASS'
 
       - name: CLOUDFLARE_RUNTIME_UNIT_TESTS
@@ -155,8 +165,16 @@ jobs:
 
       - name: WRANGLER_TYPES
         run: |
-          bunx wrangler@4.111.0 types native-sharing-cloudflare/worker-configuration.d.ts --config native-sharing-cloudflare/wrangler.jsonc
-          test -s native-sharing-cloudflare/worker-configuration.d.ts
+          generated_types='native-sharing-cloudflare/worker-configuration.d.ts'
+          cleanup_generated_types() {
+            rm -f "$generated_types"
+          }
+          trap cleanup_generated_types EXIT
+          bunx wrangler@4.111.0 types "$generated_types" --config native-sharing-cloudflare/wrangler.jsonc
+          test -s "$generated_types"
+          trap - EXIT
+          cleanup_generated_types
+          test ! -e "$generated_types"
           echo 'WRANGLER_TYPES=PASS'
 
       - name: WRANGLER_DRY_RUN
