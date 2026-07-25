@@ -77,10 +77,11 @@ async function geo(page) {
   })
 }
 
-async function page(context,width,height,errors,requests,client,origin) {
+async function page(context,width,height,errors,requests,client) {
   const p=await context.newPage()
   await p.setViewport({width,height,deviceScaleFactor:1,isMobile:true,hasTouch:true})
   await p.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'reduce'}])
+  await p.setExtraHTTPHeaders({'x-stracker-qa-client':client})
   await geo(p)
   await p.setRequestInterception(true)
   p.on('pageerror',()=>errors.push('PAGE_ERROR'))
@@ -90,7 +91,6 @@ async function page(context,width,height,errors,requests,client,origin) {
     requests.push({api:u.pathname.startsWith('/api/share/'),map,coordinate:['10.1234','20.5678'].some(v=>r.url().includes(v)||body.includes(v))})
     if(u.hostname==='tiles.openfreemap.org'&&u.pathname.replace(/\/$/,'')==='/styles/liberty') return r.respond({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:style})
     if(map) return r.abort()
-    if(u.origin===origin) return r.continue({headers:{...r.headers(),'x-stracker-qa-client':client}})
     return r.continue()
   })().catch(()=>r.abort().catch(()=>{})) })
   return p
@@ -125,7 +125,7 @@ try {
   for (const [index,[width,height]] of sizes.entries()) {
     const context=await browser.createBrowserContext(),errors=[]
     const rootClient=`qa-${index}-root`,emitterClient=`qa-${index}-emitter`,viewerClient=`qa-${index}-viewer`
-    const rootReq=[],rootPage=await page(context,width,height,errors,rootReq,rootClient,base)
+    const rootReq=[],rootPage=await page(context,width,height,errors,rootReq,rootClient)
 
     stage=stageName('root-selector',width,height)
     await rootPage.goto(base,{waitUntil:'networkidle0'})
@@ -168,7 +168,7 @@ try {
     ok(!(await rootPage.$$('main[data-map-engine]')).length,'LATE_RESPONSE_BLOCKED')
 
     stage=stageName('emitter-prestart',width,height)
-    const emitterReq=[],emitter=await page(context,width,height,errors,emitterReq,emitterClient,base)
+    const emitterReq=[],emitter=await page(context,width,height,errors,emitterReq,emitterClient)
     await emitter.goto(`${base}/share`,{waitUntil:'networkidle0'})
     await overflow(emitter)
     g=await stats(emitter)
@@ -185,7 +185,7 @@ try {
     ok(g.get===1&&g.watch===1,'EMITTER_GEOLOCATION_START')
 
     stage=stageName('viewer-preconfirm',width,height)
-    const viewerReq=[],viewer=await page(context,width,height,errors,viewerReq,viewerClient,base)
+    const viewerReq=[],viewer=await page(context,width,height,errors,viewerReq,viewerClient)
     const response=await viewer.goto(`${base}/shared#v=${encodeURIComponent(cap)}`,{waitUntil:'networkidle0'})
     ok(response,'VIEWER_DOCUMENT_RESPONSE')
     const h=response.headers()
@@ -230,7 +230,7 @@ try {
 
       stage=stageName('second-viewer',width,height)
       const viewer2Client=`qa-${index}-viewer-2`
-      const viewer2=await page(context,width,height,errors,[],viewer2Client,base)
+      const viewer2=await page(context,width,height,errors,[],viewer2Client)
       await viewer2.goto(`${base}/shared#v=${encodeURIComponent(cap)}`,{waitUntil:'networkidle0'})
       await click(viewer2,'VER UBICACIÓN')
       await viewer2.waitForSelector('main[data-map-engine="maplibre"]',{timeout:30000})
