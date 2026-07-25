@@ -25,15 +25,6 @@ class AssertionFailure extends Error {
 const ok = (value,code) => { if (!value) throw new AssertionFailure(code) }
 const observations = client => seen.filter(item=>item.client===client)
 const stageName = (name,width,height) => `${name}:${width}x${height}`
-const waitFor = async (predicate,code,timeout=30000) => {
-  const started=Date.now()
-  while(Date.now()-started<timeout) {
-    if(predicate()) return
-    await new Promise(resolve=>setTimeout(resolve,50))
-  }
-  throw new AssertionFailure(code)
-}
-
 function type(path) {
   return ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.woff2':'font/woff2'})[extname(path)] || 'application/octet-stream'
 }
@@ -203,7 +194,7 @@ try {
     stage=stageName('viewer-exchange',width,height)
     await click(viewer,'VER UBICACIÓN')
     await viewer.waitForFunction(()=>location.pathname==='/shared'&&!location.search&&!location.hash,{timeout:30000})
-    await waitFor(()=>{const items=observations(viewerClient);return items.some(x=>x.path==='/api/share/viewer/exchange')&&items.filter(x=>x.method==='GET'&&(x.path.endsWith('/status')||x.path.endsWith('/points'))).length>=2},'VIEWER_TRANSPORT_READY')
+    await viewer.waitForSelector('main[data-map-engine="maplibre"][data-location-source="shared-location"]',{timeout:30000})
     const viewerAfter=observations(viewerClient)
     const ex=viewerAfter.filter(x=>x.path==='/api/share/viewer/exchange')
     const poll=viewerAfter.filter(x=>x.method==='GET'&&(x.path.endsWith('/status')||x.path.endsWith('/points')))
@@ -213,7 +204,6 @@ try {
     await memory(viewer,cap)
 
     stage=stageName('viewer-map',width,height)
-    await viewer.waitForSelector('main[data-map-engine="maplibre"][data-location-source="shared-location"]',{timeout:30000})
     await overflow(viewer)
     a=await viewer.$eval('[aria-label="Atribución del mapa"]',n=>n.textContent||'')
     ok(a.includes('OpenFreeMap')&&a.includes('OpenStreetMap'),'SHARED_ATTRIBUTION')
