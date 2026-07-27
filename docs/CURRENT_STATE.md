@@ -17,7 +17,7 @@ CROSS_LAYER_REPLACEMENT=PROHIBITED
 ```text
 ACTIVE_PHASE=NATIVE_SHARING_WORKER_SQLITE_E2E_V1
 PHASE_ID=STRACKER-NATIVE-SHARING-WORKER-SQLITE-E2E-V1
-PHASE_STATUS=ACTIVE_FIRST_GREEN_DOCUMENTATION_FINALIZATION
+PHASE_STATUS=ACTIVE_FINAL_RECONCILIATION
 ACTIVE_BRANCH=feat/stracker-native-sharing-worker-sqlite-e2e-v1
 ACTIVE_DRAFT_PR=10
 PR_STATE=OPEN_DRAFT
@@ -33,11 +33,9 @@ PRODUCTION_MODIFIED=NO
 PRODUCTION_TRAFFIC=0%
 ```
 
-PR #10 is stacked directly on the exact frozen head of PR #9. It does not include the experimental Google runtime branch and does not alter production behavior.
+PR #10 is stacked directly on the exact frozen head of PR #9. It excludes the experimental Google runtime branch and does not change production behavior.
 
 ## Preserved historical state
-
-The complete previous `CURRENT_STATE.md` was preserved byte-for-byte before this canonical replacement:
 
 ```text
 PREVIOUS_CURRENT_STATE_BLOB_SHA=e84a1932caa7331c15198e43b783b66e3fd6679d
@@ -50,6 +48,8 @@ PREVIOUS_ARTIFACT_ID=8622646136
 EVIDENCE_OVERWRITE=NO
 HISTORY_REWRITE=NO
 ```
+
+The archive preserves the complete prior `CURRENT_STATE.md` byte-for-byte.
 
 ## Product invariants
 
@@ -105,13 +105,13 @@ The evidence layers remain intentionally separate:
 BROWSER_SYNTHETIC_INTEGRATION=PASS_IN_MEMORY_NAMESPACE
 BROWSER_CLAIMS_WORKER_SQLITE_E2E=NO
 WORKERD_SQLITE_ATOMICITY=PASS
-WORKER_SQLITE_E2E=PASS_FIRST_GREEN
+WORKER_SQLITE_E2E=PASS
 HTTP_ENTRYPOINT=exports.default.fetch
 DURABLE_OBJECT_ROUTING=env.NATIVE_SHARING.getByName(sessionId)
 SQLITE_INSPECTION=runInDurableObject
 ```
 
-The Workerd integration test proves the public HTTP lifecycle:
+The Workerd integration test proves:
 
 ```text
 CREATE_SESSION_HTTP_TO_SQLITE=PASS
@@ -130,16 +130,16 @@ CONTENT_TYPE_REJECTED=PASS
 INVALID_AUTH_SANITIZED=PASS
 ```
 
-Synthetic test values are not retained in release artifacts.
+Synthetic credentials and coordinates exist only inside executable tests and are not retained in release artifacts.
 
-## First green exact-head pipeline
+## Validated documentation head pipeline
 
 ```text
-FIRST_GREEN_SHA=143af8754ef61d4610c1b101d9dbc9fe600c62ab
-FIRST_GREEN_RUN_ID=30230895739
-FIRST_GREEN_RUN_NUMBER=2
-FIRST_GREEN_RUN_STATUS=completed
-FIRST_GREEN_RUN_CONCLUSION=success
+VALIDATED_DOCUMENTATION_SHA=a59760ae80e5ff42366eb191186d3227172ff57f
+VALIDATED_DOCUMENTATION_RUN_ID=30231351835
+VALIDATED_DOCUMENTATION_RUN_NUMBER=4
+VALIDATED_DOCUMENTATION_RUN_STATUS=completed
+VALIDATED_DOCUMENTATION_RUN_CONCLUSION=success
 STACKED_BASE_EXACT=PASS
 PR_9_FROZEN_CHECK=PASS
 PR_7_NOT_IN_STACK=PASS
@@ -166,16 +166,16 @@ VERIFY_ARTIFACT=PASS
 FINAL_INTEGRITY=PASS
 ```
 
-This first green authorizes documentation finalization only. It is not the final exact-head result because this document changes the branch SHA.
+This exact validated head includes implementation, documentation, the preserved historical state and the final-integrity allowlist. The current reconciliation write changes the branch SHA once more; therefore the new PR head must pass the same complete pipeline before AUD handoff.
 
-## First green sanitized artifact
+## Validated documentation-head artifact
 
 ```text
-ARTIFACT_ID=8640074095
-ARTIFACT_NAME=stracker-native-sharing-worker-sqlite-e2e-143af8754ef61d4610c1b101d9dbc9fe600c62ab-30230895739
-ARTIFACT_EXPIRES_AT=2026-08-03T01:56:37Z
-GITHUB_ARTIFACT_DIGEST_SHA256=478f5b378ad0aa0afc41f9b5fb7cae460197de132ac1253e4ff011c7c23dcf41
-INNER_VALIDATION_ZIP_SHA256=d4edcd618a6790d26f254e0ae0d4ec050b574813bddfe25cb48bc59826abebfd
+ARTIFACT_ID=8640216992
+ARTIFACT_NAME=stracker-native-sharing-worker-sqlite-e2e-a59760ae80e5ff42366eb191186d3227172ff57f-30231351835
+ARTIFACT_EXPIRES_AT=2026-08-03T02:08:07Z
+GITHUB_ARTIFACT_DIGEST_SHA256=060082971057b135a2718d4df584f3a09544209d7bc36436ac6c467323523888
+INNER_VALIDATION_ZIP_SHA256=c60c4539cb263b825c34481585e7d5a266ef2d871ece3b533221f1ff2f1951d3
 FINAL_SIX_FILE_ARTIFACT=PASS
 ```
 
@@ -187,13 +187,13 @@ browser-qa.json
 gates.json
   sha256=42e56027a4e5c0410e58e55ef464c876c8be8474360c6c17521fb22af8f91150
 manifest.json
-  sha256=d673aaa8f38a3eaeb472c8e10c94e9357acd0081276dced1441ec938a96c6f07
+  sha256=e3e3df5436882f8327617c0f2a9b2235a34e7af65c73509efaf4c8eb9fd0c8e1
 quota-model.json
   sha256=c0d9411b1079f809cb24a8b19b526ea2749e89049f6718ebb27db80f53eff5da
 runtime-tests.json
   sha256=6d831237265163176fd056671ba99e019f2caaebff88cec8a6e5f203ccdab770
 sha256sums.txt
-  sha256=831c992b6227debdd35c71bac85edb966015dcbb9c7bc2a02dfce76ec0b8fc2e
+  sha256=302a42b76211fe74652bee1a2d01e6ffbb6e75199a55a9d43e56bbf019f99393
 ```
 
 ```text
@@ -230,7 +230,7 @@ SECRET_VALUES_RETAINED=false
 BROWSER_SQLITE_CLAIM=NO
 ```
 
-The browser layer still validates selector consent, MY DEVICE isolation, viewer consent, fragment transport/removal, authenticated polling, rotation/revocation UI invalidation, GhostRail cleanup, reduced motion and attribution.
+The browser layer validates selector consent, MY DEVICE isolation, viewer consent, fragment transport/removal, authenticated polling, rotation/revocation UI invalidation, GhostRail cleanup, reduced motion and attribution.
 
 ## Cost, release and live boundary
 
@@ -270,7 +270,7 @@ No rollback is required because no live or production surface changed.
 ```text
 A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
 LIVE_CLOUDFLARE_RUNTIME_VALIDATION=NOT_EXECUTED
-FINAL_DOCUMENTATION_HEAD_PIPELINE=PENDING
+FINAL_RECONCILIATION_HEAD_PIPELINE=PENDING
 FINAL_EXACT_HEAD_ARTIFACT=PENDING
 AUD_INDEPENDENT_REVIEW=PENDING_AFTER_FINAL_EXACT_HEAD
 MERGE_AUTHORIZED=NO
@@ -280,5 +280,5 @@ DEPLOY_AUTHORIZED=NO
 ## Next exact step
 
 ```text
-NEXT_EXACT_STEP=RUN_FULL_PIPELINE_ON_DOCUMENTATION_FINALIZATION_HEAD_AND_FIX_UNTIL_GREEN
+NEXT_EXACT_STEP=RUN_FULL_PIPELINE_ON_FINAL_RECONCILIATION_HEAD_AND_FIX_UNTIL_GREEN
 ```
