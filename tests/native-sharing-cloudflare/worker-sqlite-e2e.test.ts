@@ -258,14 +258,18 @@ describe('Worker HTTP to Durable Object SQLite integration', () => {
         const totalViewers = state.storage.sql.exec<{ count: number }>(
           'SELECT COUNT(*) AS count FROM viewer_sessions',
         ).toArray()[0]?.count ?? -1
-        return { session, activeViewers, totalViewers }
+        const staleGenerationViewers = state.storage.sql.exec<{ count: number }>(
+          'SELECT COUNT(*) AS count FROM viewer_sessions WHERE viewer_generation = 1',
+        ).toArray()[0]?.count ?? -1
+        return { session, activeViewers, totalViewers, staleGenerationViewers }
       },
     )
 
     expect(revokedStorage.session).toMatchObject({ state: 'revoked', viewer_generation: 2, point_count: 1 })
     expect(revokedStorage.session?.revoked_at).not.toBeNull()
     expect(Number(revokedStorage.activeViewers)).toBe(0)
-    expect(Number(revokedStorage.totalViewers)).toBe(2)
+    expect(Number(revokedStorage.totalViewers)).toBe(1)
+    expect(Number(revokedStorage.staleGenerationViewers)).toBe(0)
   })
 
   test('WORKER_HTTP_BOUNDARY_FAILS_CLOSED_WITH_SANITIZED_ERRORS', async () => {
