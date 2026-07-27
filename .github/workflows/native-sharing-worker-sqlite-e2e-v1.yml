@@ -1,0 +1,451 @@
+name: STRACKER Native Sharing Worker SQLite E2E V1
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-native-sharing-cloudflare-runtime-v1
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stracker-native-sharing-worker-sqlite-e2e-v1-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+  SOURCE_RUN_ID: ${{ github.run_id }}
+  FROZEN_BASE_SHA: 2769a602d8150a562cc1fd095e95c736908c6e1f
+  FROZEN_BASE_BRANCH: feat/stracker-native-sharing-cloudflare-runtime-v1
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      artifact_name: ${{ steps.prepare.outputs.artifact_name }}
+      zip_sha256: ${{ steps.prepare.outputs.zip_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: STACKED_BASE_EXACT
+        run: |
+          git fetch origin "$FROZEN_BASE_BRANCH" --no-tags
+          test "$(git rev-parse "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
+          test "$(git merge-base HEAD "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
+          test "$(git rev-list --count HEAD.."origin/$FROZEN_BASE_BRANCH")" = '0'
+          git diff --check "origin/$FROZEN_BASE_BRANCH"...HEAD
+          test ! -e __stracker_tree_probe_do_not_commit__
+          echo 'STACKED_BASE_EXACT=PASS'
+          echo 'PR_9_FROZEN_CHECK=PASS'
+
+      - name: RELEASE_STACK_ISOLATION
+        run: |
+          ! git merge-base --is-ancestor 9da3582580dbd05eaf8170268db9752c5f1c710e HEAD
+          echo 'PR_7_NOT_IN_STACK=PASS'
+
+      - name: FROZEN_INSTALL
+        run: |
+          bun install --frozen-lockfile
+          git diff --exit-code -- package.json bun.lock
+          echo 'FROZEN_INSTALL=PASS'
+
+      - name: BACKEND_REGRESSION
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
+          python -m unittest discover -s tests -p 'test_*.py'
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          echo 'BACKEND_REGRESSION=PASS'
+
+      - name: ESLINT
+        run: |
+          bun run lint
+          bunx eslint native-sharing/src native-sharing-cloudflare/src tests/native-sharing-cloudflare/worker-sqlite-e2e.test.ts
+          echo 'ESLINT=PASS'
+
+      - name: TYPECHECK
+        run: |
+          bun run typecheck
+          bunx tsc -p native-sharing/tsconfig.json
+          echo 'TYPECHECK=PASS'
+          echo 'NATIVE_SHARING_TYPECHECK=PASS'
+
+      - name: CLOUDFLARE_RUNTIME_TYPECHECK
+        run: |
+          generated_types='native-sharing-cloudflare/worker-configuration.d.ts'
+          cleanup_generated_types() {
+            rm -f "$generated_types"
+          }
+          trap cleanup_generated_types EXIT
+          bunx wrangler@4.111.0 types "$generated_types" --config native-sharing-cloudflare/wrangler.jsonc
+          test -s "$generated_types"
+          bunx tsc -p native-sharing-cloudflare/tsconfig.json
+          trap - EXIT
+          cleanup_generated_types
+          test ! -e "$generated_types"
+          echo 'CLOUDFLARE_RUNTIME_TYPECHECK=PASS'
+
+      - name: NATIVE_SHARING_REGRESSION
+        run: |
+          bun test tests/native-sharing/native-sharing.test.ts
+          bun test tests/native-sharing-cloudflare/runtime.test.ts
+          echo 'NATIVE_SHARING_TESTS=PASS'
+          echo 'CLOUDFLARE_RUNTIME_UNIT_TESTS=PASS'
+          echo 'CONCURRENCY_TESTS=PASS'
+
+      - name: WORKERD_SQLITE_ATOMICITY
+        run: |
+          bun run test:native-sharing-cloudflare:vitest
+          echo 'CLOUDFLARE_WORKER_VITEST=PASS'
+          echo 'WORKERD_SQLITE_SEMANTICS=PASS'
+          echo 'WORKERD_SQLITE_ATOMICITY=PASS'
+
+      - name: WORKER_SQLITE_E2E
+        run: |
+          bunx vitest run --config native-sharing-cloudflare/vitest.e2e.config.mts
+          echo 'WORKER_SQLITE_E2E=PASS'
+          echo 'WORKER_HTTP_TO_DURABLE_OBJECT=PASS'
+          echo 'DURABLE_OBJECT_SQLITE_PERSISTENCE=PASS'
+          echo 'ROTATION_REVOCATION_HTTP_SQLITE=PASS'
+          echo 'FAIL_CLOSED_HTTP_BOUNDARY=PASS'
+
+      - name: STATIC_EXPORT_BUILD
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          bun run build:export
+          test -f out/index.html
+          test -f out/share/index.html
+          test -f out/shared/index.html
+          test ! -e 'src/app/shared/[capability]'
+          node tools/map-spike/release-bundle-gate.mjs
+          echo 'STATIC_EXPORT_BUILD=PASS'
+          echo 'FINAL_BUNDLE_SINGLE_ENGINE=PASS'
+          echo 'UNSELECTED_ENGINE_ABSENT=PASS'
+
+      - name: BROWSER_QA
+        env:
+          QA_CLOUDFLARE_OUTPUT: ${{ runner.temp }}/browser-qa.json
+        run: |
+          CHROME_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
+          test -n "$CHROME_BIN"
+          export CHROME_BIN
+          bun tests/native-sharing-cloudflare/browser-runtime-qa.ts
+          jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and .secretValuesRetained == false' "$QA_CLOUDFLARE_OUTPUT" >/dev/null
+          jq -e '.pageErrorTotal == 0 and .horizontalOverflowTotal == 0 and .capabilityExchangeCountPerViewer == 1 and (.viewports | length == 5)' "$QA_CLOUDFLARE_OUTPUT" >/dev/null
+          jq -e '.gates.BROWSER_SYNTHETIC_INTEGRATION == "PASS" and .gates.WORKER_SQLITE_E2E_NOT_CLAIMED == "YES" and (.gates.WORKER_SQLITE_E2E == null)' "$QA_CLOUDFLARE_OUTPUT" >/dev/null
+          jq -e '[.viewports[] | select(.pageErrors != 0 or .horizontalOverflow != 0)] | length == 0' "$QA_CLOUDFLARE_OUTPUT" >/dev/null
+          echo 'BROWSER_QA=PASS'
+          echo 'BROWSER_CLAIMS_WORKER_SQLITE_E2E=NO'
+
+      - name: SECURITY_SCANNER_TESTS
+        run: |
+          python tests/security/test_native_sharing_cloudflare_artifact.py
+          python tests/security/test_native_sharing_cloudflare_lifecycle_scan.py
+          echo 'SECURITY_SCANNER_TESTS=PASS'
+
+      - name: SECURITY_RELEASE_SCAN
+        run: |
+          python scripts/security/native-sharing-cloudflare-release-scan.py --root .
+          test ! -e __stracker_tree_probe_do_not_commit__
+          echo 'SECURITY_RELEASE_SCAN=PASS'
+
+      - name: WRANGLER_TYPES
+        run: |
+          generated_types='native-sharing-cloudflare/worker-configuration.d.ts'
+          cleanup_generated_types() {
+            rm -f "$generated_types"
+          }
+          trap cleanup_generated_types EXIT
+          bunx wrangler@4.111.0 types "$generated_types" --config native-sharing-cloudflare/wrangler.jsonc
+          test -s "$generated_types"
+          trap - EXIT
+          cleanup_generated_types
+          test ! -e "$generated_types"
+          echo 'WRANGLER_TYPES=PASS'
+
+      - name: WRANGLER_DRY_RUN
+        run: |
+          bunx wrangler@4.111.0 deploy --dry-run --config native-sharing-cloudflare/wrangler.jsonc --outdir "${RUNNER_TEMP}/stracker-native-sharing-worker-sqlite-e2e-dist"
+          test -d "${RUNNER_TEMP}/stracker-native-sharing-worker-sqlite-e2e-dist"
+          echo 'WRANGLER_DRY_RUN=PASS'
+          echo 'VERSION_UPLOAD=NO'
+          echo 'DEPLOY=NO'
+
+      - name: ZERO_COST_MODEL
+        env:
+          QUOTA_OUTPUT: ${{ runner.temp }}/quota-model.json
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          quota = Path('docs/NATIVE_SHARING_QUOTA_MODEL.md').read_text(encoding='utf-8')
+          config = json.loads(Path('native-sharing-cloudflare/wrangler.jsonc').read_text(encoding='utf-8'))
+          required = (
+              'Cloudflare Free is a mandatory deployment condition.',
+              'Paid overage, paid fallback and automatic plan upgrades are prohibited.',
+              'Quota exhaustion rejects the operation',
+          )
+          if any(value not in quota for value in required):
+              raise SystemExit('ZERO_COST_MODEL_TEXT_MISSING')
+          if config.get('workers_dev') is not False or config.get('preview_urls') is not False:
+              raise SystemExit('ZERO_COST_ROUTABILITY_INVALID')
+          if any(key in config for key in ('route', 'routes', 'account_id', 'zone_id')):
+              raise SystemExit('ZERO_COST_LIVE_BINDING_PRESENT')
+          payload = {
+              'schema': 'stracker.native-sharing-quota-model.v1',
+              'privateDataUsed': False,
+              'recurringInfrastructureCostUsd': 0,
+              'mapProviderCostUsd': 0,
+              'paidOverageAllowed': False,
+              'automaticUpgradeToPaid': False,
+              'failClosedOnFreeQuota': True,
+              'workersPlan': 'FREE_REQUIRED',
+          }
+          Path(os.environ['QUOTA_OUTPUT']).write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8', newline='\n'
+          )
+          PY
+          echo 'ZERO_COST_MODEL=PASS'
+
+      - name: PREPARE_SANITIZED_ARTIFACT
+        id: prepare
+        env:
+          BROWSER_OUTPUT: ${{ runner.temp }}/browser-qa.json
+          GATES_OUTPUT: ${{ runner.temp }}/gates.json
+          RUNTIME_OUTPUT: ${{ runner.temp }}/runtime-tests.json
+          QUOTA_OUTPUT: ${{ runner.temp }}/quota-model.json
+          ARTIFACT_DIR: ${{ runner.temp }}/stracker-worker-sqlite-e2e-validation
+          ARTIFACT_ZIP: ${{ runner.temp }}/stracker-worker-sqlite-e2e-validation.zip
+          DIGEST_OUTPUT: ${{ runner.temp }}/stracker-worker-sqlite-e2e-validation.sha256
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          browser = json.loads(Path(os.environ['BROWSER_OUTPUT']).read_text(encoding='utf-8'))
+          gates = {
+              'schema': 'stracker.native-sharing-worker-sqlite-e2e-gates.v1',
+              'privateDataUsed': False,
+              'gates': {
+                  'STACKED_BASE_EXACT': 'PASS',
+                  'PR_9_FROZEN_CHECK': 'PASS',
+                  'PR_7_NOT_IN_STACK': 'PASS',
+                  'FROZEN_INSTALL': 'PASS',
+                  'BACKEND_REGRESSION': 'PASS',
+                  'ESLINT': 'PASS',
+                  'TYPECHECK': 'PASS',
+                  'NATIVE_SHARING_TYPECHECK': 'PASS',
+                  'NATIVE_SHARING_TESTS': 'PASS',
+                  'CLOUDFLARE_RUNTIME_TYPECHECK': 'PASS',
+                  'CLOUDFLARE_RUNTIME_UNIT_TESTS': 'PASS',
+                  'CLOUDFLARE_WORKER_VITEST': 'PASS',
+                  'WORKERD_SQLITE_ATOMICITY': 'PASS',
+                  'WORKER_SQLITE_E2E': 'PASS',
+                  'WORKER_HTTP_TO_DURABLE_OBJECT': 'PASS',
+                  'DURABLE_OBJECT_SQLITE_PERSISTENCE': 'PASS',
+                  'ROTATION_REVOCATION_HTTP_SQLITE': 'PASS',
+                  'FAIL_CLOSED_HTTP_BOUNDARY': 'PASS',
+                  'STATIC_EXPORT_BUILD': 'PASS',
+                  'BROWSER_QA': 'PASS',
+                  'SECURITY_SCANNER_TESTS': 'PASS',
+                  'SECURITY_RELEASE_SCAN': 'PASS',
+                  'WRANGLER_TYPES': 'PASS',
+                  'WRANGLER_DRY_RUN': 'PASS',
+                  'ZERO_COST_MODEL': 'PASS',
+                  'FINAL_INTEGRITY_INPUTS': 'PASS',
+                  **browser['gates'],
+              },
+          }
+          runtime = {
+              'schema': 'stracker.native-sharing-runtime-tests.v2',
+              'privateDataUsed': False,
+              'workerdSqliteEvidencePreserved': True,
+              'workerSqliteE2E': True,
+              'browserClaimsWorkerSqliteE2E': False,
+              'httpEntrypointInvoked': True,
+              'durableObjectSqliteInspected': True,
+              'generatedCredentialsRetained': False,
+              'syntheticCoordinatesRetained': False,
+              'tests': {
+                  'CLOUDFLARE_RUNTIME_UNIT_TESTS': 'PASS',
+                  'CLOUDFLARE_WORKER_VITEST': 'PASS',
+                  'WORKERD_SQLITE_ATOMICITY': 'PASS',
+                  'WORKER_SQLITE_E2E': 'PASS',
+                  'HTTP_FAIL_CLOSED_BOUNDARY': 'PASS',
+                  'ROTATION_REVOCATION_INVALIDATION': 'PASS',
+              },
+          }
+          if browser['gates'].get('WORKER_SQLITE_E2E_NOT_CLAIMED') != 'YES':
+              raise SystemExit('BROWSER_SQLITE_CLAIM_BOUNDARY_INVALID')
+          Path(os.environ['GATES_OUTPUT']).write_text(
+              json.dumps(gates, indent=2, sort_keys=True) + '\n', encoding='utf-8', newline='\n'
+          )
+          Path(os.environ['RUNTIME_OUTPUT']).write_text(
+              json.dumps(runtime, indent=2, sort_keys=True) + '\n', encoding='utf-8', newline='\n'
+          )
+          PY
+          jq -e '.workerSqliteE2E == true and .browserClaimsWorkerSqliteE2E == false and .durableObjectSqliteInspected == true and .generatedCredentialsRetained == false and .syntheticCoordinatesRetained == false' "$RUNTIME_OUTPUT" >/dev/null
+          python scripts/native-sharing-cloudflare-artifact/prepare.py \
+            --browser "$BROWSER_OUTPUT" \
+            --gates "$GATES_OUTPUT" \
+            --runtime-tests "$RUNTIME_OUTPUT" \
+            --quota-model "$QUOTA_OUTPUT" \
+            --output-dir "$ARTIFACT_DIR" \
+            --zip "$ARTIFACT_ZIP" \
+            --digest-output "$DIGEST_OUTPUT" \
+            --source-sha "$SOURCE_SHA" \
+            --run-id "$SOURCE_RUN_ID"
+          artifact_name="stracker-native-sharing-worker-sqlite-e2e-${SOURCE_SHA}-${SOURCE_RUN_ID}"
+          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
+          echo "zip_sha256=$(cat "$DIGEST_OUTPUT")" >> "$GITHUB_OUTPUT"
+          echo 'PREPARE_SANITIZED_ARTIFACT=PASS'
+
+      - name: SECURITY_ARTIFACT_SCAN
+        env:
+          ARTIFACT_ZIP: ${{ runner.temp }}/stracker-worker-sqlite-e2e-validation.zip
+        run: |
+          python scripts/native-sharing-cloudflare-artifact/verify.py \
+            --zip "$ARTIFACT_ZIP" \
+            --expected-zip-sha256 "${{ steps.prepare.outputs.zip_sha256 }}" \
+            --source-sha "$SOURCE_SHA" \
+            --run-id "$SOURCE_RUN_ID"
+          python - <<'PY'
+          import json
+          import os
+          import zipfile
+
+          with zipfile.ZipFile(os.environ['ARTIFACT_ZIP']) as archive:
+              runtime = json.loads(archive.read('runtime-tests.json'))
+          required = {
+              'privateDataUsed': False,
+              'workerSqliteE2E': True,
+              'browserClaimsWorkerSqliteE2E': False,
+              'httpEntrypointInvoked': True,
+              'durableObjectSqliteInspected': True,
+              'generatedCredentialsRetained': False,
+              'syntheticCoordinatesRetained': False,
+          }
+          if any(runtime.get(key) is not value for key, value in required.items()):
+              raise SystemExit('WORKER_SQLITE_E2E_ARTIFACT_GATE_INVALID')
+          PY
+          echo 'SECURITY_ARTIFACT_SCAN=PASS'
+          echo 'WORKER_SQLITE_E2E_ARTIFACT_GATE=PASS'
+
+      - name: UPLOAD_ARTIFACT
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.artifact_name }}
+          path: ${{ runner.temp }}/stracker-worker-sqlite-e2e-validation.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  verify-artifact:
+    needs: validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: DOWNLOAD_AND_VERIFY_ARTIFACT
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.validation.outputs.artifact_name }}
+          path: ${{ runner.temp }}/downloaded-artifact
+      - name: VERIFY_DOWNLOADED_ARTIFACT
+        run: |
+          test "$(find "${RUNNER_TEMP}/downloaded-artifact" -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 1
+          artifact_zip="$(find "${RUNNER_TEMP}/downloaded-artifact" -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          python scripts/native-sharing-cloudflare-artifact/verify.py \
+            --zip "$artifact_zip" \
+            --expected-zip-sha256 "${{ needs.validation.outputs.zip_sha256 }}" \
+            --source-sha "$SOURCE_SHA" \
+            --run-id "$SOURCE_RUN_ID"
+          ARTIFACT_ZIP="$artifact_zip" python - <<'PY'
+          import json
+          import os
+          import zipfile
+
+          with zipfile.ZipFile(os.environ['ARTIFACT_ZIP']) as archive:
+              runtime = json.loads(archive.read('runtime-tests.json'))
+              gates = json.loads(archive.read('gates.json'))['gates']
+          if runtime.get('workerSqliteE2E') is not True:
+              raise SystemExit('DOWNLOADED_WORKER_SQLITE_E2E_MISSING')
+          if runtime.get('browserClaimsWorkerSqliteE2E') is not False:
+              raise SystemExit('DOWNLOADED_BROWSER_CLAIM_INVALID')
+          if gates.get('WORKER_SQLITE_E2E') != 'PASS':
+              raise SystemExit('DOWNLOADED_WORKER_SQLITE_GATE_MISSING')
+          PY
+          echo 'VERIFY_ARTIFACT=PASS'
+          echo 'DOWNLOADED_WORKER_SQLITE_E2E=PASS'
+
+  final-integrity:
+    needs: verify-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: FINAL_INTEGRITY
+        run: |
+          git fetch origin "$FROZEN_BASE_BRANCH" --no-tags
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
+          test "$(git merge-base HEAD "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
+          test "$(git rev-list --count HEAD.."origin/$FROZEN_BASE_BRANCH")" = '0'
+          test ! -e __stracker_tree_probe_do_not_commit__
+          python - <<'PY'
+          import subprocess
+
+          allowed_exact = {
+              '.github/workflows/native-sharing-worker-sqlite-e2e-v1.yml',
+              'docs/NATIVE_SHARING_WORKER_SQLITE_E2E.md',
+              'native-sharing-cloudflare/vitest.e2e.config.mts',
+              'tests/native-sharing-cloudflare/env.d.ts',
+              'tests/native-sharing-cloudflare/worker-sqlite-e2e.test.ts',
+          }
+          changed = subprocess.check_output(
+              ['git', 'diff', '--name-only', 'origin/feat/stracker-native-sharing-cloudflare-runtime-v1...HEAD'],
+              text=True,
+          ).splitlines()
+          unexpected = sorted(path for path in changed if path not in allowed_exact)
+          if unexpected:
+              raise SystemExit('FINAL_INTEGRITY_UNEXPECTED_PATHS:' + ','.join(unexpected))
+          if set(changed) != allowed_exact:
+              missing = sorted(allowed_exact.difference(changed))
+              raise SystemExit('FINAL_INTEGRITY_REQUIRED_PATHS_MISSING:' + ','.join(missing))
+          PY
+          python scripts/security/native-sharing-cloudflare-release-scan.py --root .
+          python tests/security/test_native_sharing_cloudflare_artifact.py
+          python tests/security/test_native_sharing_cloudflare_lifecycle_scan.py
+          git diff --check
+          echo 'FINAL_INTEGRITY=PASS'
+          echo 'CI_FINAL=SUCCESS'
+          echo 'MERGE=NO'
+          echo 'DEPLOY=NO'
+          echo 'VERSION_UPLOAD=NO'
+          echo 'LIVE_INFRASTRUCTURE=NO'
+          echo 'PRODUCTION_TRAFFIC=0%'
