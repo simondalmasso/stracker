@@ -1,67 +1,59 @@
 # STRACKER — Current State
 
-## Canonical milestone
+## Authority and status
 
 ```text
-ACTIVE_PHASE=NATIVE_SHARING_CLOUDFLARE_RUNTIME_V1_AUD_HANDOFF
-ACTIVE_BRANCH=feat/stracker-native-sharing-cloudflare-runtime-v1
-ACTIVE_DRAFT_PR=9
+STATUS=CANONICAL_REPOSITORY_STATE
+PROJECT=STRACKER
+DRIVE=GOVERNANCE_AND_COORDINATION
+GITHUB=EXECUTABLE_REPOSITORY_EVIDENCE
+CLOUDFLARE=RELEASE_AND_TRAFFIC_STATE
+PRODUCTION=REAL_RUNTIME_CONFIRMATION
+CROSS_LAYER_REPLACEMENT=PROHIBITED
+```
+
+## Active non-live phase
+
+```text
+ACTIVE_PHASE=NATIVE_SHARING_WORKER_SQLITE_E2E_V1
+PHASE_ID=STRACKER-NATIVE-SHARING-WORKER-SQLITE-E2E-V1
+PHASE_STATUS=ACTIVE_FINAL_RECONCILIATION
+ACTIVE_BRANCH=feat/stracker-native-sharing-worker-sqlite-e2e-v1
+ACTIVE_DRAFT_PR=10
 PR_STATE=OPEN_DRAFT
-PR_BASE=feat/stracker-native-location-sharing-v1
-PR_BASE_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
-CURRENT_HEAD_SHA=SEE_DRAFT_PR_9_HEAD
+PR_BASE=feat/stracker-native-sharing-cloudflare-runtime-v1
+PR_BASE_SHA=2769a602d8150a562cc1fd095e95c736908c6e1f
+CURRENT_HEAD_SHA=SEE_DRAFT_PR_10_HEAD
 CURRENT_HEAD_VALIDATION=GITHUB_PR_CHECKS_ARE_AUTHORITATIVE
-PR_9_TECHNICALLY_READY=YES
-AUD_HANDOFF_READY=YES
-MERGE_EXECUTED=NO
-DEPLOYMENT_EXECUTED=NO
+IMPLEMENTATION_AUTHORIZED=YES_NON_LIVE_PHASE
+REPOSITORY_WRITE_AUTHORIZED=YES_WORK_BRANCH_ONLY
+MERGE_AUTHORIZED=NO
+DEPLOY_AUTHORIZED=NO
 PRODUCTION_MODIFIED=NO
 PRODUCTION_TRAFFIC=0%
 ```
 
-PR #9 remains stacked directly on the frozen native-sharing product branch. It is not based on the experimental Google runtime branch.
+PR #10 is stacked directly on the exact frozen head of PR #9. It excludes the experimental Google runtime branch and does not change production behavior.
 
-## Exact validated lineage
-
-```text
-PR_6_ROLE=FROZEN_VECTOR_MAP_ENGINE_BASE
-PR_6_HEAD_SHA=8a3ac8d750b107e24f5ce744f15a0bbae9767f1f
-
-PR_7_ROLE=EXPERIMENTAL_GOOGLE_RUNTIME_SPIKE
-PR_7_RELEASE_DEPENDENCY=NO
-PR_7_PRODUCTION_CANDIDATE=NO
-PR_7_IN_PR_9_ANCESTRY=NO
-
-PR_8_ROLE=FROZEN_NATIVE_LOCATION_SHARING_PRODUCT
-PR_8_HEAD_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
-PR_8_FINAL_RUN_ID=29971797092
-
-FINAL_IMPLEMENTATION_SHA=51430f03c00483135671b9c16c13e185f0b4b3a2
-FINAL_IMPLEMENTATION_RUN=30169341844
-FINAL_IMPLEMENTATION_CONCLUSION=success
-
-DOCUMENTATION_FINALIZATION_SHA=af2fcd74b188edf3820344765ae093ab0abb9a16
-DOCUMENTATION_FINALIZATION_RUN=30169563978
-DOCUMENTATION_FINALIZATION_CONCLUSION=success
-
-STATUS_RECONCILIATION_SHA=420b5b6cac8728434f0aaf2a166034d83b383094
-STATUS_RECONCILIATION_RUN=30169717480
-STATUS_RECONCILIATION_CONCLUSION=success
-```
-
-The current document is the final audit-handoff reconciliation. Its own exact-head pipeline must remain green in GitHub; no product code changed after `FINAL_IMPLEMENTATION_SHA`.
-
-## Product boundary
-
-Every open, reload, new tab and navigation to `/` begins at:
+## Preserved historical state
 
 ```text
-¿QUÉ UBICACIÓN QUERÉS VER?
-MI UBICACIÓN
-UBICACIÓN COMPARTIDA
+PREVIOUS_CURRENT_STATE_BLOB_SHA=e84a1932caa7331c15198e43b783b66e3fd6679d
+PREVIOUS_CURRENT_STATE_ARCHIVE=docs/archive/CURRENT_STATE_BEFORE_WORKER_SQLITE_E2E_V1.md
+PREVIOUS_PHASE=NATIVE_SHARING_CLOUDFLARE_RUNTIME_V1
+PREVIOUS_PHASE_STATUS=CLOSED_PASS_NON_LIVE
+PREVIOUS_EXACT_HEAD=2769a602d8150a562cc1fd095e95c736908c6e1f
+PREVIOUS_EXACT_RUN=30169926639
+PREVIOUS_ARTIFACT_ID=8622646136
+EVIDENCE_OVERWRITE=NO
+HISTORY_REWRITE=NO
 ```
 
-Selection is memory-only. Before choosing a source:
+The archive preserves the complete prior `CURRENT_STATE.md` byte-for-byte.
+
+## Product invariants
+
+Every open, reload, new tab and navigation to `/` begins at the two-button source selector. Selection remains memory-only. Before source selection:
 
 ```text
 MAP_REQUEST=NO
@@ -70,76 +62,25 @@ SESSION_REQUEST=NO
 POINTS_REQUEST=NO
 ```
 
-Source and provider remain separate:
-
-```ts
-type LocationSource =
-  | 'my-device'
-  | 'shared-location'
-
-type SharedLocationProvider =
-  | 'stracker-native'
-  | 'google-session-experimental'
-```
-
-Google remains outside the native release:
-
 ```text
-GOOGLE_PROVIDER_DISABLED=YES
-RELEASE_DEPENDENCY=NO
-DEFAULT_PROVIDER=NO
-PRODUCTION_ELIGIBLE=NO_WITHOUT_SEPARATE_EVIDENCE
-REAL_GOOGLE_REQUESTS=NO
-REAL_GOOGLE_CREDENTIALS=NO
-REAL_COOKIES=NO
+LOCATION_SOURCES=my-device|shared-location
+SHARED_PROVIDERS=stracker-native|google-session-experimental
+NATIVE_PROVIDER_CANONICAL=YES
+GOOGLE_RELEASE_DEPENDENCY=NO
+GOOGLE_DEFAULT_PROVIDER=NO
+GOOGLE_PRODUCTION_ELIGIBLE=NO_WITHOUT_SEPARATE_EVIDENCE
 ```
 
-## Native sharing contract
+Native viewer access remains fragment-only at `/shared#v=<viewer-capability>`, requires explicit confirmation and one-time exchange, removes the fragment immediately, and uses an opaque short-lived server-revocable Bearer session in memory only. Complete capabilities and tokens are never stored server-side; only verifiers are stored.
 
-Emitter:
-
-```text
-/share
-→ explicit INICIAR TRANSMISIÓN
-→ create session and independent capabilities
-→ request geolocation
-→ publish confirmed points
-→ expose /shared#v=<viewer-capability>
-```
-
-Viewer:
-
-```text
-/shared#v=<viewer-capability>
-→ explicit VER UBICACIÓN
-→ POST /api/share/viewer/exchange with capability in JSON
-→ opaque short-lived in-memory viewer session
-→ history.replaceState('/shared')
-→ authenticated polling with Authorization: Bearer
-```
-
-```text
-VIEWER_CAPABILITY_IN_PATH=NO
-VIEWER_CAPABILITY_IN_QUERY=NO
-CAPABILITY_FRAGMENT_ONLY=YES
-CAPABILITY_EXCHANGE_REQUIRED=YES
-FRAGMENT_REMOVED_AFTER_EXCHANGE=YES
-CAPABILITY_NOT_REUSED_FOR_POLLING=YES
-VIEWER_SESSION=OPAQUE_SHORT_LIVED_MEMORY_ONLY
-WEBSOCKET_V1=NO
-BACKGROUND_TRACKING_PROMISED=NO
-```
-
-Capabilities, tokens, viewer sessions, cookies and coordinates are not persisted in localStorage, sessionStorage, IndexedDB, JS-readable cookies, URL, DOM, logs or release artifacts.
-
-## Code-only Cloudflare architecture
+## Cloudflare code boundary
 
 ```text
 Browser
-→ stateless Worker gateway
-→ Native Sharing API
+→ stateless Worker HTTP handler
+→ NATIVE_SHARING Durable Object namespace
 → one NativeSharingDurableObject per SESSION_ID
-→ private SQLite database attached to that object
+→ private SQLite storage per object
 → Static Assets
 ```
 
@@ -147,47 +88,70 @@ Browser
 DO_LIFECYCLE_CONFIG=EXPORTS
 SQLITE_STORAGE_DECLARED=YES
 MIGRATIONS_PRESENT=NO
-NATIVE_SHARING_BINDING=PRESENT
 workers_dev=false
 preview_urls=false
-observability.enabled=false
 routes=ABSENT
 custom_domains=ABSENT
 account_id=ABSENT
 zone_id=ABSENT
+secrets=ABSENT
 ```
 
-Deterministic routing uses `env.NATIVE_SHARING.getByName(sessionId)`. Complete capabilities and tokens are not stored; only verifiers are stored.
+## Worker SQLite E2E evidence model
 
-The per-session SQLite schema is:
+The evidence layers remain intentionally separate:
 
 ```text
-sharing_session
-accepted_points
-viewer_sessions
-rate_or_sequence_state
+BROWSER_SYNTHETIC_INTEGRATION=PASS_IN_MEMORY_NAMESPACE
+BROWSER_CLAIMS_WORKER_SQLITE_E2E=NO
+WORKERD_SQLITE_ATOMICITY=PASS
+WORKER_SQLITE_E2E=PASS
+HTTP_ENTRYPOINT=exports.default.fetch
+DURABLE_OBJECT_ROUTING=env.NATIVE_SHARING.getByName(sessionId)
+SQLITE_INSPECTION=runInDurableObject
 ```
 
-Atomic transaction boundaries cover session creation state, point append, viewer exchange revalidation and quota enforcement, viewer rotation and invalidation, session revocation and invalidation, and expiration cleanup.
-
-## Final validation gates
-
-The full workflow passed on the implementation, documentation-finalization and status-reconciliation SHAs listed above. Required gates were:
+The Workerd integration test proves:
 
 ```text
-STACKED_BASE_CHECK=PASS
-PR_8_FROZEN_CHECK=PASS
+CREATE_SESSION_HTTP_TO_SQLITE=PASS
+VERIFIER_ONLY_STORAGE=PASS
+PUBLISH_POINT_HTTP_TO_SQLITE=PASS
+VIEWER_EXCHANGE_HTTP_TO_SQLITE=PASS
+AUTHENTICATED_STATUS_AND_POINTS=PASS
+ROTATION_INVALIDATES_OLD_VIEWER=PASS
+ROTATED_EXCHANGE_GENERATION_2=PASS
+REVOCATION_INVALIDATES_READS_AND_WRITES=PASS
+STALE_VIEWER_GENERATION_ROW_REMOVED=PASS
+CROSS_ORIGIN_REJECTED=PASS
+QUERY_REJECTED=PASS
+METHOD_REJECTED=PASS
+CONTENT_TYPE_REJECTED=PASS
+INVALID_AUTH_SANITIZED=PASS
+```
+
+Synthetic credentials and coordinates exist only inside executable tests and are not retained in release artifacts.
+
+## Validated documentation head pipeline
+
+```text
+VALIDATED_DOCUMENTATION_SHA=a59760ae80e5ff42366eb191186d3227172ff57f
+VALIDATED_DOCUMENTATION_RUN_ID=30231351835
+VALIDATED_DOCUMENTATION_RUN_NUMBER=4
+VALIDATED_DOCUMENTATION_RUN_STATUS=completed
+VALIDATED_DOCUMENTATION_RUN_CONCLUSION=success
+STACKED_BASE_EXACT=PASS
+PR_9_FROZEN_CHECK=PASS
 PR_7_NOT_IN_STACK=PASS
 FROZEN_INSTALL=PASS
 BACKEND_REGRESSION=PASS
 ESLINT=PASS
 TYPECHECK=PASS
-NATIVE_SHARING_TYPECHECK=PASS
-NATIVE_SHARING_TESTS=PASS
 CLOUDFLARE_RUNTIME_TYPECHECK=PASS
+NATIVE_SHARING_TESTS=PASS
 CLOUDFLARE_RUNTIME_UNIT_TESTS=PASS
-CLOUDFLARE_WORKER_VITEST=PASS
-CONCURRENCY_TESTS=PASS
+WORKERD_SQLITE_ATOMICITY=PASS
+WORKER_SQLITE_E2E=PASS
 STATIC_EXPORT_BUILD=PASS
 BROWSER_QA=PASS
 SECURITY_SCANNER_TESTS=PASS
@@ -202,68 +166,16 @@ VERIFY_ARTIFACT=PASS
 FINAL_INTEGRITY=PASS
 ```
 
-## Browser QA evidence
+This exact validated head includes implementation, documentation, the preserved historical state and the final-integrity allowlist. The current reconciliation write changes the branch SHA once more; therefore the new PR head must pass the same complete pipeline before AUD handoff.
+
+## Validated documentation-head artifact
 
 ```text
-VIEWPORTS=320x568,360x640,375x812,390x844,412x915
-VIEWPORT_COUNT=5
-PAGEERROR_TOTAL=0
-HORIZONTAL_OVERFLOW_TOTAL=0
-PRIVATE_DATA_USED=false
-COORDINATE_VALUES_RETAINED=false
-SECRET_VALUES_RETAINED=false
-```
-
-Verified contracts:
-
-```text
-ROOT_SELECTOR_BEFORE_NETWORK=PASS
-ROOT_SELECTOR_BEFORE_GEOLOCATION=PASS
-ROOT_SELECTOR_BEFORE_MAP=PASS
-MY_DEVICE_EXPLICIT_SELECTION=PASS
-MY_DEVICE_SYNTHETIC_WATCH_POSITION=PASS
-MY_DEVICE_COORDINATES_NOT_TRANSMITTED=PASS
-SOURCE_SWITCH_CLEANUP=PASS
-LATE_RESPONSE_BLOCKED=PASS
-SHARE_EXPLICIT_START_REQUIRED=PASS
-SHARE_NO_GEOLOCATION_BEFORE_START=PASS
-SHARE_NO_SESSION_BEFORE_START=PASS
-VIEWER_CONFIRMATION_REQUIRED=PASS
-NO_API_BEFORE_VIEWER_CONFIRMATION=PASS
-NO_MAP_BEFORE_VIEWER_CONFIRMATION=PASS
-CAPABILITY_FRAGMENT_ONLY=PASS
-FRAGMENT_REMOVED_AFTER_EXCHANGE=PASS
-OPAQUE_BEARER_POLLING=PASS
-CAPABILITY_IN_TRANSPORT_URL=NO
-ROTATION_INVALIDATES_VIEWER=PASS
-REVOCATION_INVALIDATES_VIEWER=PASS
-GHOSTRAIL_CLEARED_ON_INVALIDATION=PASS
-PREFERS_REDUCED_MOTION=PASS
-MAP_ATTRIBUTION_PRESENT=PASS
-SHARED_QUERY_REJECTED=PASS
-REFERRER_POLICY_NO_REFERRER=PASS
-SHARED_CSP_STRICT=PASS
-```
-
-Evidence boundary:
-
-```text
-BROWSER_SYNTHETIC_INTEGRATION=PASS
-WORKERD_SQLITE_SEMANTICS=PASS
-WORKER_SQLITE_E2E_NOT_CLAIMED=YES
-WORKER_SQLITE_E2E=null
-```
-
-## Latest sanitized artifact
-
-The latest fully inspected artifact before this final documentation-only reconciliation belongs to exact SHA `420b5b6cac8728434f0aaf2a166034d83b383094` and run `30169717480`:
-
-```text
-ARTIFACT_ID=8622591293
-ARTIFACT_NAME=stracker-native-sharing-final-420b5b6cac8728434f0aaf2a166034d83b383094-30169717480
-ARTIFACT_EXPIRES_AT=2026-08-01T18:31:07Z
-GITHUB_ARTIFACT_DIGEST_SHA256=54f1499705f3738f7857db27825f32bc7749518bec3f8fbad6b9dccddd513ad6
-INNER_VALIDATION_ZIP_SHA256=ad4ebf8aa5df4cab3be0650bf272df02f3bdb9fcb15849990e644b33324a1e43
+ARTIFACT_ID=8640216992
+ARTIFACT_NAME=stracker-native-sharing-worker-sqlite-e2e-a59760ae80e5ff42366eb191186d3227172ff57f-30231351835
+ARTIFACT_EXPIRES_AT=2026-08-03T02:08:07Z
+GITHUB_ARTIFACT_DIGEST_SHA256=060082971057b135a2718d4df584f3a09544209d7bc36436ac6c467323523888
+INNER_VALIDATION_ZIP_SHA256=c60c4539cb263b825c34481585e7d5a266ef2d871ece3b533221f1ff2f1951d3
 FINAL_SIX_FILE_ARTIFACT=PASS
 ```
 
@@ -273,23 +185,24 @@ The deterministic inner ZIP contains exactly:
 browser-qa.json
   sha256=2c7434c9924bb2328d84a3cf7b41ad753aded2fe252a1b1397ee9e5b6a0c7b93
 gates.json
-  sha256=016876e0957314a60172c9f43f06ab27bcacdd60f4d2f5a3c4515686c3a4f9c5
+  sha256=42e56027a4e5c0410e58e55ef464c876c8be8474360c6c17521fb22af8f91150
 manifest.json
-  sha256=3c9253dfe922bf32d230c282c36d848dc1fe85cc3211500081509beef41fd2ef
+  sha256=e3e3df5436882f8327617c0f2a9b2235a34e7af65c73509efaf4c8eb9fd0c8e1
 quota-model.json
   sha256=c0d9411b1079f809cb24a8b19b526ea2749e89049f6718ebb27db80f53eff5da
 runtime-tests.json
-  sha256=26a5721d1d30af60671ba1b35853d586e33670c3eacec8e7fa94839e2e086663
+  sha256=6d831237265163176fd056671ba99e019f2caaebff88cec8a6e5f203ccdab770
 sha256sums.txt
-  sha256=5bbd6158d7de4368a604ee0c78928801f7e340b5538e5c27ef88165cb0f41f12
+  sha256=302a42b76211fe74652bee1a2d01e6ffbb6e75199a55a9d43e56bbf019f99393
 ```
-
-Independent inspection confirmed:
 
 ```text
 ARTIFACT_SOURCE_SHA_MATCH=PASS
 ARTIFACT_WORKFLOW_RUN_MATCH=PASS
 INTERNAL_SHA256SUMS=PASS
+WORKER_SQLITE_E2E_ARTIFACT_GATE=PASS
+DOWNLOADED_WORKER_SQLITE_E2E=PASS
+PRIVATE_DATA_USED=false
 RAW_LOGS_INCLUDED=false
 ENV_FILES_INCLUDED=false
 SOURCE_ARCHIVE_INCLUDED=false
@@ -300,9 +213,26 @@ CAPABILITIES_INCLUDED=false
 TOKENS_INCLUDED=false
 COOKIES_INCLUDED=false
 REAL_COORDINATES_INCLUDED=false
+GENERATED_CREDENTIALS_RETAINED=false
+SYNTHETIC_COORDINATES_RETAINED=false
 ```
 
-## Cost boundary
+## Browser QA
+
+```text
+VIEWPORTS=320x568,360x640,375x812,390x844,412x915
+VIEWPORT_COUNT=5
+PAGEERROR_TOTAL=0
+HORIZONTAL_OVERFLOW_TOTAL=0
+PRIVATE_DATA_USED=false
+COORDINATE_VALUES_RETAINED=false
+SECRET_VALUES_RETAINED=false
+BROWSER_SQLITE_CLAIM=NO
+```
+
+The browser layer validates selector consent, MY DEVICE isolation, viewer consent, fragment transport/removal, authenticated polling, rotation/revocation UI invalidation, GhostRail cleanup, reduced motion and attribution.
+
+## Cost, release and live boundary
 
 ```text
 RECURRING_INFRASTRUCTURE_COST_USD=0
@@ -313,11 +243,6 @@ AUTOMATIC_UPGRADE_TO_PAID=NO
 FAIL_CLOSED_ON_FREE_QUOTA=YES
 FINAL_BUNDLE_SINGLE_ENGINE=PASS
 UNSELECTED_ENGINE_ABSENT=PASS
-```
-
-## Production and live infrastructure
-
-```text
 PRODUCTION_RUNTIME=RENDER
 PRODUCTION_URL=https://strackerglm.onrender.com/
 PRODUCTION_MODIFIED=NO
@@ -328,7 +253,6 @@ DURABLE_OBJECT_NAMESPACE_LIVE_CREATED=NO
 VERSION_UPLOAD_EXECUTED=NO
 DEPLOYMENT_EXECUTED=NO
 ACCESS_APPLICATION_CREATED=NO
-GOOGLE_IDP_CREATED=NO
 ROUTE_CREATED=NO
 DNS_MODIFIED=NO
 SECRET_CREATED=NO
@@ -339,38 +263,22 @@ DEPLOY=NO
 LIVE_INFRASTRUCTURE=NO
 ```
 
-No production rollback is required because no production or live Cloudflare surface changed.
-
-```text
-ROLLBACK_BASE_SHA=b001814b675fb8c8cf2713ff4728cd250e8a25c8
-ROLLBACK_ACTION_IF_REJECTED=CLOSE_DRAFT_PR_WITHOUT_MERGE
-```
+No rollback is required because no live or production surface changed.
 
 ## Remaining limits
 
 ```text
 A22_PHYSICAL_VALIDATION=NOT_EXECUTED_ENV_BLOCKED
 LIVE_CLOUDFLARE_RUNTIME_VALIDATION=NOT_EXECUTED
-WORKER_SQLITE_E2E_NOT_CLAIMED=YES
-PRODUCTION_DEPLOYMENT_AUTHORIZED=NO
+FINAL_RECONCILIATION_HEAD_PIPELINE=PENDING
+FINAL_EXACT_HEAD_ARTIFACT=PENDING
+AUD_INDEPENDENT_REVIEW=PENDING_AFTER_FINAL_EXACT_HEAD
 MERGE_AUTHORIZED=NO
-```
-
-## Decisions
-
-```text
-NATIVE_PROVIDER=stracker-native
-GOOGLE_EXPERIMENTAL_RELEASE_DEPENDENCY=NO
-MAP_ENGINE=MapLibre_GL_JS
-MAP_PROVIDER=OpenFreeMap
-MAP_DATA=OpenStreetMap
-PMTILES_ADAPTER=DECOUPLED_FUTURE_OPTION
-WEBSOCKET_V1=NO
-FAIL_CLOSED=YES
+DEPLOY_AUTHORIZED=NO
 ```
 
 ## Next exact step
 
 ```text
-NEXT_EXACT_STEP=AUD_INDEPENDENT_REVIEW_OF_FINAL_EXACT_HEAD
+NEXT_EXACT_STEP=RUN_FULL_PIPELINE_ON_FINAL_RECONCILIATION_HEAD_AND_FIX_UNTIL_GREEN
 ```
