@@ -2,8 +2,7 @@ name: STRACKER Native Sharing Worker SQLite E2E V1
 
 on:
   pull_request:
-    branches:
-      - feat/stracker-native-sharing-cloudflare-runtime-v1
+    branches: [feat/stracker-native-sharing-cloudflare-runtime-v1]
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -47,6 +46,7 @@ jobs:
           test "$(git rev-list --count HEAD.."origin/$FROZEN_BASE_BRANCH")" = '0'
           git diff --check "origin/$FROZEN_BASE_BRANCH"...HEAD
           test ! -e __stracker_tree_probe_do_not_commit__
+          test ! -e __do_not_create__
           echo 'STACKED_BASE_EXACT=PASS'
           echo 'PR_9_FROZEN_CHECK=PASS'
 
@@ -85,16 +85,12 @@ jobs:
       - name: CLOUDFLARE_RUNTIME_TYPECHECK
         run: |
           generated_types='native-sharing-cloudflare/worker-configuration.d.ts'
-          cleanup_generated_types() {
-            rm -f "$generated_types"
-          }
-          trap cleanup_generated_types EXIT
+          trap 'rm -f "$generated_types"' EXIT
           bunx wrangler@4.111.0 types "$generated_types" --config native-sharing-cloudflare/wrangler.jsonc
           test -s "$generated_types"
           bunx tsc -p native-sharing-cloudflare/tsconfig.json
+          rm -f "$generated_types"
           trap - EXIT
-          cleanup_generated_types
-          test ! -e "$generated_types"
           echo 'CLOUDFLARE_RUNTIME_TYPECHECK=PASS'
 
       - name: NATIVE_SHARING_REGRESSION
@@ -160,20 +156,17 @@ jobs:
         run: |
           python scripts/security/native-sharing-cloudflare-release-scan.py --root .
           test ! -e __stracker_tree_probe_do_not_commit__
+          test ! -e __do_not_create__
           echo 'SECURITY_RELEASE_SCAN=PASS'
 
       - name: WRANGLER_TYPES
         run: |
           generated_types='native-sharing-cloudflare/worker-configuration.d.ts'
-          cleanup_generated_types() {
-            rm -f "$generated_types"
-          }
-          trap cleanup_generated_types EXIT
+          trap 'rm -f "$generated_types"' EXIT
           bunx wrangler@4.111.0 types "$generated_types" --config native-sharing-cloudflare/wrangler.jsonc
           test -s "$generated_types"
+          rm -f "$generated_types"
           trap - EXIT
-          cleanup_generated_types
-          test ! -e "$generated_types"
           echo 'WRANGLER_TYPES=PASS'
 
       - name: WRANGLER_DRY_RUN
@@ -368,8 +361,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: DOWNLOAD_AND_VERIFY_ARTIFACT
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: ${{ needs.validation.outputs.artifact_name }}
           path: ${{ runner.temp }}/downloaded-artifact
@@ -417,12 +409,15 @@ jobs:
           test "$(git merge-base HEAD "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
           test "$(git rev-list --count HEAD.."origin/$FROZEN_BASE_BRANCH")" = '0'
           test ! -e __stracker_tree_probe_do_not_commit__
+          test ! -e __do_not_create__
           python - <<'PY'
           import subprocess
 
           allowed_exact = {
               '.github/workflows/native-sharing-worker-sqlite-e2e-v1.yml',
+              'docs/CURRENT_STATE.md',
               'docs/NATIVE_SHARING_WORKER_SQLITE_E2E.md',
+              'docs/archive/CURRENT_STATE_BEFORE_WORKER_SQLITE_E2E_V1.md',
               'native-sharing-cloudflare/vitest.e2e.config.mts',
               'tests/native-sharing-cloudflare/env.d.ts',
               'tests/native-sharing-cloudflare/worker-sqlite-e2e.test.ts',
