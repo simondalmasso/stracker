@@ -5,7 +5,7 @@ WORKER_NAME='stracker'
 ACCOUNT_SUBDOMAIN='simondalmasso44'
 TARGET_URL='https://stracker.simondalmasso44.workers.dev/'
 CONFIG='native-sharing-cloudflare/wrangler.release.jsonc'
-WRANGLER='bunx wrangler@4.111.0'
+WRANGLER=(bunx wrangler@4.111.0)
 SOURCE_SHA="${SOURCE_SHA:?SOURCE_SHA is required}"
 QA_OUTPUT="${RUNNER_TEMP:-/tmp}/minimum-runtime-live-qa.json"
 STATE_DIR="${RUNNER_TEMP:-/tmp}/stracker-same-domain-release"
@@ -16,21 +16,38 @@ if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
   exit 1
 fi
 
+sanitize_tail() {
+  local path="$1"
+  sed -E \
+    -e 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[ID_REDACTED]/gI' \
+    -e 's/[A-Za-z0-9_-]{32,}/[VALUE_REDACTED]/g' \
+    "$path" | tail -40
+}
+
+run_wrangler() {
+  local output="$1"
+  shift
+  if ! "${WRANGLER[@]}" "$@" >"$output" 2>&1; then
+    sanitize_tail "$output"
+    return 1
+  fi
+}
+
 python - <<'PY'
 import json
 from pathlib import Path
 config = json.loads(Path('native-sharing-cloudflare/wrangler.release.jsonc').read_text())
 assert config['name'] == 'stracker'
+assert config['main'] == 'src/minimal-worker.ts'
 assert config['workers_dev'] is True
 assert config['preview_urls'] is False
 assert config.get('routes') == []
 assert config['placement']['mode'] == 'smart'
+assert config['observability']['enabled'] is False
 assert config['observability']['logs']['enabled'] is True
 assert config['observability']['traces']['enabled'] is True
-for forbidden in ('account_id', 'zone_id', 'exports', 'migrations'):
+for forbidden in ('account_id', 'zone_id', 'exports', 'migrations', 'durable_objects'):
     assert forbidden not in config
-assert 'durable_objects' not in config
-assert config['main'] == 'src/minimal-worker.ts'
 print('RELEASE_CONFIG_INVARIANTS=PASS')
 PY
 
@@ -69,21 +86,24 @@ if not deployments:
     raise SystemExit('CURRENT_DEPLOYMENT_UNAVAILABLE')
 current = deployments[0]
 versions = current.get('versions') or []
-if not versions:
-    raise SystemExit('CURRENT_DEPLOYMENT_VERSION_UNAVAILABLE')
-specs = []
-for item in versions:
-    version_id = item.get('version_id') or item.get('id')
-    percentage = item.get('percentage')
-    if not version_id or percentage is None:
-        raise SystemExit('CURRENT_DEPLOYMENT_SHAPE_UNSUPPORTED')
-    specs.append(f'{version_id}@{percentage}%')
-(root/'rollback-specs.txt').write_text('\n'.join(specs)+'\n')
+if len(versions) != 1:
+    raise SystemExit('CURRENT_DEPLOYMENT_NOT_SINGLE_VERSION')
+item = versions[0]
+version_id = item.get('version_id') or item.get('id')
+percentage = item.get('percentage')
+if not version_id or float(percentage) != 100:
+    raise SystemExit('CURRENT_DEPLOYMENT_SHAPE_UNSUPPORTED')
+(root/'rollback-specs.txt').write_text(f'{version_id}@100%\n')
 (root/'rollback-deployment-id.txt').write_text(str(current.get('id') or 'unknown')+'\n')
 
 settings = json.loads((root/'settings-before.json').read_text()).get('result') or {}
 bindings = settings.get('bindings') or []
-(root/'binding-types.json').write_text(json.dumps(sorted({str(item.get('type','unknown')) for item in bindings})))
+types = sorted({str(binding.get('type', 'unknown')) for binding in bindings})
+(root/'binding-types.json').write_text(json.dumps(types, sort_keys=True)+'\n')
+allowed = {'plain_text', 'secret_text', 'secret_key'}
+unexpected = sorted(value for value in types if value not in allowed)
+if unexpected:
+    raise SystemExit('UNSUPPORTED_EXISTING_BINDING_TYPES')
 
 domain_payload = json.loads((root/'domains-before.json').read_text()).get('result') or []
 if isinstance(domain_payload, dict):
@@ -91,39 +111,29 @@ if isinstance(domain_payload, dict):
 attached = [item for item in domain_payload if item.get('service') == 'stracker' or item.get('worker') == 'stracker']
 if attached:
     raise SystemExit('CUSTOM_DOMAIN_ATTACHED_TO_TARGET_WORKER')
-print(f'ROLLBACK_READY=PASS active_versions={len(specs)}')
+print('ROLLBACK_READY=PASS active_versions=1')
 print('TARGET_WORKER_AND_DOMAIN=PASS')
+print('EXISTING_BINDINGS_PRESERVABLE=PASS')
 print('CUSTOM_DOMAIN_CHANGE_REQUIRED=NO')
 PY
 
-mkdir -p public/__stracker
-python - "$SOURCE_SHA" <<'PY'
-import json
-import sys
-from pathlib import Path
-Path('public/__stracker/build.json').write_text(json.dumps({
-  'sourceSha': sys.argv[1],
-  'release': 'same-domain-minimum-usable-v1',
-}, sort_keys=True) + '\n')
-PY
-NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_STRACKER_SHARED_RUNTIME=disabled bun run build:export
-rm -f public/__stracker/build.json
-rmdir public/__stracker 2>/dev/null || true
+bash scripts/release/prepare-minimum-export.sh
+node tools/map-spike/release-bundle-gate.mjs
 
 test -f out/index.html
 test -f out/__stracker/build.json
 test -f out/share/index.html
 test -f out/shared/index.html
 
-export WRANGLER_OUTPUT_FILE_PATH="$STATE_DIR/wrangler-output.ndjson"
 TAG="same-domain-${SOURCE_SHA:0:12}"
-$WRANGLER versions upload \
+run_wrangler "$STATE_DIR/upload.log" versions upload \
   --config "$CONFIG" \
   --keep-vars \
   --tag "$TAG" \
   --message "STRACKER same-domain minimum usable ${SOURCE_SHA}"
 
-$WRANGLER versions list --name "$WORKER_NAME" --json > "$STATE_DIR/versions-after-upload.json"
+run_wrangler "$STATE_DIR/versions-list.log" versions list --name "$WORKER_NAME" --json
+cp "$STATE_DIR/versions-list.log" "$STATE_DIR/versions-after-upload.json"
 python - "$STATE_DIR" "$TAG" <<'PY'
 import json
 import sys
@@ -134,7 +144,7 @@ if isinstance(items, dict):
     items = items.get('versions') or items.get('result') or []
 match = None
 for item in items:
-    annotations = item.get('annotations') or {}
+    annotations = item.get('annotations') or item.get('metadata', {}).get('annotations') or {}
     item_tag = item.get('tag') or annotations.get('workers/tag')
     if item_tag == tag:
         match = item
@@ -154,21 +164,61 @@ rollback() {
   local exit_code=$?
   if [[ "$rollback_required" == '1' ]]; then
     mapfile -t rollback_specs < "$STATE_DIR/rollback-specs.txt"
-    $WRANGLER versions deploy "${rollback_specs[@]}" --name "$WORKER_NAME" --message 'Automatic rollback after failed STRACKER candidate' -y || true
+    run_wrangler "$STATE_DIR/rollback.log" versions deploy \
+      "${rollback_specs[@]}" \
+      --name "$WORKER_NAME" \
+      --message 'Automatic rollback after failed STRACKER candidate' \
+      -y || true
     echo 'ROLLBACK_EXECUTED=YES'
   fi
   exit "$exit_code"
 }
 trap rollback ERR
 
-echo 'PREVIEW_URLS_DISABLED_USING_ZERO_PERCENT_OVERRIDE=YES'
 mapfile -t current_specs < "$STATE_DIR/rollback-specs.txt"
-if [[ "${#current_specs[@]}" -ne 1 ]]; then
-  echo 'BLOCKER=MULTI_VERSION_ROLLBACK_BASE_UNSUPPORTED'
+rollback_required=1
+run_wrangler "$STATE_DIR/zero-percent.log" versions deploy \
+  "${current_specs[0]}" \
+  "${VERSION_ID}@0%" \
+  --name "$WORKER_NAME" \
+  --message 'STRACKER zero-percent smoke deployment' \
+  -y
+echo 'ZERO_PERCENT_DEPLOYMENT=PASS'
+
+# Cloudflare documents that a newly-added version can need a few seconds before
+# an override is applied globally. Wait for the exact build manifest rather than
+# interpreting an old-version fallback page as candidate output.
+override_ready=0
+for attempt in {1..30}; do
+  manifest_path="$STATE_DIR/override-manifest-${attempt}.json"
+  if curl --fail --silent --show-error --max-time 20 \
+    -H "Cloudflare-Workers-Version-Overrides: ${WORKER_NAME}=\"${VERSION_ID}\"" \
+    -H 'Cache-Control: no-cache' \
+    "${TARGET_URL}__stracker/build.json?candidate=${SOURCE_SHA:0:12}&attempt=${attempt}" \
+    > "$manifest_path" 2>/dev/null; then
+    if python - "$manifest_path" "$SOURCE_SHA" <<'PY'
+import json
+import sys
+from pathlib import Path
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text())
+except (json.JSONDecodeError, UnicodeDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if payload.get('sourceSha') == sys.argv[2] and payload.get('release') == 'same-domain-minimum-usable-v1' else 1)
+PY
+    then
+      override_ready=1
+      break
+    fi
+  fi
+  sleep 2
+done
+if [[ "$override_ready" != '1' ]]; then
+  echo 'VERSION_OVERRIDE_READINESS=FAIL'
   exit 1
 fi
-rollback_required=1
-$WRANGLER versions deploy "${current_specs[0]}" "${VERSION_ID}@0%" --name "$WORKER_NAME" --message 'STRACKER zero-percent smoke deployment' -y
+echo 'VERSION_OVERRIDE_READINESS=PASS'
+
 STRACKER_QA_URL="$TARGET_URL" \
 STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
 STRACKER_VERSION_OVERRIDE="$VERSION_ID" \
@@ -177,7 +227,11 @@ CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
 bun scripts/release/minimum-runtime-qa.ts
 echo 'ZERO_PERCENT_VERSION_OVERRIDE_QA=PASS'
 
-$WRANGLER versions deploy "${VERSION_ID}@100%" --name "$WORKER_NAME" --message "STRACKER minimum usable ${SOURCE_SHA}" -y
+run_wrangler "$STATE_DIR/promote.log" versions deploy \
+  "${VERSION_ID}@100%" \
+  --name "$WORKER_NAME" \
+  --message "STRACKER minimum usable ${SOURCE_SHA}" \
+  -y
 
 public_ok=0
 for _ in {1..24}; do
@@ -185,7 +239,7 @@ for _ in {1..24}; do
      STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
      STRACKER_QA_OUTPUT="$QA_OUTPUT" \
      CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
-     bun scripts/release/minimum-runtime-qa.ts; then
+     bun scripts/release/minimum-runtime-qa.ts >/dev/null 2>&1; then
     public_ok=1
     break
   fi
@@ -195,6 +249,7 @@ if [[ "$public_ok" != '1' ]]; then
   echo 'PUBLIC_RUNTIME_QA=FAIL'
   exit 1
 fi
+echo 'PUBLIC_RUNTIME_QA=PASS'
 
 api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_NAME}/deployments" "$STATE_DIR/deployments-after.json"
 python - "$STATE_DIR" "$VERSION_ID" <<'PY'
@@ -226,26 +281,26 @@ from pathlib import Path
 root, sha, url, qa_path = Path(sys.argv[1]), sys.argv[2], sys.argv[3], Path(sys.argv[4])
 qa = json.loads(qa_path.read_text())
 def short(value):
-    value=value.strip()
+    value = value.strip()
     return value[:8] if value and value != 'unknown' else value
 payload = {
-  'schema': 'stracker.same-domain-release-evidence.v1',
-  'sourceSha': sha,
-  'targetUrl': url,
-  'uploadedVersionShort': short((root/'uploaded-version-id.txt').read_text()),
-  'deploymentShort': short((root/'final-deployment-id.txt').read_text()),
-  'rollbackDeploymentShort': short((root/'rollback-deployment-id.txt').read_text()),
-  'privateDataUsed': False,
-  'realCoordinatesUsed': False,
-  'secretsExposed': False,
-  'workerDeleted': False,
-  'durableObjectDataDeleted': False,
-  'bindingsDeletedDestructively': False,
-  'runtimeShaMatch': qa['gates']['RUNTIME_SHA_MATCH'] == 'PASS',
-  'pageErrorTotal': qa['pageErrorTotal'],
-  'horizontalOverflowTotal': qa['horizontalOverflowTotal'],
-  'physicalGeolocationValidation': qa['physicalGeolocationValidation'],
-  'gates': qa['gates'],
+    'schema': 'stracker.same-domain-release-evidence.v1',
+    'sourceSha': sha,
+    'targetUrl': url,
+    'uploadedVersionShort': short((root/'uploaded-version-id.txt').read_text()),
+    'deploymentShort': short((root/'final-deployment-id.txt').read_text()),
+    'rollbackDeploymentShort': short((root/'rollback-deployment-id.txt').read_text()),
+    'privateDataUsed': False,
+    'realCoordinatesUsed': False,
+    'secretsExposed': False,
+    'workerDeleted': False,
+    'durableObjectDataDeleted': False,
+    'bindingsDeletedDestructively': False,
+    'runtimeShaMatch': qa['gates']['RUNTIME_SHA_MATCH'] == 'PASS',
+    'pageErrorTotal': qa['pageErrorTotal'],
+    'horizontalOverflowTotal': qa['horizontalOverflowTotal'],
+    'physicalGeolocationValidation': qa['physicalGeolocationValidation'],
+    'gates': qa['gates'],
 }
 out = root/'release-evidence.json'
 out.write_text(json.dumps(payload, indent=2, sort_keys=True)+'\n')
