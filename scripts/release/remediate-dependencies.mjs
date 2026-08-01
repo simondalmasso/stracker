@@ -11,7 +11,7 @@ packageJson.overrides = {
   ...(packageJson.overrides || {}),
   'brace-expansion': '1.1.17',
   'js-yaml': '4.3.0',
-  postcss: '8.5.12',
+  postcss: '8.5.18',
   sharp: '0.35.3',
 }
 
