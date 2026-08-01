@@ -91,8 +91,12 @@ assert config['workers_dev'] is True
 assert config['preview_urls'] is False
 assert config.get('routes') == []
 assert config['main'] == 'src/minimal-worker.ts'
+assert config['version_metadata']['binding'] == 'CF_VERSION_METADATA'
 assert config['assets']['directory'] == '../out'
 assert config['assets']['binding'] == 'ASSETS'
+run_worker_first = set(config['assets']['run_worker_first'])
+assert '/__stracker/version.json' in run_worker_first
+assert '/__stracker/build.json' in run_worker_first
 assert config['placement']['mode'] == 'smart'
 assert config['observability']['logs']['enabled'] is True
 assert config['observability']['traces']['enabled'] is True
@@ -142,7 +146,7 @@ STRACKER_QA_ALLOW_HTTP=1 \
 STRACKER_QA_OUTPUT="$TEMP/minimum-local-qa.json" \
 CHROME_BIN="$CHROME_BIN" \
 bun scripts/release/minimum-runtime-qa.ts
-jq -e '.pageErrorTotal == 0 and .horizontalOverflowTotal == 0 and .privateDataUsed == false and .realCoordinatesUsed == false and .gates.RUNTIME_SHA_MATCH == "PASS" and .gates.SHARED_LOCATION_FAIL_CLOSED == "PASS"' "$TEMP/minimum-local-qa.json" >/dev/null
+jq -e '.pageErrorTotal == 0 and .horizontalOverflowTotal == 0 and .privateDataUsed == false and .realCoordinatesUsed == false and .gates.BUILD_JSON_ASSET_SHA_MATCH == "PASS" and .gates.RUNTIME_SHA_MATCH == "PASS" and .gates.SHARED_LOCATION_FAIL_CLOSED == "PASS"' "$TEMP/minimum-local-qa.json" >/dev/null
 cleanup
 trap - EXIT
 echo 'MINIMUM_RELEASE_LOCAL_QA=PASS'
