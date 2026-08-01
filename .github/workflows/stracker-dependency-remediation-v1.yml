@@ -1,0 +1,47 @@
+name: STRACKER Dependency Remediation V1
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-native-sharing-worker-sqlite-e2e-v1
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: stracker-dependency-remediation-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  remediate:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/stracker-native-sharing-lifecycle-isolation-abuse-e2e-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - name: REMEDIATE_AND_VERIFY
+        run: |
+          node scripts/release/remediate-dependencies.mjs
+          bun install
+          bun audit --audit-level high
+          git diff --check
+      - name: COMMIT_REMEDIATED_LOCK
+        run: |
+          if git diff --quiet -- package.json bun.lock; then
+            echo 'DEPENDENCY_REMEDIATION_ALREADY_CURRENT=YES'
+            exit 0
+          fi
+          git config user.name 'stracker-arq-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add package.json bun.lock
+          git commit -m 'fix: remediate audited dependency vulnerabilities'
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          echo 'DEPENDENCY_REMEDIATION_COMMITTED=YES'
