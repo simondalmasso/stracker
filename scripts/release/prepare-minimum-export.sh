@@ -36,7 +36,7 @@ rm -f \
 while IFS= read -r path; do
   name="${path#out/}"
   case "$name" in
-    index.html|404.html|share.html|shared.html|manifest.json|robots.txt|logo.svg|_headers|_redirects|*.txt)
+    index.html|404.html|_not-found.html|share.html|shared.html|manifest.json|robots.txt|logo.svg|_headers|_redirects|*.txt)
       ;;
     *)
       echo "UNEXPECTED_RELEASE_ROOT_FILE=$name"
