@@ -1,4 +1,9 @@
-import puppeteer from 'puppeteer-core'
+import puppeteer, {
+  type Browser,
+  type ConsoleMessage,
+  type HTTPRequest,
+  type Page,
+} from 'puppeteer-core'
 
 const target = new URL(process.env.STRACKER_QA_URL || '')
 const expectedSha = process.env.STRACKER_EXPECTED_SHA || ''
@@ -22,24 +27,25 @@ function ok(value: unknown, code: string): asserts value {
   if (!value) throw new QaFailure(code)
 }
 
-async function click(page: puppeteer.Page, text: string): Promise<void> {
+async function click(page: Page, text: string): Promise<void> {
   await page.waitForFunction(
-    (value) => [...document.querySelectorAll('button')].some((button) => button.textContent?.toUpperCase().includes(String(value).toUpperCase())),
+    (value: string) => Array.from(document.querySelectorAll('button')).some((button) => button.textContent?.toUpperCase().includes(value.toUpperCase())),
     {},
     text,
   )
-  await page.$$eval('button', (buttons, value) => {
-    const button = buttons.find((candidate) => candidate.textContent?.toUpperCase().includes(String(value).toUpperCase()))
+  await page.$$eval('button', (elements: Element[], value: string) => {
+    const buttons = elements as HTMLButtonElement[]
+    const button = buttons.find((candidate) => candidate.textContent?.toUpperCase().includes(value.toUpperCase()))
     if (!button) throw new Error('BUTTON_NOT_FOUND')
     button.click()
   }, text)
 }
 
-async function overflow(page: puppeteer.Page): Promise<boolean> {
+async function overflow(page: Page): Promise<boolean> {
   return page.evaluate(() => Math.max(document.body?.scrollWidth || 0, document.documentElement.scrollWidth) > innerWidth)
 }
 
-async function installGeolocation(page: puppeteer.Page): Promise<void> {
+async function installGeolocation(page: Page): Promise<void> {
   await page.evaluateOnNewDocument(() => {
     let watchId = 0
     let sequence = 0
@@ -99,7 +105,7 @@ interface RequestObservation {
 }
 
 async function configurePage(
-  page: puppeteer.Page,
+  page: Page,
   width: number,
   height: number,
   observations: RequestObservation[],
@@ -110,11 +116,11 @@ async function configurePage(
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }])
   await installGeolocation(page)
   await page.setRequestInterception(true)
-  page.on('pageerror', (error) => pageErrors.push(error.name))
-  page.on('console', (message) => {
+  page.on('pageerror', (error: Error) => pageErrors.push(error.name))
+  page.on('console', (message: ConsoleMessage) => {
     if (message.type() === 'error') consoleErrors.push('console-error')
   })
-  page.on('request', (request) => {
+  page.on('request', (request: HTTPRequest) => {
     void (async () => {
       const url = new URL(request.url())
       const sameOrigin = url.origin === target.origin
@@ -135,12 +141,12 @@ async function configurePage(
   })
 }
 
-async function geoStats(page: puppeteer.Page): Promise<{ get: number; watch: number; clear: number; active: number }> {
+async function geoStats(page: Page): Promise<{ get: number; watch: number; clear: number; active: number }> {
   return page.evaluate(() => (window as unknown as { __strackerGeoQa: { stats: () => { get: number; watch: number; clear: number; active: number } } }).__strackerGeoQa.stats())
 }
 
-async function viewerMemory(page: puppeteer.Page, capability: string): Promise<void> {
-  const state = await page.evaluate(async (value) => ({
+async function viewerMemory(page: Page, capability: string): Promise<void> {
+  const state = await page.evaluate(async (value: string) => ({
     local: localStorage.length,
     session: sessionStorage.length,
     cookie: document.cookie,
@@ -154,7 +160,7 @@ async function viewerMemory(page: puppeteer.Page, capability: string): Promise<v
   ok(state.domContainsCapability === false, 'CAPABILITY_RETAINED_IN_DOM')
 }
 
-let browser: puppeteer.Browser | undefined
+let browser: Browser | undefined
 const result = {
   schema: 'stracker.native-sharing-live-browser-qa.v1',
   sourceSha: expectedSha,
@@ -192,7 +198,8 @@ try {
     await emitter.goto(target.href, { waitUntil: 'networkidle0', timeout: 60_000 })
     await emitter.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'))
     ok(!(await overflow(emitter)), 'ROOT_OVERFLOW')
-    ok((await geoStats(emitter)).get === 0 && (await geoStats(emitter)).watch === 0, 'ROOT_GEOLOCATION')
+    const rootGeo = await geoStats(emitter)
+    ok(rootGeo.get === 0 && rootGeo.watch === 0, 'ROOT_GEOLOCATION')
     ok(emitterObservations.every((entry) => !entry.api && !entry.map), 'ROOT_NETWORK')
     ok((await emitter.$$('main[data-map-engine]')).length === 0, 'ROOT_MAP')
 
@@ -206,7 +213,7 @@ try {
     await click(emitter, 'INICIAR TRANSMISIÓN')
     await emitter.waitForSelector('input[aria-label="Enlace privado de espectador"]', { timeout: 60_000 })
     await emitter.waitForSelector('main[data-sharing-state="active"]', { timeout: 60_000 })
-    const link = await emitter.$eval('input[aria-label="Enlace privado de espectador"]', (input) => (input as HTMLInputElement).value)
+    const link = await emitter.$eval('input[aria-label="Enlace privado de espectador"]', (element: Element) => (element as HTMLInputElement).value)
     const capability = new URL(link).hash.replace(/^#v=/, '')
     ok(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(capability), 'VIEWER_CAPABILITY_FORMAT')
     const emitterGeo = await geoStats(emitter)
@@ -230,7 +237,7 @@ try {
     ok(viewerObservations.filter((entry) => entry.pathname === '/api/share/viewer/exchange').length === 1, 'CAPABILITY_EXCHANGE_ONCE')
     ok(viewerObservations.some((entry) => entry.method === 'GET' && entry.pathname.endsWith('/status')), 'VIEWER_STATUS_POLL')
     ok(viewerObservations.some((entry) => entry.method === 'GET' && entry.pathname.endsWith('/points')), 'VIEWER_POINTS_POLL')
-    const attribution = await viewer.$eval('[aria-label="Atribución del mapa"]', (node) => node.textContent || '')
+    const attribution = await viewer.$eval('[aria-label="Atribución del mapa"]', (element: Element) => element.textContent || '')
     ok(attribution.includes('OpenFreeMap') && attribution.includes('OpenStreetMap'), 'MAP_ATTRIBUTION')
     ok(!(await overflow(viewer)), 'VIEWER_MAP_OVERFLOW')
 
