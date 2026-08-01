@@ -114,16 +114,25 @@ PY
 NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_STRACKER_SHARED_RUNTIME=disabled bun run build:export
 rm -f public/__stracker/build.json
 rmdir public/__stracker 2>/dev/null || true
-bunx wrangler@4.111.0 dev --local --config "$RELEASE_CONFIG" --port 8791 > "$TEMP/wrangler-dev.log" 2>&1 &
+bunx wrangler@4.111.0 dev --config "$RELEASE_CONFIG" --ip 127.0.0.1 --port 8791 > "$TEMP/wrangler-dev.log" 2>&1 &
 dev_pid=$!
 cleanup() { kill "$dev_pid" 2>/dev/null || true; }
 trap cleanup EXIT
 ready=0
 for _ in {1..30}; do
+  if ! kill -0 "$dev_pid" 2>/dev/null; then
+    echo 'WRANGLER_DEV_EXITED_EARLY'
+    sed -E 's/[A-Za-z0-9_-]{32,}/[REDACTED]/g' "$TEMP/wrangler-dev.log" | tail -40
+    exit 1
+  fi
   if curl --fail --silent http://127.0.0.1:8791/ >/dev/null; then ready=1; break; fi
   sleep 1
 done
-test "$ready" = '1'
+if [[ "$ready" != '1' ]]; then
+  echo 'WRANGLER_DEV_READINESS_TIMEOUT'
+  sed -E 's/[A-Za-z0-9_-]{32,}/[REDACTED]/g' "$TEMP/wrangler-dev.log" | tail -40
+  exit 1
+fi
 STRACKER_QA_URL='http://127.0.0.1:8791/' \
 STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
 STRACKER_QA_ALLOW_HTTP=1 \
