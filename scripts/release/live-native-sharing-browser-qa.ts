@@ -116,7 +116,9 @@ async function configurePage(
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }])
   await installGeolocation(page)
   await page.setRequestInterception(true)
-  page.on('pageerror', (error: Error) => pageErrors.push(error.name))
+  page.on('pageerror', (error: unknown) => {
+    pageErrors.push(error instanceof Error ? error.name : 'pageerror')
+  })
   page.on('console', (message: ConsoleMessage) => {
     if (message.type() === 'error') consoleErrors.push('console-error')
   })
