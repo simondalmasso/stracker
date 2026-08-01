@@ -142,7 +142,11 @@ const result = {
 }
 
 try {
-  const buildResponse = await fetchTarget('/__stracker/build.json', { cache: 'no-store' })
+  const buildPath = `/__stracker/build.json?candidate=${encodeURIComponent(expectedSha.slice(0, 12))}`
+  const buildResponse = await fetchTarget(buildPath, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+  })
   ok(buildResponse.status === 200, 'BUILD_INFO_UNAVAILABLE')
   const buildInfo = await buildResponse.json()
   ok(buildInfo.sourceSha === expectedSha, 'RUNTIME_SHA_MISMATCH')
