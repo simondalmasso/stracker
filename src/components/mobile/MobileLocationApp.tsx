@@ -9,6 +9,7 @@ import { useMyLocation } from '@/lib/location-source/use-my-location'
 import NativeSharingHub from './NativeSharingHub'
 
 const MobileMapShell = dynamic(() => import('./MobileMapShell'), { ssr: false })
+const SHARED_RUNTIME_AVAILABLE = process.env.NEXT_PUBLIC_STRACKER_SHARED_RUNTIME !== 'disabled'
 
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
@@ -63,6 +64,20 @@ function MyOnboarding({ state, requestPermission, onBack }: { state: string; req
   )
 }
 
+function SharedUnavailable({ onBack }: { onBack: () => void }) {
+  return (
+    <main data-shared-runtime="unavailable" className="relative flex min-h-[100dvh] items-center justify-center overflow-x-hidden bg-black px-5 text-white">
+      <BackButton onClick={onBack} />
+      <div className="w-full max-w-sm text-center">
+        <MapPinned className="mx-auto" size={32} />
+        <h1 className="mt-5 text-2xl font-semibold">Ubicación compartida</h1>
+        <p role="status" className="mt-5 rounded-2xl border border-white/10 p-4 text-sm font-semibold">NO DISPONIBLE EN ESTA PREVIEW</p>
+        <p className="mt-4 text-sm leading-6 text-white/55">El runtime compartido permanece cerrado hasta completar su validación independiente. No se inicia ninguna sesión, consulta, mapa ni geolocalización.</p>
+      </div>
+    </main>
+  )
+}
+
 export default function MobileLocationApp() {
   const [flow, setFlow] = useState<ProductFlow>('SELECTING_SOURCE')
   const [source, setSource] = useState<LocationSource | null>(null)
@@ -81,7 +96,11 @@ export default function MobileLocationApp() {
   }, [my])
 
   if (flow === 'SELECTING_SOURCE' || !source) return <Selector onSelect={select} />
-  if (source === 'shared-location') return <NativeSharingHub onBack={reset} />
+  if (source === 'shared-location') {
+    return SHARED_RUNTIME_AVAILABLE
+      ? <NativeSharingHub onBack={reset} />
+      : <SharedUnavailable onBack={reset} />
+  }
   return isMapUnlocked(source, my.state, 'unconfirmed') && my.snapshot
     ? <MobileMapShell source="my-device" snapshot={my.snapshot} ghostrail={my.ghostrail} onChangeSource={reset} onStop={reset} />
     : <MyOnboarding state={my.state} requestPermission={my.requestPermission} onBack={reset} />
