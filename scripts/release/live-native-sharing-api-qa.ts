@@ -1,3 +1,5 @@
+export {}
+
 const target = new URL(process.env.STRACKER_QA_URL || '')
 const expectedSha = process.env.STRACKER_EXPECTED_SHA || ''
 const expectedVersionId = process.env.STRACKER_EXPECTED_VERSION_ID || ''
@@ -122,13 +124,13 @@ async function exchange(viewerCapability: string): Promise<ViewerSession> {
   return viewer
 }
 
-async function status(sessionId: string, token: string): Promise<Response> {
+async function statusRequest(sessionId: string, token: string): Promise<Response> {
   return request(`/api/share/sessions/${sessionId}/status`, {
     headers: { Authorization: `Bearer ${token}`, Origin: target.origin },
   })
 }
 
-async function points(sessionId: string, token: string): Promise<Response> {
+async function pointsRequest(sessionId: string, token: string): Promise<Response> {
   return request(`/api/share/sessions/${sessionId}/points`, {
     headers: { Authorization: `Bearer ${token}`, Origin: target.origin },
   })
@@ -166,18 +168,18 @@ try {
   await publish(first, 1, baseTime)
   const firstViewer = await exchange(first.viewerCapability)
 
-  const firstStatus = await status(first.sessionId, firstViewer.viewerSessionToken)
+  const firstStatus = await statusRequest(first.sessionId, firstViewer.viewerSessionToken)
   ok(firstStatus.status === 200, 'AUTHENTICATED_STATUS')
   const firstStatusPayload = await payload<{ state?: string; pointCount?: number }>(firstStatus)
   ok(firstStatusPayload.state === 'active' && firstStatusPayload.pointCount === 1, 'STATUS_CONTENT')
 
-  const firstPoints = await points(first.sessionId, firstViewer.viewerSessionToken)
+  const firstPoints = await pointsRequest(first.sessionId, firstViewer.viewerSessionToken)
   ok(firstPoints.status === 200, 'AUTHENTICATED_POINTS')
   const firstPointsPayload = await payload<{ state?: string; points?: Array<{ sequence?: number }> }>(firstPoints)
   ok(firstPointsPayload.state === 'active' && firstPointsPayload.points?.length === 1 && firstPointsPayload.points[0]?.sequence === 1, 'FIRST_POINT_READ')
 
   await publish(first, 2, new Date(baseTime.getTime() + 6_000))
-  const secondPoints = await points(first.sessionId, firstViewer.viewerSessionToken)
+  const secondPoints = await pointsRequest(first.sessionId, firstViewer.viewerSessionToken)
   ok(secondPoints.status === 200, 'SECOND_POINT_READ')
   const secondPointsPayload = await payload<{ points?: Array<{ sequence?: number }> }>(secondPoints)
   ok(secondPointsPayload.points?.map((entry) => entry.sequence).join(',') === '1,2', 'SEQUENCE_ORDER')
@@ -207,7 +209,7 @@ try {
   ok(typeof rotated.viewerCapability === 'string' && VIEWER_CAPABILITY.test(rotated.viewerCapability), 'ROTATED_CAPABILITY_FORMAT')
   ok(rotated.viewerGeneration === 2, 'ROTATED_GENERATION')
 
-  await expectError(await status(first.sessionId, firstViewer.viewerSessionToken), [401], ['VIEWER_SESSION_INVALID'])
+  await expectError(await statusRequest(first.sessionId, firstViewer.viewerSessionToken), [401], ['VIEWER_SESSION_INVALID'])
   await expectError(await request('/api/share/viewer/exchange', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: target.origin },
@@ -216,7 +218,7 @@ try {
 
   const replacement = await exchange(rotated.viewerCapability)
   second = await createSession()
-  await expectError(await status(second.sessionId, replacement.viewerSessionToken), [401, 404], ['VIEWER_SESSION_INVALID', 'NOT_FOUND'])
+  await expectError(await statusRequest(second.sessionId, replacement.viewerSessionToken), [401, 404], ['VIEWER_SESSION_INVALID', 'NOT_FOUND'])
 
   const logoutResponse = await request('/api/share/viewer/logout', {
     method: 'POST',
@@ -228,14 +230,14 @@ try {
     body: JSON.stringify({ sessionId: first.sessionId }),
   })
   ok(logoutResponse.status === 200, 'VIEWER_LOGOUT')
-  await expectError(await status(first.sessionId, replacement.viewerSessionToken), [401], ['VIEWER_SESSION_INVALID'])
+  await expectError(await statusRequest(first.sessionId, replacement.viewerSessionToken), [401], ['VIEWER_SESSION_INVALID'])
 
   const revokeResponse = await request(`/api/share/sessions/${first.sessionId}`, {
     method: 'DELETE',
     headers: { 'X-Stracker-Emitter': first.emitterToken, Origin: target.origin },
   })
   ok(revokeResponse.status === 200, 'SESSION_REVOCATION')
-  await expectError(await points(first.sessionId, replacement.viewerSessionToken), [401, 410], ['SESSION_REVOKED', 'VIEWER_SESSION_INVALID'])
+  await expectError(await pointsRequest(first.sessionId, replacement.viewerSessionToken), [401, 410], ['SESSION_REVOKED', 'VIEWER_SESSION_INVALID'])
   await expectError(await request(`/api/share/sessions/${first.sessionId}/points`, {
     method: 'POST',
     headers: {
