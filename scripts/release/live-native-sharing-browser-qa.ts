@@ -27,6 +27,21 @@ function ok(value: unknown, code: string): asserts value {
   if (!value) throw new QaFailure(code)
 }
 
+function consoleErrorCategory(message: ConsoleMessage): string {
+  const text = message.text()
+    .replace(/https?:\/\/\S+/gi, '[URL]')
+    .replace(/[A-Za-z0-9_-]{43}(?:\.[A-Za-z0-9_-]{43})?/g, '[CAPABILITY]')
+    .replace(/Bearer\s+[A-Za-z0-9_-]+/gi, 'Bearer [TOKEN]')
+
+  if (/webgl|swiftshader|gpu process|graphics context/i.test(text)) return 'WEBGL_RENDERER'
+  if (/maplibre|openfreemap|openstreetmap|styleimagemissing/i.test(text)) return 'MAP_RENDERER'
+  if (/failed to load resource|status of 4\d\d|status of 5\d\d/i.test(text)) return 'RESOURCE_LOAD'
+  if (/fetch|network|net::err_|load failed|abort/i.test(text)) return 'NETWORK_REQUEST'
+  if (/content security policy|permissions policy|cors|cross-origin/i.test(text)) return 'BROWSER_POLICY'
+  if (/react|uncaught|typeerror|referenceerror|rangeerror|syntaxerror/i.test(text)) return 'APPLICATION_RUNTIME'
+  return 'UNCLASSIFIED_CONSOLE_ERROR'
+}
+
 async function click(page: Page, text: string): Promise<void> {
   await page.waitForFunction(
     (value: string) => Array.from(document.querySelectorAll('button')).some((button) => button.textContent?.toUpperCase().includes(value.toUpperCase())),
@@ -120,7 +135,7 @@ async function configurePage(
     pageErrors.push(error instanceof Error ? error.name : 'pageerror')
   })
   page.on('console', (message: ConsoleMessage) => {
-    if (message.type() === 'error') consoleErrors.push('console-error')
+    if (message.type() === 'error') consoleErrors.push(consoleErrorCategory(message))
   })
   page.on('request', (request: HTTPRequest) => {
     void (async () => {
@@ -163,6 +178,7 @@ async function viewerMemory(page: Page, capability: string): Promise<void> {
 }
 
 let browser: Browser | undefined
+const allConsoleCategories: string[] = []
 const result = {
   schema: 'stracker.native-sharing-live-browser-qa.v1',
   sourceSha: expectedSha,
@@ -251,6 +267,7 @@ try {
     const viewportErrors = pageErrors.length
     const viewportConsoleErrors = consoleErrors.length
     const viewportOverflow = Number(await overflow(emitter) || await overflow(viewer))
+    allConsoleCategories.push(...consoleErrors)
     result.pageErrorTotal += viewportErrors
     result.relevantConsoleErrors += viewportConsoleErrors
     result.horizontalOverflowTotal += viewportOverflow
@@ -261,6 +278,10 @@ try {
   }
 
   ok(result.pageErrorTotal === 0, 'PAGEERROR_TOTAL')
+  if (result.relevantConsoleErrors !== 0) {
+    const categories = [...new Set(allConsoleCategories)].sort().join(',') || 'UNKNOWN'
+    console.error(`LIVE_BROWSER_CONSOLE_CATEGORIES=${categories}`)
+  }
   ok(result.relevantConsoleErrors === 0, 'RELEVANT_CONSOLE_ERRORS')
   ok(result.horizontalOverflowTotal === 0, 'HORIZONTAL_OVERFLOW_TOTAL')
   result.gates = {
