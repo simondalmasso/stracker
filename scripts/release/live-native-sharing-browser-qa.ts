@@ -27,19 +27,64 @@ function ok(value: unknown, code: string): asserts value {
   if (!value) throw new QaFailure(code)
 }
 
-function consoleErrorCategory(message: ConsoleMessage): string {
+interface ConsoleClassification {
+  category: string
+  expectedRevocationSignal: boolean
+}
+
+function consoleErrorClassification(message: ConsoleMessage): ConsoleClassification {
   const text = message.text()
     .replace(/https?:\/\/\S+/gi, '[URL]')
     .replace(/[A-Za-z0-9_-]{43}(?:\.[A-Za-z0-9_-]{43})?/g, '[CAPABILITY]')
     .replace(/Bearer\s+[A-Za-z0-9_-]+/gi, 'Bearer [TOKEN]')
+  const status = text.match(/\b([45]\d{2})\b/)?.[1] || 'UNKNOWN'
+  let normalizedPath = 'UNKNOWN'
+  try {
+    const location = message.location().url
+    if (location) {
+      const url = new URL(location)
+      if (url.origin === target.origin) {
+        normalizedPath = url.pathname.replace(
+          /^\/api\/share\/sessions\/[A-Za-z0-9_-]{43}/,
+          '/api/share/sessions/:id',
+        )
+      } else if (url.hostname.endsWith('openfreemap.org') || url.hostname.endsWith('openstreetmap.org')) {
+        normalizedPath = 'MAP_PROVIDER'
+      } else {
+        normalizedPath = 'EXTERNAL_RESOURCE'
+      }
+    }
+  } catch {
+    normalizedPath = 'UNKNOWN'
+  }
 
-  if (/webgl|swiftshader|gpu process|graphics context/i.test(text)) return 'WEBGL_RENDERER'
-  if (/maplibre|openfreemap|openstreetmap|styleimagemissing/i.test(text)) return 'MAP_RENDERER'
-  if (/failed to load resource|status of 4\d\d|status of 5\d\d/i.test(text)) return 'RESOURCE_LOAD'
-  if (/fetch|network|net::err_|load failed|abort/i.test(text)) return 'NETWORK_REQUEST'
-  if (/content security policy|permissions policy|cors|cross-origin/i.test(text)) return 'BROWSER_POLICY'
-  if (/react|uncaught|typeerror|referenceerror|rangeerror|syntaxerror/i.test(text)) return 'APPLICATION_RUNTIME'
-  return 'UNCLASSIFIED_CONSOLE_ERROR'
+  const expectedRevocationPath = normalizedPath === '/api/share/sessions/:id/status'
+    || normalizedPath === '/api/share/sessions/:id/points'
+  if ((status === '401' || status === '410') && expectedRevocationPath) {
+    return {
+      category: `EXPECTED_REVOCATION_HTTP_${status}_${normalizedPath.endsWith('/status') ? 'STATUS' : 'POINTS'}`,
+      expectedRevocationSignal: true,
+    }
+  }
+  if (/webgl|swiftshader|gpu process|graphics context/i.test(text)) {
+    return { category: 'WEBGL_RENDERER', expectedRevocationSignal: false }
+  }
+  if (/maplibre|openfreemap|openstreetmap|styleimagemissing/i.test(text)) {
+    return { category: 'MAP_RENDERER', expectedRevocationSignal: false }
+  }
+  if (/failed to load resource|status of 4\d\d|status of 5\d\d/i.test(text)) {
+    return { category: `RESOURCE_LOAD_${status}_${normalizedPath}`, expectedRevocationSignal: false }
+  }
+  if (/fetch|network|net::err_|load failed|abort/i.test(text)) {
+    return { category: `NETWORK_REQUEST_${normalizedPath}`, expectedRevocationSignal: false }
+  }
+  if (/content security policy|permissions policy|cors|cross-origin/i.test(text)) {
+    return { category: 'BROWSER_POLICY', expectedRevocationSignal: false }
+  }
+  if (/react|uncaught|typeerror|referenceerror|rangeerror|syntaxerror/i.test(text)) {
+    return { category: 'APPLICATION_RUNTIME', expectedRevocationSignal: false }
+  }
+  return { category: `UNCLASSIFIED_CONSOLE_ERROR_${normalizedPath}`, expectedRevocationSignal: false }
 }
 
 async function click(page: Page, text: string): Promise<void> {
@@ -126,6 +171,7 @@ async function configurePage(
   observations: RequestObservation[],
   pageErrors: string[],
   consoleErrors: string[],
+  expectedRevocationSignals: string[],
 ): Promise<void> {
   await page.setViewport({ width, height, deviceScaleFactor: 1, isMobile: true, hasTouch: true })
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }])
@@ -135,7 +181,13 @@ async function configurePage(
     pageErrors.push(error instanceof Error ? error.name : 'pageerror')
   })
   page.on('console', (message: ConsoleMessage) => {
-    if (message.type() === 'error') consoleErrors.push(consoleErrorCategory(message))
+    if (message.type() !== 'error') return
+    const classification = consoleErrorClassification(message)
+    if (classification.expectedRevocationSignal) {
+      expectedRevocationSignals.push(classification.category)
+    } else {
+      consoleErrors.push(classification.category)
+    }
   })
   page.on('request', (request: HTTPRequest) => {
     void (async () => {
@@ -179,6 +231,7 @@ async function viewerMemory(page: Page, capability: string): Promise<void> {
 
 let browser: Browser | undefined
 const allConsoleCategories: string[] = []
+const allExpectedRevocationSignals: string[] = []
 const result = {
   schema: 'stracker.native-sharing-live-browser-qa.v1',
   sourceSha: expectedSha,
@@ -189,8 +242,9 @@ const result = {
   capabilityOrTokenRetained: false,
   pageErrorTotal: 0,
   relevantConsoleErrors: 0,
+  expectedRevocationHttpSignals: 0,
   horizontalOverflowTotal: 0,
-  viewports: [] as Array<{ width: number; height: number; pageErrors: number; relevantConsoleErrors: number; horizontalOverflow: number }>,
+  viewports: [] as Array<{ width: number; height: number; pageErrors: number; relevantConsoleErrors: number; expectedRevocationHttpSignals: number; horizontalOverflow: number }>,
   gates: {} as Record<string, string>,
 }
 
@@ -208,10 +262,11 @@ try {
     const viewerObservations: RequestObservation[] = []
     const pageErrors: string[] = []
     const consoleErrors: string[] = []
+    const expectedRevocationSignals: string[] = []
     const emitter = await emitterContext.newPage()
     const viewer = await viewerContext.newPage()
-    await configurePage(emitter, width, height, emitterObservations, pageErrors, consoleErrors)
-    await configurePage(viewer, width, height, viewerObservations, pageErrors, consoleErrors)
+    await configurePage(emitter, width, height, emitterObservations, pageErrors, consoleErrors, expectedRevocationSignals)
+    await configurePage(viewer, width, height, viewerObservations, pageErrors, consoleErrors, expectedRevocationSignals)
 
     await emitter.goto(target.href, { waitUntil: 'networkidle0', timeout: 60_000 })
     await emitter.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'))
@@ -266,12 +321,15 @@ try {
 
     const viewportErrors = pageErrors.length
     const viewportConsoleErrors = consoleErrors.length
+    const viewportExpectedSignals = expectedRevocationSignals.length
     const viewportOverflow = Number(await overflow(emitter) || await overflow(viewer))
     allConsoleCategories.push(...consoleErrors)
+    allExpectedRevocationSignals.push(...expectedRevocationSignals)
     result.pageErrorTotal += viewportErrors
     result.relevantConsoleErrors += viewportConsoleErrors
+    result.expectedRevocationHttpSignals += viewportExpectedSignals
     result.horizontalOverflowTotal += viewportOverflow
-    result.viewports.push({ width, height, pageErrors: viewportErrors, relevantConsoleErrors: viewportConsoleErrors, horizontalOverflow: viewportOverflow })
+    result.viewports.push({ width, height, pageErrors: viewportErrors, relevantConsoleErrors: viewportConsoleErrors, expectedRevocationHttpSignals: viewportExpectedSignals, horizontalOverflow: viewportOverflow })
 
     await emitterContext.close()
     await viewerContext.close()
@@ -281,6 +339,10 @@ try {
   if (result.relevantConsoleErrors !== 0) {
     const categories = [...new Set(allConsoleCategories)].sort().join(',') || 'UNKNOWN'
     console.error(`LIVE_BROWSER_CONSOLE_CATEGORIES=${categories}`)
+  }
+  if (result.expectedRevocationHttpSignals !== 0) {
+    const categories = [...new Set(allExpectedRevocationSignals)].sort().join(',')
+    console.log(`EXPECTED_REVOCATION_CONSOLE_SIGNALS=${categories}`)
   }
   ok(result.relevantConsoleErrors === 0, 'RELEVANT_CONSOLE_ERRORS')
   ok(result.horizontalOverflowTotal === 0, 'HORIZONTAL_OVERFLOW_TOTAL')
@@ -299,6 +361,7 @@ try {
     ALL_REQUIRED_VIEWPORTS: 'PASS',
     MAP_ATTRIBUTION: 'PASS',
     REVOCATION_AND_CLEANUP: 'PASS',
+    EXPECTED_REVOCATION_HTTP_CLASSIFIED: 'PASS',
   }
   await Bun.write(output, JSON.stringify(result, null, 2) + '\n')
   console.log(`LIVE_NATIVE_SHARING_BROWSER_QA=PASS sha=${expectedSha}`)
