@@ -136,13 +136,22 @@ settings = json.loads((root/'public-settings-before.json').read_text()).get('res
 bindings = settings.get('bindings') or []
 def name(binding):
     return binding.get('name') or binding.get('binding') or ''
+def service_target(binding):
+    return binding.get('service') or binding.get('service_name') or ''
 assets = [item for item in bindings if item.get('type') == 'assets']
 metadata = [item for item in bindings if item.get('type') == 'version_metadata']
+services = [item for item in bindings if item.get('type') == 'service']
 if len(assets) != 1 or name(assets[0]) != 'ASSETS':
     raise SystemExit('PUBLIC_ASSETS_BINDING_NOT_EXACT')
 if len(metadata) != 1 or name(metadata[0]) != 'CF_VERSION_METADATA':
     raise SystemExit('PUBLIC_VERSION_METADATA_BINDING_NOT_EXACT')
-allowed = {'assets', 'plain_text', 'secret_text', 'secret_key', 'version_metadata'}
+if services and (
+    len(services) != 1
+    or name(services[0]) != 'NATIVE_SHARING_BACKEND'
+    or service_target(services[0]) != 'stracker-native-sharing-backend'
+):
+    raise SystemExit('PUBLIC_SERVICE_BINDING_NOT_EXACT')
+allowed = {'assets', 'plain_text', 'secret_text', 'secret_key', 'version_metadata', 'service'}
 unexpected = sorted({str(item.get('type', 'unknown')) for item in bindings} - allowed)
 if unexpected:
     raise SystemExit('UNSUPPORTED_PUBLIC_BINDINGS_BEFORE=' + ','.join(unexpected))
@@ -155,6 +164,7 @@ for worker in ('stracker', 'stracker-native-sharing-backend'):
         raise SystemExit('CUSTOM_DOMAIN_ATTACHED=' + worker)
 print('PUBLIC_ROLLBACK_READY=PASS')
 print('TARGET_ACCOUNT_AND_PUBLIC_WORKER=PASS')
+print('PUBLIC_SERVICE_BINDING_STATE=PASS')
 print('CUSTOM_DOMAINS_ABSENT=PASS')
 PY
 
@@ -462,8 +472,10 @@ settings = json.loads((root/'public-settings-final.json').read_text()).get('resu
 bindings = settings.get('bindings') or []
 def name(binding):
     return binding.get('name') or binding.get('binding') or ''
+def service_target(binding):
+    return binding.get('service') or binding.get('service_name') or ''
 services = [item for item in bindings if item.get('type') == 'service']
-if len(services) != 1 or name(services[0]) != 'NATIVE_SHARING_BACKEND' or services[0].get('service') != 'stracker-native-sharing-backend':
+if len(services) != 1 or name(services[0]) != 'NATIVE_SHARING_BACKEND' or service_target(services[0]) != 'stracker-native-sharing-backend':
     raise SystemExit('FINAL_PUBLIC_SERVICE_BINDING_MISMATCH')
 print('FINAL_PUBLIC_DEPLOYMENT_100_PERCENT=PASS')
 print('FINAL_PUBLIC_SERVICE_BINDING=PASS')
