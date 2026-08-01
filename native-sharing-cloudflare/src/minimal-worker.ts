@@ -2,6 +2,10 @@ interface AssetsBinding {
   fetch(request: Request): Promise<Response>
 }
 
+interface ServiceBinding {
+  fetch(request: Request): Promise<Response>
+}
+
 interface VersionMetadataBinding {
   id: string
   tag?: string
@@ -11,6 +15,7 @@ interface VersionMetadataBinding {
 interface MinimalRuntimeEnv {
   ASSETS?: AssetsBinding
   CF_VERSION_METADATA?: VersionMetadataBinding
+  NATIVE_SHARING_BACKEND?: ServiceBinding
 }
 
 const API_HEADERS = {
@@ -24,6 +29,9 @@ const API_HEADERS = {
 
 const DOCUMENT_CSP = "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.openfreemap.org; connect-src 'self' https://*.openfreemap.org; font-src 'self' data:; worker-src 'self' blob:; child-src blob:; manifest-src 'self'"
 const RELEASE_TAG_PREFIX = 'same-domain-'
+const BACKEND_TIMEOUT_MS = 5_000
+const SESSION_ID_PATTERN = '[A-Za-z0-9_-]{43}'
+const SESSION_ROUTE = new RegExp(`^/api/share/sessions/(${SESSION_ID_PATTERN})(?:/(points|status|rotate-viewer))?$`)
 
 function jsonError(status: number, error: string): Response {
   return new Response(JSON.stringify({ status: 'error', error }), {
@@ -73,6 +81,53 @@ function hardenAssetResponse(request: Request, response: Response): Response {
   })
 }
 
+function allowedNativeMethods(pathname: string): readonly string[] | null {
+  if (pathname === '/api/share/sessions') return ['POST']
+  if (pathname === '/api/share/viewer/exchange') return ['POST']
+  if (pathname === '/api/share/viewer/logout') return ['POST']
+  const match = SESSION_ROUTE.exec(pathname)
+  if (!match) return null
+  switch (match[2] || 'session') {
+    case 'points': return ['GET', 'POST']
+    case 'status': return ['GET']
+    case 'rotate-viewer': return ['POST']
+    case 'session': return ['DELETE']
+    default: return null
+  }
+}
+
+function ensureSameOrigin(request: Request, url: URL): Response | null {
+  const origin = request.headers.get('Origin')
+  if (origin && origin !== url.origin) return jsonError(403, 'ORIGIN_REJECTED')
+  if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return jsonError(403, 'ORIGIN_REJECTED')
+  return null
+}
+
+async function forwardNativeSharing(
+  request: Request,
+  env: MinimalRuntimeEnv,
+  url: URL,
+): Promise<Response> {
+  if (url.search) return jsonError(400, 'REQUEST_INVALID')
+  const allowed = allowedNativeMethods(url.pathname)
+  if (!allowed) return jsonError(404, 'NOT_FOUND')
+  if (!allowed.includes(request.method)) return jsonError(405, 'METHOD_NOT_ALLOWED')
+  const originError = ensureSameOrigin(request, url)
+  if (originError) return originError
+  if (!env.NATIVE_SHARING_BACKEND) return jsonError(503, 'BINDING_UNAVAILABLE')
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort('BACKEND_TIMEOUT'), BACKEND_TIMEOUT_MS)
+  try {
+    const downstream = new Request(request, { signal: controller.signal })
+    return await env.NATIVE_SHARING_BACKEND.fetch(downstream)
+  } catch {
+    return jsonError(controller.signal.aborted ? 504 : 503, controller.signal.aborted ? 'OPERATION_TIMEOUT' : 'STORAGE_UNAVAILABLE')
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export async function handleMinimumRuntimeRequest(
   request: Request,
   env: MinimalRuntimeEnv,
@@ -83,7 +138,7 @@ export async function handleMinimumRuntimeRequest(
     return versionInfo || jsonError(503, 'VERSION_METADATA_UNAVAILABLE')
   }
   if (url.pathname.startsWith('/api/share/')) {
-    return jsonError(503, 'SHARED_LOCATION_NOT_AVAILABLE')
+    return forwardNativeSharing(request, env, url)
   }
   if ((url.pathname === '/shared' || url.pathname === '/shared/') && url.search) {
     return jsonError(400, 'REQUEST_INVALID')
