@@ -23,7 +23,6 @@ const API_HEADERS = {
 } as const
 
 const DOCUMENT_CSP = "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.openfreemap.org; connect-src 'self' https://*.openfreemap.org; font-src 'self' data:; worker-src 'self' blob:; child-src blob:; manifest-src 'self'"
-const RELEASE_LABEL = 'same-domain-minimum-usable-v1'
 const RELEASE_TAG_PREFIX = 'same-domain-'
 
 function jsonError(status: number, error: string): Response {
@@ -33,7 +32,7 @@ function jsonError(status: number, error: string): Response {
   })
 }
 
-function runtimeBuildInfo(env: MinimalRuntimeEnv): Response | null {
+function runtimeVersionInfo(env: MinimalRuntimeEnv): Response | null {
   const metadata = env.CF_VERSION_METADATA
   const tag = metadata?.tag || ''
   const sourceSha = tag.startsWith(RELEASE_TAG_PREFIX)
@@ -42,7 +41,6 @@ function runtimeBuildInfo(env: MinimalRuntimeEnv): Response | null {
   if (!metadata?.id || !/^[0-9a-f]{40}$/.test(sourceSha)) return null
   return new Response(JSON.stringify({
     sourceSha,
-    release: RELEASE_LABEL,
     versionId: metadata.id,
     versionTag: tag,
   }), {
@@ -80,9 +78,9 @@ export async function handleMinimumRuntimeRequest(
   env: MinimalRuntimeEnv,
 ): Promise<Response> {
   const url = new URL(request.url)
-  if (url.pathname === '/__stracker/build.json') {
-    const buildInfo = runtimeBuildInfo(env)
-    if (buildInfo) return buildInfo
+  if (url.pathname === '/__stracker/version.json') {
+    const versionInfo = runtimeVersionInfo(env)
+    return versionInfo || jsonError(503, 'VERSION_METADATA_UNAVAILABLE')
   }
   if (url.pathname.startsWith('/api/share/')) {
     return jsonError(503, 'SHARED_LOCATION_NOT_AVAILABLE')
