@@ -172,7 +172,7 @@ backend_existed=0
 if api_get_optional "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${BACKEND_WORKER}/settings" "$STATE_DIR/backend-settings-before.json"; then
   backend_existed=1
   api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${BACKEND_WORKER}/subdomain" "$STATE_DIR/backend-subdomain-before.json"
-  run_wrangler "$STATE_DIR/backend-versions-before.json" versions list --name "$BACKEND_WORKER" --json
+  api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${BACKEND_WORKER}/deployments" "$STATE_DIR/backend-deployments-before.json"
   python - "$STATE_DIR" <<'PY'
 import json
 import sys
@@ -188,18 +188,18 @@ if len(do) != 1 or name(do[0]) != 'NATIVE_SHARING' or do[0].get('class_name') !=
 subdomain = json.loads((root/'backend-subdomain-before.json').read_text()).get('result') or {}
 if subdomain.get('enabled') is not False:
     raise SystemExit('BACKEND_PUBLIC_INGRESS_ALREADY_ENABLED')
-items = json.loads((root/'backend-versions-before.json').read_text())
-if isinstance(items, dict):
-    items = items.get('versions') or items.get('result') or []
-owned = False
-for item in items:
-    annotations = item.get('annotations') or item.get('metadata', {}).get('annotations') or {}
-    message = item.get('message') or annotations.get('workers/message') or ''
-    if str(message).startswith('STRACKER native-sharing-backend '):
-        owned = True
-        break
-if not owned:
-    raise SystemExit('BACKEND_WORKER_NAME_ALREADY_OWNED_BY_UNRELATED_RESOURCE')
+payload = json.loads((root/'backend-deployments-before.json').read_text())['result']
+deployments = payload.get('deployments', payload if isinstance(payload, list) else [])
+if not deployments:
+    raise SystemExit('BACKEND_EXISTING_DEPLOYMENT_UNAVAILABLE')
+current = deployments[0]
+versions = current.get('versions') or []
+if len(versions) != 1:
+    raise SystemExit('BACKEND_EXISTING_DEPLOYMENT_SHAPE_UNSUPPORTED')
+item = versions[0]
+version_id = item.get('version_id') or item.get('id')
+if not version_id or float(item.get('percentage', -1)) != 100:
+    raise SystemExit('BACKEND_EXISTING_DEPLOYMENT_SHAPE_UNSUPPORTED')
 print('EXISTING_BACKEND_OWNERSHIP=PASS')
 PY
 else
@@ -218,14 +218,13 @@ api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${BACKEND_WORKER}/se
 api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${BACKEND_WORKER}/subdomain" "$STATE_DIR/backend-subdomain-after.json"
 api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${BACKEND_WORKER}/deployments" "$STATE_DIR/backend-deployments-after.json"
 api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains" "$STATE_DIR/domains-after-backend.json"
-run_wrangler "$STATE_DIR/backend-versions-after.json" versions list --name "$BACKEND_WORKER" --json
 
-python - "$STATE_DIR" "$SOURCE_SHA" <<'PY'
+python - "$STATE_DIR" <<'PY'
 import hashlib
 import json
 import sys
 from pathlib import Path
-root, sha = Path(sys.argv[1]), sys.argv[2]
+root = Path(sys.argv[1])
 settings = json.loads((root/'backend-settings-after.json').read_text()).get('result') or {}
 bindings = settings.get('bindings') or []
 def name(binding):
@@ -241,22 +240,18 @@ if isinstance(domains, dict):
     domains = domains.get('domains') or []
 if any(item.get('service') == 'stracker-native-sharing-backend' or item.get('worker') == 'stracker-native-sharing-backend' for item in domains):
     raise SystemExit('BACKEND_CUSTOM_DOMAIN_PRESENT')
-items = json.loads((root/'backend-versions-after.json').read_text())
-if isinstance(items, dict):
-    items = items.get('versions') or items.get('result') or []
-match = None
-expected = 'STRACKER native-sharing-backend ' + sha
-for item in items:
-    annotations = item.get('annotations') or item.get('metadata', {}).get('annotations') or {}
-    message = item.get('message') or annotations.get('workers/message') or ''
-    if message == expected:
-        match = item
-        break
-if not match:
+payload = json.loads((root/'backend-deployments-after.json').read_text())['result']
+deployments = payload.get('deployments', payload if isinstance(payload, list) else [])
+if not deployments:
     raise SystemExit('BACKEND_DEPLOYED_VERSION_NOT_FOUND')
-version_id = match.get('id') or match.get('version_id')
-if not version_id:
-    raise SystemExit('BACKEND_VERSION_ID_MISSING')
+current = deployments[0]
+versions = current.get('versions') or []
+if len(versions) != 1:
+    raise SystemExit('BACKEND_DEPLOYMENT_SHAPE_UNSUPPORTED')
+item = versions[0]
+version_id = item.get('version_id') or item.get('id')
+if not version_id or float(item.get('percentage', -1)) != 100:
+    raise SystemExit('BACKEND_DEPLOYMENT_SHAPE_UNSUPPORTED')
 (root/'backend-version-id.txt').write_text(version_id+'\n')
 (root/'backend-version-hash.txt').write_text(hashlib.sha256(version_id.encode()).hexdigest()+'\n')
 print('BACKEND_WORKER_EXISTS=PASS')
