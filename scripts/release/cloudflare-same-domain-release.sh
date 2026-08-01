@@ -22,8 +22,11 @@ from pathlib import Path
 config = json.loads(Path('native-sharing-cloudflare/wrangler.release.jsonc').read_text())
 assert config['name'] == 'stracker'
 assert config['workers_dev'] is True
-assert config['preview_urls'] is True
+assert config['preview_urls'] is False
 assert config.get('routes') == []
+assert config['placement']['mode'] == 'smart'
+assert config['observability']['logs']['enabled'] is True
+assert config['observability']['traces']['enabled'] is True
 for forbidden in ('account_id', 'zone_id', 'exports', 'migrations'):
     assert forbidden not in config
 assert 'durable_objects' not in config
@@ -114,14 +117,11 @@ test -f out/shared/index.html
 
 export WRANGLER_OUTPUT_FILE_PATH="$STATE_DIR/wrangler-output.ndjson"
 TAG="same-domain-${SOURCE_SHA:0:12}"
-PREVIEW_ALIAS="issue11-${SOURCE_SHA:0:8}"
 $WRANGLER versions upload \
   --config "$CONFIG" \
   --keep-vars \
-  --strict \
   --tag "$TAG" \
-  --message "STRACKER same-domain minimum usable ${SOURCE_SHA}" \
-  --preview-alias "$PREVIEW_ALIAS"
+  --message "STRACKER same-domain minimum usable ${SOURCE_SHA}"
 
 $WRANGLER versions list --name "$WORKER_NAME" --json > "$STATE_DIR/versions-after-upload.json"
 python - "$STATE_DIR" "$TAG" <<'PY'
@@ -149,29 +149,6 @@ print('VERSION_UPLOAD=PASS')
 PY
 VERSION_ID="$(cat "$STATE_DIR/uploaded-version-id.txt")"
 
-PREVIEW_URL=""
-if [[ -f "$STATE_DIR/wrangler-output.ndjson" ]]; then
-  PREVIEW_URL="$(python - "$STATE_DIR/wrangler-output.ndjson" <<'PY'
-import json
-import sys
-from pathlib import Path
-urls=[]
-for line in Path(sys.argv[1]).read_text(errors='ignore').splitlines():
-    try: item=json.loads(line)
-    except json.JSONDecodeError: continue
-    if item.get('type') == 'version-upload':
-        for key in ('preview_urls','previewUrls','targets','urls'):
-            value=item.get(key)
-            if isinstance(value,list): urls.extend(str(v) for v in value)
-            elif isinstance(value,str): urls.append(value)
-print(next((u for u in urls if u.startswith('https://')), ''))
-PY
-)"
-fi
-if [[ -z "$PREVIEW_URL" ]]; then
-  PREVIEW_URL="https://${PREVIEW_ALIAS}-${WORKER_NAME}.${ACCOUNT_SUBDOMAIN}.workers.dev/"
-fi
-
 rollback_required=0
 rollback() {
   local exit_code=$?
@@ -184,40 +161,22 @@ rollback() {
 }
 trap rollback ERR
 
-preview_ok=0
-for _ in {1..18}; do
-  if curl --fail --silent --show-error --max-time 20 "$PREVIEW_URL" >/dev/null 2>&1; then
-    preview_ok=1
-    break
-  fi
-  sleep 5
-done
-
-if [[ "$preview_ok" == '1' ]]; then
-  STRACKER_QA_URL="$PREVIEW_URL" \
-  STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
-  STRACKER_QA_OUTPUT="$QA_OUTPUT" \
-  CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
-  bun scripts/release/minimum-runtime-qa.ts
-  echo 'VERSION_PREVIEW_QA=PASS'
-else
-  mapfile -t current_specs < "$STATE_DIR/rollback-specs.txt"
-  if [[ "${#current_specs[@]}" -ne 1 ]]; then
-    echo 'BLOCKER=PREVIEW_UNAVAILABLE_AND_MULTI_VERSION_ROLLBACK_BASE'
-    exit 1
-  fi
-  rollback_required=1
-  $WRANGLER versions deploy "${current_specs[0]}" "${VERSION_ID}@0%" --name "$WORKER_NAME" --message 'STRACKER zero-percent smoke deployment' -y
-  STRACKER_QA_URL="$TARGET_URL" \
-  STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
-  STRACKER_VERSION_OVERRIDE="$VERSION_ID" \
-  STRACKER_QA_OUTPUT="$QA_OUTPUT" \
-  CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
-  bun scripts/release/minimum-runtime-qa.ts
-  echo 'ZERO_PERCENT_VERSION_OVERRIDE_QA=PASS'
+echo 'PREVIEW_URLS_DISABLED_USING_ZERO_PERCENT_OVERRIDE=YES'
+mapfile -t current_specs < "$STATE_DIR/rollback-specs.txt"
+if [[ "${#current_specs[@]}" -ne 1 ]]; then
+  echo 'BLOCKER=MULTI_VERSION_ROLLBACK_BASE_UNSUPPORTED'
+  exit 1
 fi
-
 rollback_required=1
+$WRANGLER versions deploy "${current_specs[0]}" "${VERSION_ID}@0%" --name "$WORKER_NAME" --message 'STRACKER zero-percent smoke deployment' -y
+STRACKER_QA_URL="$TARGET_URL" \
+STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
+STRACKER_VERSION_OVERRIDE="$VERSION_ID" \
+STRACKER_QA_OUTPUT="$QA_OUTPUT" \
+CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
+bun scripts/release/minimum-runtime-qa.ts
+echo 'ZERO_PERCENT_VERSION_OVERRIDE_QA=PASS'
+
 $WRANGLER versions deploy "${VERSION_ID}@100%" --name "$WORKER_NAME" --message "STRACKER minimum usable ${SOURCE_SHA}" -y
 
 public_ok=0
