@@ -16,7 +16,7 @@
     "run_worker_first": ["/api/share/*", "/shared", "/shared/*", "/__stracker/build.json"]
   },
   "observability": {
-    "enabled": true,
+    "enabled": false,
     "logs": {
       "enabled": true
     },
