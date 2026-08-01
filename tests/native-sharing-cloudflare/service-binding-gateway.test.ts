@@ -99,11 +99,14 @@ describe('public Worker service binding gateway', () => {
       body: '{}',
       headers: { 'X-Stracker-Emitter': created.emitterToken },
     }), runtime.env)).status).toBe(200)
+    expect((await handleMinimumRuntimeRequest(publicRequest(`/api/share/sessions/${created.sessionId}/status`, {
+      headers: { Authorization: `Bearer ${viewer.viewerSessionToken}` },
+    }), runtime.env)).status).toBe(401)
     expect((await handleMinimumRuntimeRequest(publicRequest('/api/share/viewer/logout', {
       method: 'POST',
       body: JSON.stringify({ sessionId: created.sessionId }),
       headers: { Authorization: `Bearer ${viewer.viewerSessionToken}` },
-    }), runtime.env)).status).toBe(401)
+    }), runtime.env)).status).toBe(200)
     expect((await handleMinimumRuntimeRequest(publicRequest(`/api/share/sessions/${created.sessionId}`, {
       method: 'DELETE',
       headers: { 'X-Stracker-Emitter': created.emitterToken },
@@ -116,6 +119,7 @@ describe('public Worker service binding gateway', () => {
       `GET /api/share/sessions/${created.sessionId}/status`,
       `GET /api/share/sessions/${created.sessionId}/points`,
       `POST /api/share/sessions/${created.sessionId}/rotate-viewer`,
+      `GET /api/share/sessions/${created.sessionId}/status`,
       'POST /api/share/viewer/logout',
       `DELETE /api/share/sessions/${created.sessionId}`,
     ])
