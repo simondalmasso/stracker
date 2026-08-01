@@ -88,11 +88,14 @@ from pathlib import Path
 config = json.loads(Path('native-sharing-cloudflare/wrangler.release.jsonc').read_text())
 assert config['name'] == 'stracker'
 assert config['workers_dev'] is True
-assert config['preview_urls'] is True
+assert config['preview_urls'] is False
 assert config.get('routes') == []
 assert config['main'] == 'src/minimal-worker.ts'
 assert config['assets']['directory'] == '../out'
 assert config['assets']['binding'] == 'ASSETS'
+assert config['placement']['mode'] == 'smart'
+assert config['observability']['logs']['enabled'] is True
+assert config['observability']['traces']['enabled'] is True
 for key in ('account_id', 'zone_id', 'exports', 'migrations', 'durable_objects', 'vars', 'secrets'):
     assert key not in config
 print('RELEASE_CONFIG_INVARIANTS=PASS')
