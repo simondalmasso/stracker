@@ -3,6 +3,7 @@ import puppeteer from 'puppeteer-core'
 
 const target = new URL(process.env.STRACKER_QA_URL || '')
 const expectedSha = process.env.STRACKER_EXPECTED_SHA || ''
+const expectedVersionId = process.env.STRACKER_EXPECTED_VERSION_ID || ''
 const overrideVersion = process.env.STRACKER_VERSION_OVERRIDE || ''
 const chrome = process.env.CHROME_BIN || '/usr/bin/google-chrome'
 const output = process.env.STRACKER_QA_OUTPUT || '/tmp/stracker-minimum-runtime-qa.json'
@@ -142,6 +143,17 @@ const result = {
 }
 
 try {
+  if (expectedVersionId) {
+    const versionPath = `/__stracker/version.json?candidate=${encodeURIComponent(expectedSha.slice(0, 12))}`
+    const versionResponse = await fetchTarget(versionPath, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+    })
+    ok(versionResponse.status === 200, 'VERSION_METADATA_UNAVAILABLE')
+    const versionInfo = await versionResponse.json()
+    ok(versionInfo.versionId === expectedVersionId, 'VERSION_METADATA_ID_MISMATCH')
+  }
+
   const buildPath = `/__stracker/build.json?candidate=${encodeURIComponent(expectedSha.slice(0, 12))}`
   const buildResponse = await fetchTarget(buildPath, {
     cache: 'no-store',
@@ -149,7 +161,7 @@ try {
   })
   ok(buildResponse.status === 200, 'BUILD_INFO_UNAVAILABLE')
   const buildInfo = await buildResponse.json()
-  ok(buildInfo.sourceSha === expectedSha, 'RUNTIME_SHA_MISMATCH')
+  ok(buildInfo.sourceSha === expectedSha, 'BUILD_JSON_SHA_MISMATCH')
   ok(buildInfo.release === 'same-domain-minimum-usable-v1', 'RELEASE_LABEL_MISMATCH')
 
   const apiResponse = await fetchTarget('/api/share/sessions', {
@@ -226,6 +238,8 @@ try {
   result.gates = {
     HTTPS: allowHttp ? 'LOCAL_HTTP_ALLOWED' : 'PASS',
     SAME_WORKERS_DEV_DOMAIN: target.hostname === 'stracker.simondalmasso44.workers.dev' ? 'PASS' : 'PREVIEW_OR_LOCAL',
+    VERSION_METADATA_ID_MATCH: expectedVersionId ? 'PASS' : 'NOT_REQUIRED_LOCAL',
+    BUILD_JSON_ASSET_SHA_MATCH: 'PASS',
     ROOT_SELECTOR_ALWAYS_FIRST: 'PASS',
     NO_MAP_OR_GEOLOCATION_BEFORE_SELECTION: 'PASS',
     MY_LOCATION_EXPLICIT_CONSENT: 'PASS',
