@@ -87,7 +87,10 @@ async function createSession(): Promise<CreatedSession> {
     headers: { 'Content-Type': 'application/json', Origin: target.origin },
     body: JSON.stringify({ durationMs: 5 * 60_000 }),
   })
-  ok(response.status === 201, 'SESSION_CREATE')
+  if (response.status !== 201) {
+    const failure = await payload<{ error?: string }>(response)
+    throw new QaFailure(`SESSION_CREATE_HTTP_${response.status}_${failure.error || 'UNKNOWN'}`)
+  }
   const created = await payload<CreatedSession>(response)
   ok(CAPABILITY.test(created.sessionId), 'SESSION_ID_FORMAT')
   ok(CAPABILITY.test(created.emitterToken), 'EMITTER_TOKEN_FORMAT')
