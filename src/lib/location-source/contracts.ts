@@ -1,7 +1,7 @@
 export type LocationSource = 'my-device' | 'shared-location'
 export type SharedLocationProvider = 'stracker-native' | 'google-session-experimental'
 export type MotionState = 'unknown' | 'stationary' | 'moving'
-export type FreshnessState = 'unknown' | 'fresh' | 'stale' | 'expired'
+export type FreshnessState = 'unknown' | 'fresh' | 'delayed' | 'stale' | 'expired'
 export type SourceHealth = 'unknown' | 'receiving' | 'degraded' | 'unreachable'
 export type SharingSessionState =
   | 'not-started'
@@ -23,6 +23,9 @@ export type ViewerSessionState =
 export type LocationSessionState = 'not-applicable' | ViewerSessionState
 export type CameraMode = 'overview' | 'follow' | 'stationary' | 'manual'
 export type BasemapMode = 'vector-3d' | 'satellite' | 'hybrid'
+export type PilotNetworkState = 'online' | 'offline' | 'sending' | 'recovering' | 'error'
+export type PilotAccuracyState = 'unknown' | 'good' | 'fair' | 'low'
+export type PilotPermissionState = 'granted' | 'prompt' | 'denied' | 'unsupported' | 'unknown'
 
 export interface GeoPoint {
   lat: number
@@ -113,6 +116,25 @@ export interface NativeViewerExchangeResponse {
   expiresAt: string
 }
 
+export interface PilotRuntimeIdentity {
+  buildSha: string
+  versionId: string
+}
+
+export interface PilotDiagnosticSummary {
+  BUILD_SHA: string
+  VERSION_ID: string
+  BROWSER_AND_OS_CLASS: string
+  PAGE_VISIBILITY_STATE: string
+  GEOLOCATION_PERMISSION_STATE: PilotPermissionState
+  NETWORK_ONLINE_STATE: string
+  WAKE_LOCK_SUPPORTED_AND_HELD: string
+  LAST_HTTP_STATUS_CATEGORY: string
+  POINT_ATTEMPT_COUNT: number
+  POINT_SUCCESS_COUNT: number
+  LAST_SUCCESS_AGE_BUCKET: string
+}
+
 export function freshnessFromTimestamp(
   source: LocationSource,
   capturedAt: string,
@@ -121,10 +143,13 @@ export function freshnessFromTimestamp(
   const capturedMs = Date.parse(capturedAt)
   if (!Number.isFinite(capturedMs)) return 'unknown'
   const ageMs = Math.max(0, nowMs - capturedMs)
-  const freshMs = source === 'my-device' ? 30_000 : 60_000
-  const staleMs = source === 'my-device' ? 120_000 : 300_000
-  if (ageMs <= freshMs) return 'fresh'
-  if (ageMs <= staleMs) return 'stale'
+  if (source === 'shared-location') {
+    if (ageMs <= 15_000) return 'fresh'
+    if (ageMs <= 45_000) return 'delayed'
+    return 'stale'
+  }
+  if (ageMs <= 30_000) return 'fresh'
+  if (ageMs <= 120_000) return 'stale'
   return 'expired'
 }
 
