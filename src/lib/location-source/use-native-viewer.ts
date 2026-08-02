@@ -117,8 +117,8 @@ export function useNativeViewer(): NativeViewerController {
 
   useEffect(() => {
     onlineRef.current = navigator.onLine
-    setNetworkState(navigator.onLine ? 'online' : 'offline')
     const identityController = new AbortController()
+    queueMicrotask(() => setNetworkState(navigator.onLine ? 'online' : 'offline'))
     void fetchPilotRuntimeIdentity(identityController.signal).then(setRuntimeIdentity)
     const online = () => {
       onlineRef.current = true
