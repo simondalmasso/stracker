@@ -142,7 +142,10 @@ jobs:
           PILOT_BROWSER_QA_OUTPUT: ${{ runner.temp }}/controlled-pilot-browser.json
         run: |
           CHROME_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"; test -n "$CHROME_BIN"; export CHROME_BIN
+          mkdir -p out/__stracker
+          printf '{"sourceSha":"%s","versionId":"local-controlled-pilot"}\n' "$SOURCE_SHA" > out/__stracker/version.json
           bun tests/native-sharing-cloudflare/controlled-physical-pilot-browser-qa.ts
+          rm -f out/__stracker/version.json
           jq -e '.privateDataUsed == false and .realCoordinatesUsed == false and .syntheticCoordinateValuesRetained == false and .capabilityOrTokenRetained == false' "$PILOT_BROWSER_QA_OUTPUT" >/dev/null
           jq -e '.pageErrorTotal == 0 and .relevantConsoleErrors == 0 and .horizontalOverflowTotal == 0 and .offlineDurationSeconds == 30' "$PILOT_BROWSER_QA_OUTPUT" >/dev/null
           jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$PILOT_BROWSER_QA_OUTPUT" >/dev/null
