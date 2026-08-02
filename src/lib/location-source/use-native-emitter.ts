@@ -256,14 +256,18 @@ export function useNativeEmitter(): NativeEmitterController {
       })
   }, [clearTransport, setExactState])
 
-  flushPendingRef.current = flushPending
+  useEffect(() => {
+    flushPendingRef.current = flushPending
+  }, [flushPending])
 
   useEffect(() => {
     onlineRef.current = navigator.onLine
     visibleRef.current = document.visibilityState === 'visible'
-    setNetworkState(navigator.onLine ? 'online' : 'offline')
-    setVisibilityState(document.visibilityState)
     const controller = new AbortController()
+    queueMicrotask(() => {
+      setNetworkState(navigator.onLine ? 'online' : 'offline')
+      setVisibilityState(document.visibilityState)
+    })
     void fetchPilotRuntimeIdentity(controller.signal).then(setRuntimeIdentity)
     return () => controller.abort()
   }, [])
