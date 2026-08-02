@@ -11,6 +11,7 @@ STATE_DIR="${RUNNER_TEMP:-/tmp}/stracker-controlled-physical-pilot-release"
 API_QA_OUTPUT="$STATE_DIR/api-qa.json"
 BASE_BROWSER_QA_OUTPUT="$STATE_DIR/base-browser-qa.json"
 PILOT_BROWSER_QA_OUTPUT="$STATE_DIR/pilot-browser-qa.json"
+OFFLINE_STOP_QA_OUTPUT="$STATE_DIR/offline-stop-qa.json"
 mkdir -p "$STATE_DIR"
 
 if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
@@ -214,6 +215,7 @@ run_qas() {
   STRACKER_QA_URL="$TARGET_URL" STRACKER_EXPECTED_SHA="$SOURCE_SHA" STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" STRACKER_VERSION_OVERRIDE="$override" STRACKER_API_QA_OUTPUT="$API_QA_OUTPUT" bun "$STATE_DIR/pilot-api-qa.ts"
   STRACKER_QA_URL="$TARGET_URL" STRACKER_EXPECTED_SHA="$SOURCE_SHA" STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" STRACKER_VERSION_OVERRIDE="$override" STRACKER_BROWSER_QA_OUTPUT="$BASE_BROWSER_QA_OUTPUT" CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" bun scripts/release/live-native-sharing-browser-qa.ts
   STRACKER_QA_URL="$TARGET_URL" STRACKER_EXPECTED_SHA="$SOURCE_SHA" STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" STRACKER_VERSION_OVERRIDE="$override" STRACKER_PILOT_QA_OUTPUT="$PILOT_BROWSER_QA_OUTPUT" CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" bun scripts/release/live-controlled-physical-pilot-browser-qa.ts
+  STRACKER_QA_URL="$TARGET_URL" STRACKER_EXPECTED_SHA="$SOURCE_SHA" STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" STRACKER_VERSION_OVERRIDE="$override" OFFLINE_STOP_QA_OUTPUT="$OFFLINE_STOP_QA_OUTPUT" CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts
   echo "$suffix=PASS"
 }
 run_qas "$CANDIDATE_VERSION" 'ZERO_PERCENT_OVERRIDE_PILOT_E2E'
@@ -256,13 +258,14 @@ PY
 
 rollback_required=0
 trap - ERR
-python - "$STATE_DIR" "$SOURCE_SHA" "$TARGET_URL" "$API_QA_OUTPUT" "$BASE_BROWSER_QA_OUTPUT" "$PILOT_BROWSER_QA_OUTPUT" <<'PY'
+python - "$STATE_DIR" "$SOURCE_SHA" "$TARGET_URL" "$API_QA_OUTPUT" "$BASE_BROWSER_QA_OUTPUT" "$PILOT_BROWSER_QA_OUTPUT" "$OFFLINE_STOP_QA_OUTPUT" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
 root, sha, url = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 api = json.loads(Path(sys.argv[4]).read_text())
 base = json.loads(Path(sys.argv[5]).read_text())
 pilot = json.loads(Path(sys.argv[6]).read_text())
+offline_stop = json.loads(Path(sys.argv[7]).read_text())
 def hashed(path): return hashlib.sha256(path.read_text().strip().encode()).hexdigest()
 def short(path):
     value = path.read_text().strip()
@@ -284,6 +287,7 @@ evidence = {
   'zeroPercentOverrideApiE2e': True,
   'zeroPercentOverrideBaseBrowserE2e': True,
   'zeroPercentOverridePilotE2e': True,
+  'zeroPercentOverrideOfflineStopE2e': True,
   'publicPostPromotionQa': True,
   'privateDataUsed': False,
   'realCoordinatesUsed': False,
@@ -297,8 +301,9 @@ evidence = {
   'apiGates': api['gates'],
   'baseBrowserGates': base['gates'],
   'pilotBrowserGates': pilot['gates'],
-  'pageErrorTotal': pilot['pageErrorTotal'],
-  'relevantConsoleErrors': pilot['relevantConsoleErrors'],
+  'offlineStopGates': offline_stop['gates'],
+  'pageErrorTotal': pilot['pageErrorTotal'] + offline_stop['pageErrorTotal'],
+  'relevantConsoleErrors': pilot['relevantConsoleErrors'] + offline_stop['relevantConsoleErrors'],
   'horizontalOverflowTotal': pilot['horizontalOverflowTotal'],
   'offlineDurationSeconds': pilot['offlineDurationSeconds'],
 }
