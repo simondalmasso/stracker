@@ -230,6 +230,8 @@ async function viewerMemory(page: Page, capability: string): Promise<void> {
 }
 
 let browser: Browser | undefined
+let currentStage = 'BOOT'
+let currentViewport = 'UNSET'
 const allConsoleCategories: string[] = []
 const allExpectedRevocationSignals: string[] = []
 const result = {
@@ -249,6 +251,7 @@ const result = {
 }
 
 try {
+  currentStage = 'BROWSER_LAUNCH'
   browser = await puppeteer.launch({
     executablePath: chrome,
     headless: true,
@@ -256,6 +259,8 @@ try {
   })
 
   for (const [width, height] of sizes) {
+    currentViewport = `${width}x${height}`
+    currentStage = 'CONTEXT_SETUP'
     const emitterContext = await browser.createBrowserContext()
     const viewerContext = await browser.createBrowserContext()
     const emitterObservations: RequestObservation[] = []
@@ -268,7 +273,9 @@ try {
     await configurePage(emitter, width, height, emitterObservations, pageErrors, consoleErrors, expectedRevocationSignals)
     await configurePage(viewer, width, height, viewerObservations, pageErrors, consoleErrors, expectedRevocationSignals)
 
+    currentStage = 'ROOT_NAVIGATION'
     await emitter.goto(target.href, { waitUntil: 'networkidle0', timeout: 60_000 })
+    currentStage = 'ROOT_SELECTOR'
     await emitter.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'))
     ok(!(await overflow(emitter)), 'ROOT_OVERFLOW')
     const rootGeo = await geoStats(emitter)
@@ -276,14 +283,18 @@ try {
     ok(emitterObservations.every((entry) => !entry.api && !entry.map), 'ROOT_NETWORK')
     ok((await emitter.$$('main[data-map-engine]')).length === 0, 'ROOT_MAP')
 
+    currentStage = 'SHARE_NAVIGATION'
     await emitter.goto(new URL('/share', target).href, { waitUntil: 'networkidle0', timeout: 60_000 })
+    currentStage = 'SHARE_READY'
     await emitter.waitForFunction(() => document.body.textContent?.includes('INICIAR TRANSMISIÓN'))
     const beforeStart = emitterObservations.length
     const emitterBeforeGeo = await geoStats(emitter)
     ok(emitterBeforeGeo.get === 0 && emitterBeforeGeo.watch === 0, 'EMITTER_GEO_BEFORE_START')
     ok(emitterObservations.slice(0, beforeStart).every((entry) => !entry.api), 'SESSION_BEFORE_START')
 
+    currentStage = 'EMITTER_START'
     await click(emitter, 'INICIAR TRANSMISIÓN')
+    currentStage = 'EMITTER_ACTIVE'
     await emitter.waitForSelector('input[aria-label="Enlace privado de espectador"]', { timeout: 60_000 })
     await emitter.waitForSelector('main[data-sharing-state="active"]', { timeout: 60_000 })
     const link = await emitter.$eval('input[aria-label="Enlace privado de espectador"]', (element: Element) => (element as HTMLInputElement).value)
@@ -291,11 +302,14 @@ try {
     ok(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(capability), 'VIEWER_CAPABILITY_FORMAT')
     const emitterGeo = await geoStats(emitter)
     ok(emitterGeo.get === 1 && emitterGeo.watch === 1 && emitterGeo.active === 1, 'EMITTER_WATCH_POSITION')
+    currentStage = 'EMITTER_FIRST_POINT'
     await emitter.waitForFunction(() => document.body.textContent?.includes('AHORA'), { timeout: 30_000 })
     ok(emitterObservations.some((entry) => entry.api && entry.method === 'POST' && entry.pathname === '/api/share/sessions'), 'SESSION_CREATE_REQUEST')
     ok(emitterObservations.some((entry) => entry.api && entry.method === 'POST' && entry.pathname.endsWith('/points')), 'POINT_PUBLICATION_REQUEST')
 
+    currentStage = 'VIEWER_NAVIGATION'
     await viewer.goto(new URL(`/shared#v=${encodeURIComponent(capability)}`, target).href, { waitUntil: 'networkidle0', timeout: 60_000 })
+    currentStage = 'VIEWER_CONFIRMATION'
     await viewer.waitForFunction(() => document.body.textContent?.includes('VER UBICACIÓN'))
     ok(!(await overflow(viewer)), 'VIEWER_PRECONFIRM_OVERFLOW')
     ok(viewerObservations.every((entry) => !entry.api), 'VIEWER_API_BEFORE_CONFIRMATION')
@@ -303,8 +317,11 @@ try {
     const viewerGeo = await geoStats(viewer)
     ok(viewerGeo.get === 0 && viewerGeo.watch === 0, 'VIEWER_GEOLOCATION')
 
+    currentStage = 'VIEWER_CONFIRM_CLICK'
     await click(viewer, 'VER UBICACIÓN')
+    currentStage = 'VIEWER_FRAGMENT_REMOVAL'
     await viewer.waitForFunction(() => location.pathname === '/shared' && location.search === '' && location.hash === '', { timeout: 30_000 })
+    currentStage = 'VIEWER_MAP'
     await viewer.waitForSelector('main[data-map-engine="maplibre"][data-location-source="shared-location"]', { timeout: 60_000 })
     await viewerMemory(viewer, capability)
     ok(viewerObservations.filter((entry) => entry.pathname === '/api/share/viewer/exchange').length === 1, 'CAPABILITY_EXCHANGE_ONCE')
@@ -314,11 +331,14 @@ try {
     ok(attribution.includes('OpenFreeMap') && attribution.includes('OpenStreetMap'), 'MAP_ATTRIBUTION')
     ok(!(await overflow(viewer)), 'VIEWER_MAP_OVERFLOW')
 
+    currentStage = 'EMITTER_REVOKE_CLICK'
     await click(emitter, 'REVOCAR ENLACE')
+    currentStage = 'VIEWER_REVOCATION'
     await viewer.waitForFunction(() => document.querySelector('main[data-viewer-state="revoked"]') && !document.querySelector('main[data-map-engine]'), { timeout: 30_000 })
     const emitterAfter = await geoStats(emitter)
     ok(emitterAfter.clear >= 1 && emitterAfter.active === 0, 'EMITTER_REVOCATION_CLEANUP')
 
+    currentStage = 'VIEWPORT_ASSERTIONS'
     const viewportErrors = pageErrors.length
     const viewportConsoleErrors = consoleErrors.length
     const viewportExpectedSignals = expectedRevocationSignals.length
@@ -331,10 +351,13 @@ try {
     result.horizontalOverflowTotal += viewportOverflow
     result.viewports.push({ width, height, pageErrors: viewportErrors, relevantConsoleErrors: viewportConsoleErrors, expectedRevocationHttpSignals: viewportExpectedSignals, horizontalOverflow: viewportOverflow })
 
+    currentStage = 'CONTEXT_CLEANUP'
     await emitterContext.close()
     await viewerContext.close()
   }
 
+  currentViewport = 'ALL'
+  currentStage = 'FINAL_ASSERTIONS'
   ok(result.pageErrorTotal === 0, 'PAGEERROR_TOTAL')
   if (result.relevantConsoleErrors !== 0) {
     const categories = [...new Set(allConsoleCategories)].sort().join(',') || 'UNKNOWN'
@@ -366,8 +389,14 @@ try {
   await Bun.write(output, JSON.stringify(result, null, 2) + '\n')
   console.log(`LIVE_NATIVE_SHARING_BROWSER_QA=PASS sha=${expectedSha}`)
 } catch (error) {
-  console.error(`LIVE_NATIVE_SHARING_BROWSER_QA=FAIL code=${error instanceof QaFailure ? error.code : 'UNEXPECTED'}`)
-  throw error
+  const code = error instanceof QaFailure
+    ? error.code
+    : error instanceof Error && error.name === 'TimeoutError'
+      ? `TIMEOUT_${currentStage}_${currentViewport}`
+      : `UNEXPECTED_${currentStage}_${currentViewport}`
+  console.error(`LIVE_NATIVE_SHARING_BROWSER_QA=FAIL code=${code}`)
+  if (error instanceof QaFailure) throw error
+  throw new QaFailure(code)
 } finally {
   await browser?.close()
 }
