@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 PUBLIC_WORKER='stracker'
 BACKEND_WORKER='stracker-native-sharing-backend'
@@ -24,10 +24,16 @@ sanitize_tail() {
     -e 's/[A-Za-z0-9_-]{32,}/[VALUE_REDACTED]/g' \
     "$1" | tail -40
 }
+
 run_wrangler() {
-  local output="$1"; shift
-  if ! "${WRANGLER[@]}" "$@" >"$output" 2>&1; then sanitize_tail "$output"; return 1; fi
+  local output="$1"
+  shift
+  if ! "${WRANGLER[@]}" "$@" >"$output" 2>&1; then
+    sanitize_tail "$output"
+    return 1
+  fi
 }
+
 api_get() {
   curl --fail-with-body --silent --show-error \
     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
@@ -78,11 +84,13 @@ def current_version(path):
     if not deployments: raise SystemExit('DEPLOYMENT_UNAVAILABLE')
     current = deployments[0]
     versions = current.get('versions') or []
-    if len(versions) != 1: raise SystemExit('DEPLOYMENT_NOT_SINGLE_VERSION')
-    item = versions[0]
-    version = item.get('version_id') or item.get('id')
-    if not version or float(item.get('percentage', -1)) != 100: raise SystemExit('DEPLOYMENT_SHAPE_UNSUPPORTED')
+    live = [item for item in versions if float(item.get('percentage', -1)) == 100]
+    nonzero_other = [item for item in versions if float(item.get('percentage', -1)) not in (0, 100)]
+    if len(live) != 1 or nonzero_other: raise SystemExit('DEPLOYMENT_SHAPE_UNSUPPORTED')
+    version = live[0].get('version_id') or live[0].get('id')
+    if not version: raise SystemExit('DEPLOYMENT_VERSION_UNAVAILABLE')
     return current, version
+
 public_deployment, public_version = current_version(root/'public-deployments-before.json')
 backend_deployment, backend_version = current_version(root/'backend-deployments.json')
 (root/'rollback-spec.txt').write_text(f'{public_version}@100%\n')
@@ -108,6 +116,7 @@ for worker in ('stracker', 'stracker-native-sharing-backend'):
     if any(item.get('service') == worker or item.get('worker') == worker for item in domains): raise SystemExit('CUSTOM_DOMAIN_ATTACHED='+worker)
 print('PUBLIC_ROLLBACK_READY=PASS')
 print('PRIVATE_BACKEND_REUSED_UNCHANGED=PASS')
+print('BACKEND_REDEPLOYED=NO')
 print('BACKEND_PUBLIC_INGRESS=FALSE')
 print('PUBLIC_SERVICE_BINDING=PASS')
 PY
@@ -189,7 +198,16 @@ done
 echo 'VERSION_METADATA_OVERRIDE=PASS'
 echo 'BUILD_JSON_ASSET_ATTESTATION=PASS'
 
-sed "s/native-sharing-live-synthetic-v1/controlled-physical-pilot-v1/" scripts/release/live-native-sharing-api-qa.ts > "$STATE_DIR/pilot-api-qa.ts"
+python - "$STATE_DIR/pilot-api-qa.ts" <<'PY'
+from pathlib import Path
+import sys
+source = Path('scripts/release/live-native-sharing-api-qa.ts').read_text()
+source = source.replace('native-sharing-live-synthetic-v1', 'controlled-physical-pilot-v1')
+source = source.replace("'/__stracker/version.json?qa=api'", "`/__stracker/version.json?qa=api-${Date.now()}-${Math.random().toString(36).slice(2)}`")
+source = source.replace("'/__stracker/build.json?qa=api'", "`/__stracker/build.json?qa=api-${Date.now()}-${Math.random().toString(36).slice(2)}`")
+Path(sys.argv[1]).write_text(source)
+PY
+
 run_qas() {
   local override="$1"
   local suffix="$2"
@@ -203,10 +221,16 @@ run_qas "$CANDIDATE_VERSION" 'ZERO_PERCENT_OVERRIDE_PILOT_E2E'
 run_wrangler "$STATE_DIR/promote.log" versions deploy "${CANDIDATE_VERSION}@100%" --name "$PUBLIC_WORKER" --message "STRACKER controlled pilot ${SOURCE_SHA}" -y
 post_ok=0
 for attempt in {1..12}; do
-  if run_qas '' 'PUBLIC_POST_PROMOTION_QA' > "$STATE_DIR/post-${attempt}.log" 2>&1; then post_ok=1; break; fi
+  if run_qas '' 'PUBLIC_POST_PROMOTION_QA' > "$STATE_DIR/post-${attempt}.log" 2>&1; then
+    post_ok=1
+    break
+  fi
   sleep 5
 done
-if [[ "$post_ok" != '1' ]]; then sanitize_tail "$STATE_DIR/post-12.log"; exit 1; fi
+if [[ "$post_ok" != '1' ]]; then
+  sanitize_tail "$STATE_DIR/post-12.log"
+  exit 1
+fi
 echo 'PUBLIC_POST_PROMOTION_QA=PASS'
 
 api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${PUBLIC_WORKER}/deployments" "$STATE_DIR/final-deployments.json"
@@ -245,24 +269,38 @@ def short(path):
     return value[:8] if value != 'unknown' else value
 evidence = {
   'schema': 'stracker.controlled-physical-pilot.release.v1',
-  'sourceSha': sha, 'targetUrl': url,
+  'sourceSha': sha,
+  'targetUrl': url,
   'publicPreviousVersionHash': hashed(root/'previous-version-id.txt'),
   'publicCandidateVersionHash': hashed(root/'candidate-version-id.txt'),
   'backendVersionHash': (root/'backend-version-hash.txt').read_text().strip(),
   'zeroPercentDeploymentShort': short(root/'zero-deployment-id.txt'),
   'finalDeploymentShort': short(root/'final-deployment-id.txt'),
-  'backendReusedUnchanged': True, 'backendPublicIngress': False,
-  'versionMetadataMatch': True, 'buildAssetShaMatch': True,
-  'zeroPercentOverrideApiE2e': True, 'zeroPercentOverrideBaseBrowserE2e': True,
-  'zeroPercentOverridePilotE2e': True, 'publicPostPromotionQa': True,
-  'privateDataUsed': False, 'realCoordinatesUsed': False,
-  'syntheticCoordinateValuesRetained': False, 'capabilitiesRetained': False,
-  'authorizationValuesRetained': False, 'secretsExposed': False,
-  'destructiveDeletions': False, 'publicRollbackArmedUntilFinalQa': True,
+  'backendReusedUnchanged': True,
+  'backendRedeployed': False,
+  'backendPublicIngress': False,
+  'versionMetadataMatch': True,
+  'buildAssetShaMatch': True,
+  'zeroPercentOverrideApiE2e': True,
+  'zeroPercentOverrideBaseBrowserE2e': True,
+  'zeroPercentOverridePilotE2e': True,
+  'publicPostPromotionQa': True,
+  'privateDataUsed': False,
+  'realCoordinatesUsed': False,
+  'syntheticCoordinateValuesRetained': False,
+  'capabilitiesRetained': False,
+  'authorizationValuesRetained': False,
+  'secretsExposed': False,
+  'destructiveDeletions': False,
+  'publicRollbackArmedUntilFinalQa': True,
   'physicalValidation': 'PENDING_HUMAN',
-  'apiGates': api['gates'], 'baseBrowserGates': base['gates'], 'pilotBrowserGates': pilot['gates'],
-  'pageErrorTotal': pilot['pageErrorTotal'], 'relevantConsoleErrors': pilot['relevantConsoleErrors'],
-  'horizontalOverflowTotal': pilot['horizontalOverflowTotal'], 'offlineDurationSeconds': pilot['offlineDurationSeconds'],
+  'apiGates': api['gates'],
+  'baseBrowserGates': base['gates'],
+  'pilotBrowserGates': pilot['gates'],
+  'pageErrorTotal': pilot['pageErrorTotal'],
+  'relevantConsoleErrors': pilot['relevantConsoleErrors'],
+  'horizontalOverflowTotal': pilot['horizontalOverflowTotal'],
+  'offlineDurationSeconds': pilot['offlineDurationSeconds'],
 }
 out = root/'release-evidence.json'
 out.write_text(json.dumps(evidence, indent=2, sort_keys=True)+'\n')
