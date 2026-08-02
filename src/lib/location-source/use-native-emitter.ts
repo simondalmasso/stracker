@@ -32,7 +32,7 @@ interface PilotWakeLockSentinel {
   addEventListener(type: 'release', listener: () => void): void
 }
 
-interface NavigatorWithWakeLock extends Navigator {
+interface NavigatorWithWakeLock {
   wakeLock?: {
     request(type: 'screen'): Promise<PilotWakeLockSentinel>
   }
@@ -102,7 +102,7 @@ export function useNativeEmitter(): NativeEmitterController {
 
   const watchRef = useRef<number | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const retryTimerRef = useRef<number | null>(null)
   const generationRef = useRef(0)
   const sequenceRef = useRef(0)
   const lastCapturedAtRef = useRef(0)
@@ -118,7 +118,7 @@ export function useNativeEmitter(): NativeEmitterController {
   const wakeLockRef = useRef<PilotWakeLockSentinel | null>(null)
   const flushPendingRef = useRef<() => void>(() => undefined)
 
-  const wakeLockSupported = typeof navigator !== 'undefined' && Boolean((navigator as NavigatorWithWakeLock).wakeLock?.request)
+  const wakeLockSupported = typeof navigator !== 'undefined' && Boolean((navigator as unknown as NavigatorWithWakeLock).wakeLock?.request)
 
   const setExactState = useCallback((next: SharingSessionState) => {
     stateRef.current = next
@@ -134,7 +134,7 @@ export function useNativeEmitter(): NativeEmitterController {
 
   const requestWakeLock = useCallback(async () => {
     if (!sessionRef.current || !visibleRef.current || wakeLockRef.current) return
-    const wakeLock = (navigator as NavigatorWithWakeLock).wakeLock
+    const wakeLock = (navigator as unknown as NavigatorWithWakeLock).wakeLock
     if (!wakeLock?.request) return
     try {
       const sentinel = await wakeLock.request('screen')
@@ -154,7 +154,7 @@ export function useNativeEmitter(): NativeEmitterController {
     if (watchRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) navigator.geolocation.clearWatch(watchRef.current)
     watchRef.current = null
     if (timerRef.current) clearInterval(timerRef.current)
-    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current)
     timerRef.current = null
     retryTimerRef.current = null
     for (const controller of controllersRef.current) controller.abort()
@@ -252,7 +252,7 @@ export function useNativeEmitter(): NativeEmitterController {
         window.clearTimeout(timeout)
         controllersRef.current.delete(controller)
         publishInFlightRef.current = false
-        if (pendingPointRef.current && !retryTimerRef.current && !retryBlockedRef.current) queueMicrotask(() => flushPendingRef.current())
+        if (pendingPointRef.current && retryTimerRef.current === null && !retryBlockedRef.current) queueMicrotask(() => flushPendingRef.current())
       })
   }, [clearTransport, setExactState])
 
@@ -282,7 +282,7 @@ export function useNativeEmitter(): NativeEmitterController {
     }
     const offline = () => {
       onlineRef.current = false
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+      if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current)
       retryTimerRef.current = null
       setNetworkState('offline')
     }
