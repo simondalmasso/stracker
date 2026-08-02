@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, Copy, Crosshair, Link2, Radio, RotateCcw, Share2, ShieldAlert, Wifi, WifiOff } from 'lucide-react'
 import { viewerFragmentLink } from '@/lib/location-source/native-sharing-api'
 import { useNativeEmitter } from '@/lib/location-source/use-native-emitter'
@@ -41,7 +41,12 @@ export default function NativeEmitterApp() {
   const [durationMs, setDurationMs] = useState(DURATIONS[1].ms)
   const [copied, setCopied] = useState(false)
   const [diagnosticCopied, setDiagnosticCopied] = useState(false)
-  const shareSupported = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
+  const [shareSupported, setShareSupported] = useState(false)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShareSupported(typeof navigator.share === 'function'), 0)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   const link = useMemo(() => {
     if (!emitter.session) return null
