@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronLeft, Copy, Crosshair, Link2, Radio, RotateCcw, Share2, ShieldAlert, Wifi, WifiOff } from 'lucide-react'
 import { viewerFragmentLink } from '@/lib/location-source/native-sharing-api'
 import { useNativeEmitter } from '@/lib/location-source/use-native-emitter'
@@ -29,13 +29,7 @@ function updateText(value: string | null): string {
 }
 
 function networkText(value: string): string {
-  return ({
-    online: 'EN LÍNEA',
-    offline: 'SIN CONEXIÓN',
-    sending: 'ENVIANDO',
-    recovering: 'RECUPERANDO',
-    error: 'REQUIERE ACCIÓN',
-  } as Record<string, string>)[value] || value.toUpperCase()
+  return ({ online: 'EN LÍNEA', offline: 'SIN CONEXIÓN', sending: 'ENVIANDO', recovering: 'RECUPERANDO', error: 'REQUIERE ACCIÓN' } as Record<string, string>)[value] || value.toUpperCase()
 }
 
 function accuracyText(value: string): string {
@@ -47,9 +41,7 @@ export default function NativeEmitterApp() {
   const [durationMs, setDurationMs] = useState(DURATIONS[1].ms)
   const [copied, setCopied] = useState(false)
   const [diagnosticCopied, setDiagnosticCopied] = useState(false)
-  const [shareSupported, setShareSupported] = useState(false)
-
-  useEffect(() => setShareSupported(typeof navigator.share === 'function'), [])
+  const shareSupported = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
   const link = useMemo(() => {
     if (!emitter.session) return null
@@ -79,11 +71,7 @@ export default function NativeEmitterApp() {
 
   const goBack = async () => {
     if (emitter.session && emitter.state !== 'revoked' && emitter.state !== 'expired') {
-      try {
-        await emitter.stopTransmission()
-      } catch {
-        return
-      }
+      try { await emitter.stopTransmission() } catch { return }
     }
     window.location.assign('/')
   }
