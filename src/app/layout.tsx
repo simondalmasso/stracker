@@ -18,6 +18,11 @@ export const metadata: Metadata = {
   title: 'STRACKER — Ubicación privada',
   description: 'Visualización privada de ubicación con fuentes aisladas',
   manifest: '/manifest.json',
+  icons: {
+    icon: '/logo.svg',
+    shortcut: '/logo.svg',
+    apple: '/logo.svg',
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
