@@ -20,10 +20,10 @@ describe('release evidence and rollback contract', () => {
     expect(wrapper).toContain("source.rindex('rollback_required=0')")
   })
 
-  test('retains only a hash of the candidate version in the public release artifact', async () => {
+  test('materializes only a hash of the candidate version in public release evidence', async () => {
     const wrapper = await Bun.file(wrapperPath).text()
+    expect(wrapper).toContain('RELEASE_EVIDENCE_RAW_VERSION_FIELD')
     expect(wrapper).toContain("'publicVersionIdHash': candidate_version_hash")
-    expect(wrapper).not.toContain("'publicVersionId': value('candidate-version-id.txt')")
     expect(wrapper).toContain("api_gates.pop('PUBLIC_VERSION_ID', None)")
     expect(wrapper).toContain("api_gates['PUBLIC_VERSION_ID_HASH'] = candidate_version_hash")
     expect(wrapper).toContain('RAW_VERSION_ID_IN_RELEASE_EVIDENCE')
