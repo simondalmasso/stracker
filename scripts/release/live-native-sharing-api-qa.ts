@@ -69,9 +69,83 @@ async function deploymentForVersion(versionId: string): Promise<DeploymentEviden
   return match
 }
 
+interface SantaFeStaticManifest {
+  final_features: number
+  unique_height_bucket_count: number
+  uniform_default_height_fraction: number
+  asset_paths: string[]
+}
+
+async function waitForSantaFeStaticAssets(): Promise<void> {
+  const rawTarget = process.env.STRACKER_QA_URL || ''
+  if (!rawTarget) return
+  const target = new URL(rawTarget)
+  const expected = await Bun.file('public/data/santa-fe-3d/manifest.json').json() as SantaFeStaticManifest
+  const overrideVersion = process.env.STRACKER_VERSION_OVERRIDE || ''
+  const headers = {
+    'Cache-Control': 'no-cache',
+    ...(overrideVersion ? { 'Cloudflare-Workers-Version-Overrides': `stracker="${overrideVersion}"` } : {}),
+  }
+  let lastFailure = 'MANIFEST_UNAVAILABLE'
+
+  for (let attempt = 1; attempt <= 30; attempt += 1) {
+    const nonce = `${Date.now()}-${attempt}-${Math.random().toString(36).slice(2)}`
+    try {
+      const manifestResponse = await originalFetch(
+        new URL(`/data/santa-fe-3d/manifest.json?propagation=${nonce}`, target),
+        { headers, cache: 'no-store' },
+      )
+      if (manifestResponse.status !== 200) {
+        lastFailure = `MANIFEST_HTTP_${manifestResponse.status}`
+      } else {
+        const remote = await manifestResponse.json().catch(() => null) as SantaFeStaticManifest | null
+        const manifestMatches = Boolean(
+          remote
+          && remote.final_features === expected.final_features
+          && remote.unique_height_bucket_count === expected.unique_height_bucket_count
+          && remote.uniform_default_height_fraction === expected.uniform_default_height_fraction
+          && JSON.stringify(remote.asset_paths) === JSON.stringify(expected.asset_paths),
+        )
+        if (!manifestMatches) {
+          lastFailure = 'MANIFEST_CONTRACT_MISMATCH'
+        } else {
+          let allRangesReady = true
+          for (const path of expected.asset_paths) {
+            const rangeResponse = await originalFetch(
+              new URL(`${path}?propagation=${nonce}`, target),
+              { headers: { ...headers, Range: 'bytes=0-16383' }, cache: 'no-store' },
+            )
+            const body = await rangeResponse.arrayBuffer()
+            const contentRange = rangeResponse.headers.get('content-range') || ''
+            const valid = rangeResponse.status === 206
+              && rangeResponse.headers.get('accept-ranges')?.toLowerCase() === 'bytes'
+              && /^bytes 0-\d+\/\d+$/.test(contentRange)
+              && body.byteLength > 0
+              && body.byteLength <= 16_384
+            if (!valid) {
+              lastFailure = `PMTILES_RANGE_NOT_READY_${rangeResponse.status}`
+              allRangesReady = false
+              break
+            }
+          }
+          if (allRangesReady) {
+            console.log(`SANTA_FE_STATIC_ASSET_PROPAGATION=PASS attempt=${attempt}`)
+            return
+          }
+        }
+      }
+    } catch {
+      lastFailure = 'NETWORK_OR_PARSE_FAILURE'
+    }
+    if (attempt < 30) await Bun.sleep(2_000)
+  }
+  throw new Error(`SANTA_FE_STATIC_ASSET_PROPAGATION_TIMEOUT_${lastFailure}`)
+}
+
 process.env.STRACKER_EXPECTED_RELEASE ||= 'controlled-physical-pilot-v1'
 const core = new URL(`file://${process.cwd()}/scripts/release/live-native-sharing-api-qa-core.ts`)
 await import(core.href)
+await waitForSantaFeStaticAssets()
 
 const stateDir = `${process.env.RUNNER_TEMP || '/tmp'}/stracker-controlled-physical-pilot-release`
 const map3dOutput = process.env.STRACKER_MAP3D_QA_OUTPUT || `${stateDir}/santa-fe-dense-city-public-qa.json`
@@ -98,6 +172,7 @@ const finalDeploymentId = currentDeployment.percentage === 100 ? currentDeployme
 evidence.gates = {
   ...(evidence.gates || {}),
   ...map3d.gates,
+  SANTA_FE_STATIC_ASSET_PROPAGATION: 'PASS',
   LINK_ENTRY_STRICT_VALIDATION: 'PASS',
   PUBLIC_VERSION_ID: expectedVersionId,
   ZERO_PERCENT_DEPLOYMENT_ID: zeroDeploymentId || currentDeployment.id,
