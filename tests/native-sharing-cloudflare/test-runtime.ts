@@ -1,5 +1,6 @@
 import type { CreateSessionInput, NativeSharingSession } from '../../native-sharing/src/contracts.js'
 import { buildViewerCapability, capabilityVerifier, generateCapability } from '../../native-sharing/src/security.js'
+import { CookieSessionMemoryRuntime, type CookieProbe } from '../../native-sharing-cloudflare/src/cookie-session.js'
 import type {
   NativeSharingNamespaceBinding,
   NativeSharingRpcStub,
@@ -14,14 +15,18 @@ export interface TestSessionObject {
   sql: BunSqlExecutor
   store: SqliteNativeSharingStore
   runtime: NativeSharingSessionRuntime
+  cookieRuntime: CookieSessionMemoryRuntime
   stub: NativeSharingRpcStub
 }
+
+const noLocationProbe: CookieProbe = async () => ({ ok: true, state: 'no_location', point: null })
 
 export function createTestSessionObject(now: () => Date = () => new Date()): TestSessionObject {
   const sql = new BunSqlExecutor()
   const store = new SqliteNativeSharingStore(sql)
   store.initializeSchema()
   const runtime = new NativeSharingSessionRuntime(store, now)
+  const cookieRuntime = new CookieSessionMemoryRuntime(noLocationProbe)
   const stub: NativeSharingRpcStub = {
     createSession: (input) => runtime.createSession(input),
     appendPoint: (sessionId, emitterToken, point) => runtime.appendPoint(sessionId, emitterToken, point),
@@ -31,8 +36,13 @@ export function createTestSessionObject(now: () => Date = () => new Date()): Tes
     logoutViewer: (sessionId, token) => runtime.logoutViewer(sessionId, token),
     rotateViewer: (sessionId, token) => runtime.rotateViewer(sessionId, token),
     revoke: (sessionId, token) => runtime.revoke(sessionId, token),
+    importCookieSession: (input) => cookieRuntime.importSession(input),
+    getCookieSessionStatus: (sessionId, token) => cookieRuntime.status(sessionId, token),
+    getCookieSessionPoint: (sessionId, token) => cookieRuntime.point(sessionId, token),
+    refreshCookieSession: (sessionId, token) => cookieRuntime.refresh(sessionId, token),
+    deleteCookieSession: (sessionId, token) => cookieRuntime.delete(sessionId, token),
   }
-  return { sql, store, runtime, stub }
+  return { sql, store, runtime, cookieRuntime, stub }
 }
 
 export class TestNativeSharingNamespace implements NativeSharingNamespaceBinding {

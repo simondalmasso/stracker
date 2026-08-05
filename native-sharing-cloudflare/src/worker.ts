@@ -10,6 +10,13 @@ import {
   parseViewerCapability,
 } from '../../native-sharing/src/security.js'
 import {
+  DEFAULT_COOKIE_SESSION_DURATION_MS,
+  MAX_COOKIE_INPUT_BYTES,
+  MAX_COOKIE_SESSION_DURATION_MS,
+  MIN_COOKIE_SESSION_DURATION_MS,
+  type CookieSessionCreateResponse,
+} from './cookie-session.js'
+import {
   DEFAULT_SESSION_DURATION_MS,
   MAX_CREATE_ATTEMPTS,
   MAX_REQUEST_BODY_BYTES,
@@ -21,6 +28,7 @@ import type {
   NativeSharingRpcStub,
   NativeSharingRuntimeBindings,
   RpcResult,
+  RuntimeCookieSessionRequest,
   RuntimeCreateSessionRequest,
   RuntimeErrorCode,
   RuntimeViewerExchangeRequest,
@@ -67,11 +75,11 @@ function ensureSameOrigin(request: Request, url: URL): void {
   if (request.headers.get('Sec-Fetch-Site') === 'cross-site') throw new HttpBoundaryError(403, 'ORIGIN_REJECTED')
 }
 
-async function readJsonBody<T>(request: Request): Promise<T> {
+async function readBoundedJsonBody<T>(request: Request, maxBytes: number): Promise<T> {
   const contentType = request.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase()
   if (contentType !== 'application/json') throw new HttpBoundaryError(415, 'CONTENT_TYPE_REQUIRED')
   const length = request.headers.get('Content-Length')
-  if (length && Number(length) > MAX_REQUEST_BODY_BYTES) throw new HttpBoundaryError(413, 'BODY_TOO_LARGE')
+  if (length && Number(length) > maxBytes) throw new HttpBoundaryError(413, 'BODY_TOO_LARGE')
   if (!request.body) return {} as T
 
   const reader = request.body.getReader()
@@ -81,7 +89,7 @@ async function readJsonBody<T>(request: Request): Promise<T> {
     const { done, value } = await reader.read()
     if (done) break
     total += value.byteLength
-    if (total > MAX_REQUEST_BODY_BYTES) {
+    if (total > maxBytes) {
       await reader.cancel()
       throw new HttpBoundaryError(413, 'BODY_TOO_LARGE')
     }
@@ -108,6 +116,14 @@ function boundedDuration(value: unknown): number {
   return duration
 }
 
+function boundedCookieDuration(value: unknown): number {
+  if (value === undefined) return DEFAULT_COOKIE_SESSION_DURATION_MS
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
+  const duration = Math.floor(value)
+  if (duration < MIN_COOKIE_SESSION_DURATION_MS || duration > MAX_COOKIE_SESSION_DURATION_MS) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
+  return duration
+}
+
 function bearer(request: Request): string {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('Authorization') ?? '')
   if (!match) throw new HttpBoundaryError(404, 'NOT_FOUND')
@@ -116,6 +132,12 @@ function bearer(request: Request): string {
 
 function emitter(request: Request): string {
   const value = request.headers.get('X-Stracker-Emitter') ?? ''
+  if (!TOKEN_PATTERN.test(value)) throw new HttpBoundaryError(404, 'NOT_FOUND')
+  return value
+}
+
+function cookieOwner(request: Request): string {
+  const value = request.headers.get('X-Stracker-Cookie-Owner') ?? ''
   if (!TOKEN_PATTERN.test(value)) throw new HttpBoundaryError(404, 'NOT_FOUND')
   return value
 }
@@ -132,13 +154,13 @@ function stubFor(env: NativeSharingRuntimeBindings, sessionId: string): NativeSh
   return namespace(env).getByName(sessionId)
 }
 
-async function withTimeout<T>(promise: Promise<T>): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs = RPC_TIMEOUT_MS): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timeout = setTimeout(() => reject(new HttpBoundaryError(504, 'OPERATION_TIMEOUT')), RPC_TIMEOUT_MS)
+        timeout = setTimeout(() => reject(new HttpBoundaryError(504, 'OPERATION_TIMEOUT')), timeoutMs)
       }),
     ])
   } finally {
@@ -147,7 +169,7 @@ async function withTimeout<T>(promise: Promise<T>): Promise<T> {
 }
 
 async function createSession(request: Request, env: NativeSharingRuntimeBindings): Promise<Response> {
-  const body = await readJsonBody<RuntimeCreateSessionRequest>(request)
+  const body = await readBoundedJsonBody<RuntimeCreateSessionRequest>(request, MAX_REQUEST_BODY_BYTES)
   const duration = boundedDuration(body.durationMs)
   const createdAt = new Date()
   for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
@@ -182,7 +204,52 @@ async function createSession(request: Request, env: NativeSharingRuntimeBindings
   return errorResponse(503, 'CAPABILITY_GENERATION_FAILED')
 }
 
-async function routeApi(request: Request, env: NativeSharingRuntimeBindings, url: URL): Promise<Response> {
+async function createCookieSession(request: Request, env: NativeSharingRuntimeBindings): Promise<Response> {
+  const body = await readBoundedJsonBody<RuntimeCookieSessionRequest>(request, MAX_COOKIE_INPUT_BYTES + 2048)
+  if (typeof body.raw !== 'string') throw new HttpBoundaryError(400, 'REQUEST_INVALID')
+  const sessionId = generateCapability()
+  const ownerToken = generateCapability()
+  const result = await withTimeout(stubFor(env, sessionId).importCookieSession({
+    sessionId,
+    ownerVerifier: await capabilityVerifier(ownerToken),
+    raw: body.raw,
+    durationMs: boundedCookieDuration(body.durationMs),
+  }), 12_000)
+  if (!result.ok) return errorResponse(result.status, result.code)
+  const payload: CookieSessionCreateResponse = {
+    status: 'ok',
+    sessionId,
+    ownerToken,
+    storagePolicy: 'memory-only',
+    ...result.value,
+  }
+  return success(payload, 201)
+}
+
+async function routeCookieApi(request: Request, env: NativeSharingRuntimeBindings, url: URL): Promise<Response> {
+  if (url.search) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
+  ensureSameOrigin(request, url)
+  if (url.pathname === '/api/cookie-sessions') {
+    if (request.method !== 'POST') throw new HttpBoundaryError(405, 'METHOD_NOT_ALLOWED')
+    return createCookieSession(request, env)
+  }
+  const match = /^\/api\/cookie-sessions\/([A-Za-z0-9_-]{43})(?:\/(status|point|refresh))?$/.exec(url.pathname)
+  if (!match) throw new HttpBoundaryError(404, 'NOT_FOUND')
+  const sessionId = match[1]
+  const operation = match[2] ?? 'session'
+  const ownerToken = cookieOwner(request)
+  const stub = stubFor(env, sessionId)
+  if (operation === 'status' && request.method === 'GET') return unwrap(await withTimeout(stub.getCookieSessionStatus(sessionId, ownerToken)))
+  if (operation === 'point' && request.method === 'GET') return unwrap(await withTimeout(stub.getCookieSessionPoint(sessionId, ownerToken)))
+  if (operation === 'refresh' && request.method === 'POST') return unwrap(await withTimeout(stub.refreshCookieSession(sessionId, ownerToken), 12_000))
+  if (operation === 'session' && request.method === 'DELETE') {
+    const result = await withTimeout(stub.deleteCookieSession(sessionId, ownerToken))
+    return result.ok ? success({ status: 'ok', state: 'revoked' }) : errorResponse(result.status, result.code)
+  }
+  throw new HttpBoundaryError(405, 'METHOD_NOT_ALLOWED')
+}
+
+async function routeNativeApi(request: Request, env: NativeSharingRuntimeBindings, url: URL): Promise<Response> {
   if (url.search) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
   ensureSameOrigin(request, url)
 
@@ -193,7 +260,7 @@ async function routeApi(request: Request, env: NativeSharingRuntimeBindings, url
 
   if (url.pathname === '/api/share/viewer/exchange') {
     if (request.method !== 'POST') throw new HttpBoundaryError(405, 'METHOD_NOT_ALLOWED')
-    const body = await readJsonBody<RuntimeViewerExchangeRequest>(request)
+    const body = await readBoundedJsonBody<RuntimeViewerExchangeRequest>(request, MAX_REQUEST_BODY_BYTES)
     if (typeof body.viewerCapability !== 'string') throw new HttpBoundaryError(400, 'REQUEST_INVALID')
     const parsed = parseViewerCapability(body.viewerCapability)
     if (!parsed) throw new HttpBoundaryError(404, 'NOT_FOUND')
@@ -203,7 +270,7 @@ async function routeApi(request: Request, env: NativeSharingRuntimeBindings, url
   if (url.pathname === '/api/share/viewer/logout') {
     if (request.method !== 'POST') throw new HttpBoundaryError(405, 'METHOD_NOT_ALLOWED')
     const token = bearer(request)
-    const body = await readJsonBody<RuntimeViewerLogoutRequest>(request)
+    const body = await readBoundedJsonBody<RuntimeViewerLogoutRequest>(request, MAX_REQUEST_BODY_BYTES)
     if (typeof body.sessionId !== 'string') throw new HttpBoundaryError(400, 'REQUEST_INVALID')
     const result = await withTimeout(stubFor(env, body.sessionId).logoutViewer(body.sessionId, token))
     return result.ok ? success({ status: 'ok' }) : errorResponse(result.status, result.code)
@@ -217,19 +284,13 @@ async function routeApi(request: Request, env: NativeSharingRuntimeBindings, url
 
   if (operation === 'points' && request.method === 'POST') {
     const token = emitter(request)
-    const point = await readJsonBody<NativeSharedLocationPoint>(request)
+    const point = await readBoundedJsonBody<NativeSharedLocationPoint>(request, MAX_REQUEST_BODY_BYTES)
     const result = await withTimeout(stub.appendPoint(sessionId, token, point))
     return result.ok ? success({ status: 'ok', point: result.value }, 202) : errorResponse(result.status, result.code)
   }
-  if (operation === 'points' && request.method === 'GET') {
-    return unwrap(await withTimeout(stub.getPoints(sessionId, bearer(request))))
-  }
-  if (operation === 'status' && request.method === 'GET') {
-    return unwrap(await withTimeout(stub.getStatus(sessionId, bearer(request))))
-  }
-  if (operation === 'rotate-viewer' && request.method === 'POST') {
-    return unwrap(await withTimeout(stub.rotateViewer(sessionId, emitter(request))))
-  }
+  if (operation === 'points' && request.method === 'GET') return unwrap(await withTimeout(stub.getPoints(sessionId, bearer(request))))
+  if (operation === 'status' && request.method === 'GET') return unwrap(await withTimeout(stub.getStatus(sessionId, bearer(request))))
+  if (operation === 'rotate-viewer' && request.method === 'POST') return unwrap(await withTimeout(stub.rotateViewer(sessionId, emitter(request))))
   if (operation === 'session' && request.method === 'DELETE') {
     const result = await withTimeout(stub.revoke(sessionId, emitter(request)))
     return result.ok ? success({ status: 'ok', state: 'revoked' }) : errorResponse(result.status, result.code)
@@ -240,10 +301,9 @@ async function routeApi(request: Request, env: NativeSharingRuntimeBindings, url
 export async function handleNativeSharingRequest(request: Request, env: NativeSharingRuntimeBindings): Promise<Response> {
   const url = new URL(request.url)
   try {
-    if (url.pathname.startsWith('/api/share/')) return await routeApi(request, env, url)
-    if ((url.pathname === '/shared' || url.pathname === '/shared/') && url.search) {
-      return errorResponse(400, 'REQUEST_INVALID')
-    }
+    if (url.pathname.startsWith('/api/cookie-sessions')) return await routeCookieApi(request, env, url)
+    if (url.pathname.startsWith('/api/share/')) return await routeNativeApi(request, env, url)
+    if ((url.pathname === '/shared' || url.pathname === '/shared/') && url.search) return errorResponse(400, 'REQUEST_INVALID')
     if (!env.ASSETS) return errorResponse(503, 'BINDING_UNAVAILABLE')
     return await env.ASSETS.fetch(request)
   } catch (error) {

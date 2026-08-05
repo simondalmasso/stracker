@@ -1,3 +1,4 @@
+import '../cookie-session/cookie-session.test'
 import { describe, expect, test } from 'bun:test'
 import { freshnessFromTimestamp } from '../../src/lib/location-source/contracts'
 import {

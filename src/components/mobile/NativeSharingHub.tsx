@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronLeft, Link2, Radio, ShieldOff } from 'lucide-react'
+import { ChevronLeft, Cookie, Link2, Radio } from 'lucide-react'
 import { parseViewerCapabilityValue, viewerFragmentLink } from '@/lib/location-source/native-sharing-api'
+import CookieSessionPanel from './CookieSessionPanel'
 
 interface NativeSharingHubProps {
   onBack: () => void
@@ -10,8 +11,11 @@ interface NativeSharingHubProps {
 
 export default function NativeSharingHub({ onBack }: NativeSharingHubProps) {
   const [opening, setOpening] = useState(false)
+  const [cookieMode, setCookieMode] = useState(false)
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  if (cookieMode) return <CookieSessionPanel onBack={() => setCookieMode(false)} />
 
   const openLink = () => {
     const parsed = parseViewerCapabilityValue(value)
@@ -23,7 +27,7 @@ export default function NativeSharingHub({ onBack }: NativeSharingHubProps) {
   }
 
   return (
-    <main className="relative flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-black px-4 py-[max(72px,env(safe-area-inset-top))] text-white">
+    <main data-native-sharing-hub="true" className="relative flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-black px-4 py-[max(72px,env(safe-area-inset-top))] text-white">
       <button type="button" onClick={onBack} aria-label="Volver" className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04]"><ChevronLeft size={22} /></button>
       <div className="w-full max-w-md">
         <header className="mb-7 text-center">
@@ -47,12 +51,12 @@ export default function NativeSharingHub({ onBack }: NativeSharingHubProps) {
             <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/15"><Radio size={23} /></span>
             <span><strong className="block">COMPARTIR MI UBICACIÓN</strong><span className="mt-1 block text-sm text-white/55">Crear un enlace temporal y revocable.</span></span>
           </button>
-          <button type="button" disabled aria-disabled="true" className="flex min-h-[92px] cursor-not-allowed items-center gap-4 rounded-[24px] border border-white/5 bg-white/[0.015] p-4 text-left opacity-45">
-            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/10"><ShieldOff size={23} /></span>
-            <span><strong className="block">GOOGLE MAPS — EXPERIMENTAL</strong><span className="mt-1 block text-sm text-white/55">No disponible en esta versión.</span></span>
+          <button type="button" onClick={() => setCookieMode(true)} data-testid="open-cookie-session" className="flex min-h-[92px] items-center gap-4 rounded-[24px] border border-white/10 bg-white/[0.035] p-4 text-left">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/15"><Cookie size={23} /></span>
+            <span><strong className="block">SESIÓN DE GOOGLE MAPS</strong><span className="mt-1 block text-sm text-white/55">Importar una sesión autorizada, temporal y sólo en memoria.</span></span>
           </button>
         </div>
-        <p className="mt-5 text-center text-xs leading-5 text-white/35">STRACKER no consulta estados, puntos ni mapas hasta que elegís una acción explícita.</p>
+        <p className="mt-5 text-center text-xs leading-5 text-white/35">STRACKER no consulta estados, puntos, mapas ni cookies hasta que elegís una acción explícita.</p>
       </div>
     </main>
   )

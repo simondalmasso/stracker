@@ -66,5 +66,16 @@ fi
 test ! -e out/.git
 test ! -e out/.github
 
+CHROME_BIN="${CHROME_BIN:-$(command -v google-chrome || command -v chromium || command -v chromium-browser)}"
+test -n "$CHROME_BIN"
+export CHROME_BIN
+COOKIE_SESSION_BROWSER_QA_OUTPUT="${COOKIE_SESSION_BROWSER_QA_OUTPUT:-${RUNNER_TEMP:-/tmp}/stracker-cookie-session-browser.json}"
+export COOKIE_SESSION_BROWSER_QA_OUTPUT
+bun tests/native-sharing-cloudflare/cookie-session-browser-qa.ts
+jq -e '.privateDataUsed == false and .realCookieValuesUsed == false and .realCoordinatesUsed == false and .cookieValuesRetained == false' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
+jq -e '.pageErrorTotal == 0 and .relevantConsoleErrors == 0 and .unexpectedNetworkErrors == 0 and .appApi404Total == 0 and .horizontalOverflowTotal == 0 and .fakeSuccessTotal == 0' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
+jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
+
 echo 'CONTROLLED_PILOT_RELEASE_ASSET_ALLOWLIST=PASS'
 echo 'CONTROLLED_PILOT_UI_ENABLED=PASS'
+echo 'COOKIE_SESSION_BROWSER_QA=PASS'

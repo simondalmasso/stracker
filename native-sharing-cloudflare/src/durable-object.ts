@@ -8,6 +8,7 @@ import type {
   ViewerPointsResponse,
   ViewerStatusResponse,
 } from '../../native-sharing/src/contracts.js'
+import { CookieSessionMemoryRuntime, type CookieSessionImportInput, type CookieSessionPointResponse, type CookieSessionPublicStatus } from './cookie-session.js'
 import type { RpcResult } from './runtime-contracts.js'
 import { DELETE_AFTER_EXPIRATION_MS } from './runtime-limits.js'
 import { NativeSharingSessionRuntime } from './session-runtime.js'
@@ -34,6 +35,7 @@ function sqlExecutor(storage: DurableObjectStorage): RuntimeSqlExecutor {
 export class NativeSharingDurableObject extends DurableObject<Env> {
   private readonly store: SqliteNativeSharingStore
   private readonly runtime: NativeSharingSessionRuntime
+  private readonly cookieRuntime: CookieSessionMemoryRuntime
   private schemaDeleted = false
   private testCleanupVerificationOverride: false | null = null
   private testSetAlarmFailure = false
@@ -42,6 +44,7 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
     super(ctx, env)
     this.store = new SqliteNativeSharingStore(sqlExecutor(this.ctx.storage))
     this.runtime = new NativeSharingSessionRuntime(this.store)
+    this.cookieRuntime = new CookieSessionMemoryRuntime()
     this.ctx.blockConcurrencyWhile(async () => {
       this.store.initializeSchema()
     })
@@ -113,6 +116,26 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
 
   revoke(sessionId: string, emitterToken: string): Promise<RpcResult<null>> {
     return this.runtime.revoke(sessionId, emitterToken)
+  }
+
+  importCookieSession(input: CookieSessionImportInput): Promise<RpcResult<CookieSessionPublicStatus>> {
+    return this.cookieRuntime.importSession(input)
+  }
+
+  getCookieSessionStatus(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>> {
+    return this.cookieRuntime.status(sessionId, ownerToken)
+  }
+
+  getCookieSessionPoint(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPointResponse>> {
+    return this.cookieRuntime.point(sessionId, ownerToken)
+  }
+
+  refreshCookieSession(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>> {
+    return this.cookieRuntime.refresh(sessionId, ownerToken)
+  }
+
+  deleteCookieSession(sessionId: string, ownerToken: string): Promise<RpcResult<null>> {
+    return this.cookieRuntime.delete(sessionId, ownerToken)
   }
 
   async alarm(): Promise<void> {
