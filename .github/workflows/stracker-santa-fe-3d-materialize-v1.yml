@@ -1,0 +1,103 @@
+name: STRACKER Santa Fe 3D Materialize V1
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-native-sharing-live-synthetic-v1
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stracker-santa-fe-3d-materialize-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  materialize:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/stracker-controlled-physical-pilot-v1')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      TIPPECANOE_COMMIT: 7c80fccdc17e4f8d9f4a52d518b4845290224366
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.0'
+          cache: false
+
+      - name: EXACT_HEAD
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - name: PINNED_BUILD_TOOLCHAIN
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libsqlite3-dev zlib1g-dev
+          python -m pip install --disable-pip-version-check \
+            overturemaps==1.0.1 \
+            shapely==2.1.1 \
+            pyproj==3.7.1
+          git clone --filter=blob:none --no-checkout https://github.com/felt/tippecanoe.git "${RUNNER_TEMP}/tippecanoe"
+          git -C "${RUNNER_TEMP}/tippecanoe" checkout --detach "$TIPPECANOE_COMMIT"
+          make -C "${RUNNER_TEMP}/tippecanoe" -j2
+          sudo make -C "${RUNNER_TEMP}/tippecanoe" install
+          GOBIN="${RUNNER_TEMP}/bin" go install github.com/protomaps/go-pmtiles/cmd/pmtiles@v1.30.1
+          echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/bin/pmtiles" --version
+          tippecanoe --version
+          echo 'PINNED_BUILD_TOOLCHAIN=PASS'
+
+      - name: MATERIALIZE_PACKAGE_LOCK
+        run: |
+          bun add --exact pmtiles@4.4.1
+          grep -q '"pmtiles": "4.4.1"' package.json
+          bun install --frozen-lockfile
+          echo 'PMTILES_JS_PIN=PASS'
+
+      - name: MATERIALIZE_SANTA_FE_CITY
+        run: |
+          chmod +x scripts/santa-fe-3d/materialize.sh
+          bash scripts/santa-fe-3d/materialize.sh
+          python scripts/santa-fe-3d/validate_static_asset.py \
+            --manifest public/data/santa-fe-3d/manifest.json \
+            --root public
+          echo 'SANTA_FE_DENSE_CITY_MATERIALIZED=PASS'
+
+      - name: PREPARE_MATERIALIZATION_ARTIFACT
+        run: |
+          mkdir -p "${RUNNER_TEMP}/santa-fe-3d-materialized/public/data/santa-fe-3d"
+          mkdir -p "${RUNNER_TEMP}/santa-fe-3d-materialized/src/lib/location-source/map-engine"
+          cp package.json bun.lock "${RUNNER_TEMP}/santa-fe-3d-materialized/"
+          cp public/data/santa-fe-3d/* "${RUNNER_TEMP}/santa-fe-3d-materialized/public/data/santa-fe-3d/"
+          cp src/lib/location-source/map-engine/santa-fe-3d-generated.ts \
+            "${RUNNER_TEMP}/santa-fe-3d-materialized/src/lib/location-source/map-engine/"
+          find "${RUNNER_TEMP}/santa-fe-3d-materialized" -type f -print0 | sort -z | xargs -0 sha256sum \
+            > "${RUNNER_TEMP}/santa-fe-3d-materialized/MATERIALIZATION.sha256"
+          ! grep -RIE 'authorization:|bearer |capability|private[_ -]?link' \
+            "${RUNNER_TEMP}/santa-fe-3d-materialized/public/data/santa-fe-3d" \
+            --exclude='*.pmtiles'
+          echo 'MATERIALIZATION_ARTIFACT_SANITIZED=PASS'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stracker-santa-fe-3d-materialized-${{ env.SOURCE_SHA }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/santa-fe-3d-materialized
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
