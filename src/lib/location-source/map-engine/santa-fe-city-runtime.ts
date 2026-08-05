@@ -1,7 +1,7 @@
 'use client'
 
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl'
-import { Protocol } from 'pmtiles'
+import { PMTiles, Protocol } from 'pmtiles'
 import { SANTA_FE_3D_ASSET_PATHS } from './santa-fe-3d-generated'
 import {
   SANTA_FE_3D_LAYER_IDS,
@@ -11,10 +11,12 @@ import {
   santaFe3dSourceDefinition,
   type SantaFe3dDensity,
 } from './santa-fe-city-config'
+import { SameOriginQueryRangeSource } from './pmtiles-query-source'
 
 let protocol: Protocol | null = null
 let protocolUsers = 0
 let protocolRegistered = false
+const registeredArchiveUrls = new Set<string>()
 
 export interface SantaFe3dRuntimeOptions {
   enabled: boolean
@@ -23,10 +25,21 @@ export interface SantaFe3dRuntimeOptions {
   origin: string
 }
 
+function ensureSantaFeArchivesRegistered(): void {
+  protocol ??= new Protocol()
+  const origin = window.location.origin
+  for (const path of SANTA_FE_3D_ASSET_PATHS) {
+    const archiveUrl = new URL(path, origin).toString()
+    if (registeredArchiveUrls.has(archiveUrl)) continue
+    protocol.add(new PMTiles(new SameOriginQueryRangeSource(archiveUrl, origin)))
+    registeredArchiveUrls.add(archiveUrl)
+  }
+}
+
 export function acquireSantaFePmtilesProtocol(): () => void {
+  ensureSantaFeArchivesRegistered()
   if (!protocolRegistered) {
-    protocol ??= new Protocol()
-    maplibregl.addProtocol('pmtiles', protocol.tile)
+    maplibregl.addProtocol('pmtiles', protocol!.tile)
     protocolRegistered = true
   }
   protocolUsers += 1

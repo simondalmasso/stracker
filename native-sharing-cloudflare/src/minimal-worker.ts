@@ -37,6 +37,17 @@ const COOKIE_IMPORT_LIMIT = 20
 const cookieImportWindows = new Map<string, { startedAt: number; count: number }>()
 const COOKIE_ROUTE = new RegExp(`^/api/cookie-sessions/(${SESSION_ID_PATTERN})(?:/(status|point|refresh))?$`)
 const SANTA_FE_PMTILES_ROUTE = /^\/data\/santa-fe-3d\/santa-fe-buildings-3d-[a-z-]+\.[a-f0-9]{16}\.pmtiles$/
+const PMTILES_OFFSET_PARAM = 'pmtilesOffset'
+const PMTILES_LENGTH_PARAM = 'pmtilesLength'
+const PMTILES_MAX_RANGE_BYTES = 4 * 1024 * 1024
+const PMTILES_MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
+const PMTILES_TRANSPORT = 'query-v1'
+
+interface CachedPmtilesAsset {
+  bytes: ArrayBuffer
+  etag?: string
+}
+const pmtilesAssetCache = new Map<string, Promise<CachedPmtilesAsset>>()
 
 function jsonError(status: number, error: string): Response {
   return new Response(JSON.stringify({ status: 'error', error }), {
@@ -79,41 +90,90 @@ function hardenAssetResponse(request: Request, response: Response): Response {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
-async function serveSantaFePmtiles(request: Request, env: MinimalRuntimeEnv, url: URL): Promise<Response> {
-  if (url.search) return jsonError(400, 'REQUEST_INVALID')
-  if (request.method !== 'GET' && request.method !== 'HEAD') return jsonError(405, 'METHOD_NOT_ALLOWED')
-  if (!env.ASSETS) return jsonError(503, 'ASSET_BINDING_UNAVAILABLE')
+function parseExactUnsignedInteger(value: string | null): number | null {
+  if (!value || !/^(0|[1-9]\d*)$/.test(value)) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
 
-  const assetHeaders = new Headers(request.headers)
-  assetHeaders.delete('Range')
-  assetHeaders.delete('If-Range')
-  assetHeaders.delete('Authorization')
-  assetHeaders.delete('Cookie')
-  assetHeaders.set('Accept-Encoding', 'identity')
-  const assetRequest = new Request(url.toString(), {
-    method: 'GET',
-    headers: assetHeaders,
-  })
+function pmtilesQueryRange(url: URL, request: Request): { offset: number; length: number } | null {
+  if (url.searchParams.size !== 2) return null
+  if (url.searchParams.getAll(PMTILES_OFFSET_PARAM).length !== 1 || url.searchParams.getAll(PMTILES_LENGTH_PARAM).length !== 1) return null
+  const offset = parseExactUnsignedInteger(url.searchParams.get(PMTILES_OFFSET_PARAM))
+  const length = parseExactUnsignedInteger(url.searchParams.get(PMTILES_LENGTH_PARAM))
+  if (offset === null || length === null || length <= 0 || length > PMTILES_MAX_RANGE_BYTES) return null
+  const end = offset + length - 1
+  if (!Number.isSafeInteger(end)) return null
+  const rangeHeader = request.headers.get('Range')
+  if (rangeHeader && rangeHeader !== `bytes=${offset}-${end}`) return null
+  return { offset, length }
+}
 
+async function loadPmtilesAsset(env: MinimalRuntimeEnv, url: URL): Promise<CachedPmtilesAsset> {
+  if (!env.ASSETS) throw new Error('ASSET_BINDING_UNAVAILABLE')
+  const key = url.pathname
+  const existing = pmtilesAssetCache.get(key)
+  if (existing) return existing
+  const promise = (async () => {
+    const canonical = new URL(url)
+    canonical.search = ''
+    canonical.hash = ''
+    const response = await env.ASSETS!.fetch(new Request(canonical.toString(), {
+      method: 'GET',
+      headers: { 'Accept-Encoding': 'identity' },
+    }))
+    if (response.status !== 200) throw new Error(response.status === 404 ? 'NOT_FOUND' : 'ASSET_UNAVAILABLE')
+    const bytes = await response.arrayBuffer()
+    if (bytes.byteLength <= 0 || bytes.byteLength >= PMTILES_MAX_ARCHIVE_BYTES) throw new Error('ASSET_SIZE_INVALID')
+    return { bytes, etag: response.headers.get('etag') || undefined }
+  })()
+  pmtilesAssetCache.set(key, promise)
   try {
-    const asset = await env.ASSETS.fetch(assetRequest)
-    if (asset.status !== 200) return jsonError(asset.status === 404 ? 404 : 503, asset.status === 404 ? 'NOT_FOUND' : 'ASSET_UNAVAILABLE')
-    const headers = new Headers(asset.headers)
-    headers.set('Accept-Ranges', 'bytes')
-    headers.set('Cache-Control', 'public, max-age=31536000, immutable')
-    headers.set('Content-Type', 'application/vnd.pmtiles')
-    headers.set('Content-Disposition', 'inline')
-    headers.set('Referrer-Policy', 'no-referrer')
-    headers.set('X-Content-Type-Options', 'nosniff')
-    headers.delete('Content-Security-Policy')
-    headers.delete('Permissions-Policy')
-    return new Response(request.method === 'HEAD' ? null : asset.body, {
-      status: 200,
-      statusText: asset.statusText,
-      headers,
+    return await promise
+  } catch (error) {
+    pmtilesAssetCache.delete(key)
+    throw error
+  }
+}
+
+async function serveSantaFePmtiles(request: Request, env: MinimalRuntimeEnv, url: URL): Promise<Response> {
+  if (request.method !== 'GET') return jsonError(405, 'METHOD_NOT_ALLOWED')
+  const requested = pmtilesQueryRange(url, request)
+  if (!requested) return jsonError(400, 'PMTILES_QUERY_RANGE_REQUIRED')
+  try {
+    const asset = await loadPmtilesAsset(env, url)
+    const endExclusive = requested.offset + requested.length
+    if (requested.offset >= asset.bytes.byteLength || endExclusive > asset.bytes.byteLength) {
+      return new Response(null, {
+        status: 416,
+        headers: {
+          'Accept-Ranges': 'bytes',
+          'Content-Range': `bytes */${asset.bytes.byteLength}`,
+          'Cache-Control': 'no-store',
+          'X-Stracker-PMTiles-Transport': PMTILES_TRANSPORT,
+        },
+      })
+    }
+    const end = endExclusive - 1
+    const body = asset.bytes.slice(requested.offset, endExclusive)
+    const headers = new Headers({
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Content-Disposition': 'inline',
+      'Content-Length': String(body.byteLength),
+      'Content-Range': `bytes ${requested.offset}-${end}/${asset.bytes.byteLength}`,
+      'Content-Type': 'application/vnd.pmtiles',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Stracker-PMTiles-Transport': PMTILES_TRANSPORT,
     })
-  } catch {
-    return jsonError(503, 'ASSET_UNAVAILABLE')
+    if (asset.etag) headers.set('ETag', asset.etag)
+    return new Response(body, { status: 206, headers })
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'ASSET_UNAVAILABLE'
+    if (code === 'NOT_FOUND') return jsonError(404, 'NOT_FOUND')
+    if (code === 'ASSET_BINDING_UNAVAILABLE') return jsonError(503, code)
+    return jsonError(503, code === 'ASSET_SIZE_INVALID' ? code : 'ASSET_UNAVAILABLE')
   }
 }
 
