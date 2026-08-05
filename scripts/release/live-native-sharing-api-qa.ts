@@ -58,7 +58,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return originalFetch(input, init)
 }) as typeof fetch
 
-async function deploymentIdForVersion(versionId: string): Promise<string> {
+interface DeploymentEvidence {
+  id: string
+  percentage: number
+}
+
+async function deploymentForVersion(versionId: string): Promise<DeploymentEvidence> {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || ''
   const token = process.env.CLOUDFLARE_API_TOKEN || ''
   if (!accountId || !token) throw new Error('CLOUDFLARE_DEPLOYMENT_EVIDENCE_ENV_REQUIRED')
@@ -68,13 +73,23 @@ async function deploymentIdForVersion(versionId: string): Promise<string> {
   })
   const payload = await response.json().catch(() => null) as {
     success?: boolean
-    result?: { deployments?: Array<{ id?: string; versions?: Array<{ version_id?: string; id?: string; percentage?: number }> }> }
+    result?: { deployments?: Array<{ id?: string; versions?: Array<{ version_id?: string; id?: string; percentage?: number | string }> }> }
   } | null
   if (!response.ok || payload?.success !== true) throw new Error('CLOUDFLARE_DEPLOYMENT_EVIDENCE_UNAVAILABLE')
-  const deployments = payload.result?.deployments || []
-  const match = deployments.find((deployment) => (deployment.versions || []).some((version) => (version.version_id || version.id) === versionId))
-  if (!match?.id) throw new Error('CLOUDFLARE_DEPLOYMENT_ID_NOT_FOUND')
-  return match.id
+  const matches: DeploymentEvidence[] = []
+  for (const deployment of payload.result?.deployments || []) {
+    if (!deployment.id) continue
+    for (const version of deployment.versions || []) {
+      if ((version.version_id || version.id) !== versionId) continue
+      const percentage = Number(version.percentage)
+      if (Number.isFinite(percentage)) matches.push({ id: deployment.id, percentage })
+    }
+  }
+  const match = matches.find((item) => item.percentage === 100)
+    || matches.find((item) => item.percentage === 0)
+    || matches[0]
+  if (!match) throw new Error('CLOUDFLARE_DEPLOYMENT_ID_NOT_FOUND')
+  return match
 }
 
 process.env.STRACKER_EXPECTED_RELEASE ||= 'controlled-physical-pilot-v1'
@@ -96,19 +111,19 @@ const evidence = JSON.parse(await Bun.file(output).text()) as {
   [key: string]: unknown
 }
 const expectedVersionId = process.env.STRACKER_EXPECTED_VERSION_ID || ''
-const currentDeploymentId = await deploymentIdForVersion(expectedVersionId)
+const currentDeployment = await deploymentForVersion(expectedVersionId)
 const stateDir = `${process.env.RUNNER_TEMP || '/tmp'}/stracker-controlled-physical-pilot-release`
 const zeroIdPath = `${stateDir}/master-zero-deployment-id.txt`
-if (process.env.STRACKER_VERSION_OVERRIDE) await Bun.write(zeroIdPath, currentDeploymentId + '\n')
+if (currentDeployment.percentage === 0) await Bun.write(zeroIdPath, currentDeployment.id + '\n')
 const zeroDeploymentId = await Bun.file(zeroIdPath).exists() ? (await Bun.file(zeroIdPath).text()).trim() : ''
-const finalDeploymentId = process.env.STRACKER_VERSION_OVERRIDE ? '' : currentDeploymentId
+const finalDeploymentId = currentDeployment.percentage === 100 ? currentDeployment.id : ''
 
 evidence.gates = {
   ...(evidence.gates || {}),
   ...map3d.gates,
   LINK_ENTRY_STRICT_VALIDATION: 'PASS',
   PUBLIC_VERSION_ID: expectedVersionId,
-  ZERO_PERCENT_DEPLOYMENT_ID: zeroDeploymentId || currentDeploymentId,
+  ZERO_PERCENT_DEPLOYMENT_ID: zeroDeploymentId || currentDeployment.id,
   FINAL_DEPLOYMENT_ID: finalDeploymentId || 'PENDING_PROMOTION',
 }
 evidence.map3d = {
