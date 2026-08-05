@@ -61,7 +61,7 @@ jobs:
           tar -xzf "${RUNNER_TEMP}/go-pmtiles.tar.gz" -C "${RUNNER_TEMP}/bin"
           test -x "${RUNNER_TEMP}/bin/pmtiles"
           echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
-          "${RUNNER_TEMP}/bin/pmtiles" help >/dev/null
+          "${RUNNER_TEMP}/bin/pmtiles" version
           tippecanoe --version
           echo 'PINNED_BUILD_TOOLCHAIN=PASS'
 
