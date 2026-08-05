@@ -1,6 +1,8 @@
 import '../cookie-session/cookie-session.test'
 import { describe, expect, test } from 'bun:test'
 import { freshnessFromTimestamp } from '../../src/lib/location-source/contracts'
+import { initialCameraControllerState, MAP_PERSPECTIVE_PITCH_DEG, planCamera } from '../../src/lib/location-source/camera-controller'
+import { configureBuildings3d } from '../../src/lib/location-source/map-engine/openfreemap-style'
 import {
   PILOT_RETRY_DELAYS_MS,
   buildPilotDiagnostic,
@@ -28,6 +30,52 @@ describe('controlled physical pilot runtime', () => {
     expect(pilotAccuracyState(12)).toBe('good')
     expect(pilotAccuracyState(35)).toBe('fair')
     expect(pilotAccuracyState(80)).toBe('low')
+  })
+
+  test('keeps real map perspective visible at rest and with reduced motion', () => {
+    const overview = planCamera({
+      current: initialCameraControllerState(),
+      motion: 'unknown',
+      hasPoint: true,
+      recenter: true,
+      reducedMotion: false,
+    })
+    expect(overview.pitchDeg).toBe(MAP_PERSPECTIVE_PITCH_DEG)
+
+    const stationaryReduced = planCamera({
+      current: initialCameraControllerState(),
+      motion: 'stationary',
+      hasPoint: true,
+      recenter: true,
+      reducedMotion: true,
+    })
+    expect(stationaryReduced.pitchDeg).toBe(MAP_PERSPECTIVE_PITCH_DEG)
+    expect(stationaryReduced.animate).toBe(false)
+  })
+
+  test('uses one controlled building extrusion and makes the toggle authoritative', () => {
+    const layers: Array<Record<string, unknown>> = [
+      { id: 'building-3d-native', type: 'fill-extrusion', source: 'openfreemap', 'source-layer': 'building' },
+      { id: 'place-label', type: 'symbol', source: 'openfreemap', 'source-layer': 'place' },
+    ]
+    const visibility = new Map<string, string>()
+    const map = {
+      getStyle: () => ({ sources: { openfreemap: { type: 'vector' } }, layers }),
+      getLayer: (id: string) => layers.find((layer) => layer.id === id),
+      setLayoutProperty: (id: string, _property: string, value: string) => visibility.set(id, value),
+      addLayer: (layer: Record<string, unknown>) => layers.push(layer),
+      setLight: () => undefined,
+    }
+
+    expect(configureBuildings3d(map as never, { enabled: true, density: 'full' })).toBe(true)
+    const controlled = layers.find((layer) => layer.id === 'stracker-buildings-3d')
+    expect(controlled?.type).toBe('fill-extrusion')
+    expect(controlled?.source).toBe('openfreemap')
+    expect(controlled?.['source-layer']).toBe('building')
+    expect(visibility.get('building-3d-native')).toBe('none')
+
+    expect(configureBuildings3d(map as never, { enabled: false, density: 'full' })).toBe(true)
+    expect(visibility.get('stracker-buildings-3d')).toBe('none')
   })
 
   test('classifies last-success age without timestamps in output', () => {

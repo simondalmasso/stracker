@@ -4,6 +4,8 @@ export const OPENFREEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liber
 export const OPENFREEMAP_ATTRIBUTION = 'OpenFreeMap © OpenMapTiles Data from OpenStreetMap'
 export const MAP_PROVIDER_ID = 'openfreemap-openstreetmap'
 
+const STRACKER_BUILDING_LAYER_ID = 'stracker-buildings-3d'
+
 export interface BuildingLayerOptions {
   enabled: boolean
   density: 'full' | 'reduced' | 'off'
@@ -36,6 +38,18 @@ function buildingSourceCandidate(map: MapLibreMap): BuildingSourceCandidate | nu
 
   const source = vectorSourceId(map)
   return source ? { source, sourceLayer: 'building' } : null
+}
+
+function hideUncontrolledBuildingExtrusions(map: MapLibreMap): void {
+  for (const layer of map.getStyle().layers ?? []) {
+    if (layer.id === STRACKER_BUILDING_LAYER_ID || layer.type !== 'fill-extrusion') continue
+    const candidate = layer as typeof layer & { 'source-layer'?: string }
+    const sourceLayer = candidate['source-layer']?.toLowerCase() ?? ''
+    const identity = `${layer.id} ${sourceLayer}`.toLowerCase()
+    if (sourceLayer === 'building' || identity.includes('building')) {
+      map.setLayoutProperty(layer.id, 'visibility', 'none')
+    }
+  }
 }
 
 function configureSceneLight(map: MapLibreMap): void {
@@ -75,9 +89,10 @@ export function setDarkBaseStyle(map: MapLibreMap): void {
 }
 
 export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOptions): boolean {
-  const layerId = 'stracker-buildings-3d'
-  if (map.getLayer(layerId)) {
-    map.setLayoutProperty(layerId, 'visibility', options.enabled && options.density !== 'off' ? 'visible' : 'none')
+  hideUncontrolledBuildingExtrusions(map)
+
+  if (map.getLayer(STRACKER_BUILDING_LAYER_ID)) {
+    map.setLayoutProperty(STRACKER_BUILDING_LAYER_ID, 'visibility', options.enabled && options.density !== 'off' ? 'visible' : 'none')
     if (options.enabled && options.density !== 'off') configureSceneLight(map)
     return true
   }
@@ -88,7 +103,7 @@ export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOpt
 
   const before = (map.getStyle().layers ?? []).find((layer) => layer.type === 'symbol')?.id
   map.addLayer({
-    id: layerId,
+    id: STRACKER_BUILDING_LAYER_ID,
     type: 'fill-extrusion',
     source: candidate.source,
     'source-layer': candidate.sourceLayer,
