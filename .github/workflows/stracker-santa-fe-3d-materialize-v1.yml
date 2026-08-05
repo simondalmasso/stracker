@@ -72,10 +72,16 @@ jobs:
           bun install --frozen-lockfile
           echo 'PMTILES_JS_PIN=PASS'
 
+      - name: PIPELINE_UNIT_TESTS
+        run: |
+          python -m unittest tests.santa_fe_3d.test_streaming_reader -v
+          echo 'PIPELINE_STREAMING_REGRESSION=PASS'
+
       - name: OVERTURE_STAC_AND_TINY_BBOX_DIAGNOSTIC
         run: |
           python - <<'PY'
           import json
+          import os
           import traceback
           from pathlib import Path
           from urllib.request import urlopen
@@ -113,19 +119,26 @@ jobs:
                   )
                   if reader is None:
                       raise RuntimeError(f"OVERTURE_READER_UNAVAILABLE:{kind}")
-                  table = reader.read_all()
+                  rows = 0
+                  schema = None
+                  for batch in reader:
+                      schema = batch.schema
+                      rows += batch.num_rows
+                  if schema is None:
+                      raise RuntimeError(f"EMPTY_SCHEMA:{kind}")
                   report["datasets"][kind] = {
-                      "rows": table.num_rows,
-                      "columns": table.schema.names,
-                      "geometry_column_type": str(table.schema.field("geometry").type),
+                      "rows": rows,
+                      "columns": schema.names,
+                      "geometry_column_type": str(schema.field("geometry").type),
                       "height_columns": [
                           name for name in ("height", "num_floors", "min_height", "min_floor")
-                          if name in table.schema.names
+                          if name in schema.names
                       ],
                   }
-                  if kind == "building" and table.num_rows <= 0:
+                  if kind == "building" and rows <= 0:
                       raise RuntimeError("BUILDING_READ_ROWS_NOT_GT_ZERO")
-              Path("${RUNNER_TEMP}/overture-preflight.json").write_text(json.dumps(report, indent=2, sort_keys=True))
+              report_path = Path(os.environ["RUNNER_TEMP"]) / "overture-preflight.json"
+              report_path.write_text(json.dumps(report, indent=2, sort_keys=True))
               print(json.dumps(report, indent=2, sort_keys=True))
               print("OVERTURE_STAC_AND_TINY_BBOX_DIAGNOSTIC=PASS")
           except Exception as exc:
