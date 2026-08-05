@@ -51,6 +51,8 @@ export interface CandidateCoherenceResult {
   finalObservation: CandidateObservation
   expectedVersionIdHash: string
   affinityKeyHash: string
+  requiredConsecutivePasses: number
+  consecutivePasses: number
 }
 
 export interface CandidateCoherenceOptions {
@@ -62,6 +64,7 @@ export interface CandidateCoherenceOptions {
   initialDelayMs?: number
   maxTotalWaitMs?: number
   requestTimeoutMs?: number
+  requiredConsecutivePasses?: number
   fetchImpl?: typeof fetch
   sleep?: (milliseconds: number) => Promise<void>
   now?: () => number
@@ -123,11 +126,9 @@ function classifyObservation(
   if (observation.versionHttpStatus !== 200) return 'VERSION_METADATA_MISMATCH'
   if (observation.observedVersionSourceSha !== expected.sourceSha) return 'VERSION_METADATA_MISMATCH'
   if (observation.observedVersionIdHash !== irreversibleHash(expected.versionId)) return 'VERSION_METADATA_MISMATCH'
-
   if (observation.buildHttpStatus !== 200) return 'ASSET_BINDING_VERSION_SKEW'
   if (observation.observedBuildSourceSha !== expected.sourceSha) return 'BUILD_JSON_SOURCE_SHA_MISMATCH'
   if (observation.observedBuildRelease !== expected.release) return 'BUILD_JSON_RELEASE_MISMATCH'
-
   if (observation.manifestHttpStatus !== 200 || !observation.manifestExact) return 'ASSET_BINDING_VERSION_SKEW'
   if (
     observation.rangeHttpStatus !== 206
@@ -142,6 +143,8 @@ function diagnosticLine(
   expected: CandidateExpectedState,
   affinityKeyHash: string,
   observation: CandidateObservation,
+  consecutivePasses: number,
+  requiredConsecutivePasses: number,
 ): string {
   return [
     `CANDIDATE_IDENTITY_ATTEMPT=${observation.attempt}`,
@@ -160,6 +163,8 @@ function diagnosticLine(
     `OBSERVED_VERSION_SOURCE_SHA=${observation.observedVersionSourceSha}`,
     `VERSION_HTTP_STATUS=${observation.versionHttpStatus}`,
     `AFFINITY_KEY_HASH=${affinityKeyHash}`,
+    `CONSECUTIVE_PASS_COUNT=${consecutivePasses}`,
+    `REQUIRED_CONSECUTIVE_PASSES=${requiredConsecutivePasses}`,
     `CLASSIFICATION=${observation.classification}`,
   ].join(' ')
 }
@@ -179,6 +184,7 @@ async function observeAttempt(
     const rangeUrl = new URL(options.expected.manifest.asset_paths[0], target)
     rangeUrl.searchParams.set('pmtilesOffset', '0')
     rangeUrl.searchParams.set('pmtilesLength', '16384')
+    rangeUrl.searchParams.set('candidate', nonce)
     const [buildResponse, versionResponse, manifestResponse, rangeResponse] = await Promise.all([
       options.fetchImpl(new URL(`/__stracker/build.json?candidate=${nonce}`, target), { headers, cache: 'no-store', signal: controller.signal }),
       options.fetchImpl(new URL(`/__stracker/version.json?candidate=${nonce}`, target), { headers, cache: 'no-store', signal: controller.signal }),
@@ -250,7 +256,11 @@ export async function runCandidateCoherenceRetry(options: CandidateCoherenceOpti
   const maxAttempts = options.maxAttempts ?? 30
   const delayMs = options.initialDelayMs ?? 2_000
   const maxTotalWaitMs = options.maxTotalWaitMs ?? 90_000
-  if (maxAttempts < 1 || maxAttempts > 30 || delayMs < 0 || maxTotalWaitMs > 90_000) throw new Error('RETRY_CONTRACT_INVALID')
+  const requiredConsecutivePasses = options.requiredConsecutivePasses ?? 1
+  if (
+    maxAttempts < 1 || maxAttempts > 30 || delayMs < 0 || maxTotalWaitMs > 90_000
+    || requiredConsecutivePasses < 1 || requiredConsecutivePasses > 5
+  ) throw new Error('RETRY_CONTRACT_INVALID')
   const fetchImpl = options.fetchImpl ?? fetch
   const sleep = options.sleep ?? ((milliseconds) => Bun.sleep(milliseconds))
   const now = options.now ?? (() => Date.now())
@@ -259,6 +269,8 @@ export async function runCandidateCoherenceRetry(options: CandidateCoherenceOpti
   const startedAt = now()
   let firstFailure: CandidateFailureClassification | 'NONE' = 'NONE'
   let lastObservation: CandidateObservation | null = null
+  let consecutivePasses = 0
+  let sawPass = false
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const observation = await observeAttempt({
@@ -269,9 +281,15 @@ export async function runCandidateCoherenceRetry(options: CandidateCoherenceOpti
       maxTotalWaitMs,
     }, attempt, startedAt)
     lastObservation = observation
-    if (observation.classification !== 'PASS' && firstFailure === 'NONE') firstFailure = observation.classification
-    log(diagnosticLine(options.expected, affinityKeyHash, observation))
     if (observation.classification === 'PASS') {
+      sawPass = true
+      consecutivePasses += 1
+    } else {
+      consecutivePasses = 0
+      if (firstFailure === 'NONE') firstFailure = observation.classification
+    }
+    log(diagnosticLine(options.expected, affinityKeyHash, observation, consecutivePasses, requiredConsecutivePasses))
+    if (consecutivePasses >= requiredConsecutivePasses) {
       return {
         attempts: attempt,
         elapsedMs: now() - startedAt,
@@ -280,6 +298,8 @@ export async function runCandidateCoherenceRetry(options: CandidateCoherenceOpti
         finalObservation: observation,
         expectedVersionIdHash: irreversibleHash(options.expected.versionId),
         affinityKeyHash,
+        requiredConsecutivePasses,
+        consecutivePasses,
       }
     }
     if (attempt >= maxAttempts || now() - startedAt + delayMs > maxTotalWaitMs) break
@@ -307,8 +327,8 @@ export async function runCandidateCoherenceRetry(options: CandidateCoherenceOpti
     rangeLengthValid: false,
     classification: 'OTHER_EVIDENCED' as const,
   }
-  throw new CandidateCoherenceError(
-    observation.classification === 'PASS' ? 'OTHER_EVIDENCED' : observation.classification,
-    observation,
-  )
+  const classification: CandidateFailureClassification = sawPass && requiredConsecutivePasses > 1
+    ? 'AFFINITY_ROUTING_INCONSISTENT'
+    : observation.classification === 'PASS' ? 'OTHER_EVIDENCED' : observation.classification
+  throw new CandidateCoherenceError(classification, observation)
 }

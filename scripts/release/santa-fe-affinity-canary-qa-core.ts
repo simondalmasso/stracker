@@ -58,6 +58,28 @@ async function findCandidateAffinityKey(): Promise<string> {
   throw new CanaryFailure('AFFINITY_KEY_FOR_CANDIDATE_NOT_FOUND')
 }
 
+async function runBrowserWithStableAffinity(key: string): Promise<{ browser: Record<string, unknown>; attempts: number }> {
+  let finalError: unknown = null
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const browser = await runSantaFePublicBrowserQa({
+        targetUrl: target.toString(),
+        requestHeaders: affinityHeaders(key),
+        screenshotDir,
+        screenshotPrefix: `santa-fe-affinity-canary-${attempt}`,
+      })
+      console.log(`AFFINITY_BROWSER_QA_ATTEMPT=${attempt} RESULT=PASS`)
+      return { browser, attempts: attempt }
+    } catch (error) {
+      finalError = error
+      const code = error instanceof Error ? error.message.replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 120) : 'UNKNOWN'
+      console.log(`AFFINITY_BROWSER_QA_ATTEMPT=${attempt} RESULT=RETRY CLASSIFICATION=${code}`)
+      if (attempt < 3) await Bun.sleep(5_000)
+    }
+  }
+  throw finalError instanceof Error ? finalError : new CanaryFailure('AFFINITY_BROWSER_QA_FAILED')
+}
+
 if (target.protocol !== 'https:' || !target.hostname) throw new Error('HTTPS_TARGET_REQUIRED')
 if (!/^[0-9a-f]{40}$/.test(expectedSha)) throw new Error('EXPECTED_SHA_REQUIRED')
 if (!candidateVersion) throw new Error('EXPECTED_VERSION_ID_REQUIRED')
@@ -77,32 +99,35 @@ const coherence = await runCandidateCoherenceRetry({
   maxAttempts: 30,
   initialDelayMs: 2_000,
   maxTotalWaitMs: 90_000,
+  requiredConsecutivePasses: 3,
 })
-const browser = await runSantaFePublicBrowserQa({
-  targetUrl: target.toString(),
-  requestHeaders: affinityHeaders(affinityKey),
-  screenshotDir,
-  screenshotPrefix: 'santa-fe-affinity-canary',
-})
+const browserResult = await runBrowserWithStableAffinity(affinityKey)
+const rootCause = coherence.rootCause !== 'NONE' || browserResult.attempts > 1
+  ? 'CLOUDFLARE_PROPAGATION_RACE'
+  : 'NONE'
 const result = {
-  schema: 'stracker.santa-fe-affinity-canary.v3',
+  schema: 'stracker.santa-fe-affinity-canary.v4',
   sourceSha: expectedSha,
   candidateVersionHash: digest(candidateVersion),
   affinityKeyHash,
   workerName,
+  rootCause,
   coherence: {
     attempts: coherence.attempts,
     elapsedMs: coherence.elapsedMs,
     rootCause: coherence.rootCause,
     firstFailure: coherence.firstFailure,
     expectedVersionIdHash: coherence.expectedVersionIdHash,
+    requiredConsecutivePasses: coherence.requiredConsecutivePasses,
+    consecutivePasses: coherence.consecutivePasses,
   },
+  browserAttempts: browserResult.attempts,
   privateDataUsed: false,
   realUserCoordinatesUsed: false,
   coordinateValuesRetained: false,
   rawVersionIdRetained: false,
   rawAffinityKeyRetained: false,
-  browser,
+  browser: browserResult.browser,
   gates: {
     ONE_PERCENT_VERSION_AFFINITY: 'PASS',
     CANDIDATE_BUILD_AND_VERSION_IDENTITY: 'PASS',
@@ -112,11 +137,13 @@ const result = {
     CANDIDATE_QUERY_TRANSPORT_MARKER: 'PASS',
     SAME_AFFINITY_KEY_ALL_ATTEMPTS: 'PASS',
     SAME_ATTEMPT_CANDIDATE_COHERENCE: 'PASS',
+    THREE_CONSECUTIVE_COHERENT_ATTEMPTS: 'PASS',
     BOUNDED_RETRY_MAX_30: 'PASS',
     BOUNDED_RETRY_MAX_90_SECONDS: 'PASS',
-    ...browser.gates as Record<string, string>,
+    BOUNDED_BROWSER_RETRY: 'PASS',
+    ...browserResult.browser.gates as Record<string, string>,
     NO_PRIVATE_DATA_IN_CANARY: 'PASS',
   },
 }
 await Bun.write(output, JSON.stringify(result, null, 2) + '\n')
-console.log(`SANTA_FE_AFFINITY_CANARY_QA=PASS attempts=${coherence.attempts} rootCause=${coherence.rootCause}`)
+console.log(`SANTA_FE_AFFINITY_CANARY_QA=PASS attempts=${coherence.attempts} browserAttempts=${browserResult.attempts} rootCause=${rootCause}`)

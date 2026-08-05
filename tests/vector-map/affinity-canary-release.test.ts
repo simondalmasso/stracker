@@ -164,6 +164,23 @@ describe('Santa Fe query-range release contract', () => {
     expect(result.finalObservation.classification).toBe('PASS')
   })
 
+  test('requires a stable consecutive coherence streak before browser QA', async () => {
+    const { result } = await runRetry([
+      {},
+      { versionId: 'old-version' },
+      {},
+      {},
+      {},
+    ], {
+      maxAttempts: 5,
+      requiredConsecutivePasses: 3,
+    })
+    expect(result.attempts).toBe(5)
+    expect(result.consecutivePasses).toBe(3)
+    expect(result.requiredConsecutivePasses).toBe(3)
+    expect(result.rootCause).toBe('CLOUDFLARE_PROPAGATION_RACE')
+  })
+
   test('uses the same affinity key for every retry and sanitizes diagnostics', async () => {
     const { logs, observedKeys } = await runRetry([
       { buildSha: 'd'.repeat(40) },
