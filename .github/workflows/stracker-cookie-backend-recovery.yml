@@ -144,14 +144,23 @@ jobs:
           cat > "$STATE_DIR/request.json" <<'JSON'
           {"raw":"[{\"name\":\"NID\",\"value\":\"synthetic-noncredential\",\"domain\":\".google.com\",\"path\":\"/\"}]","durationMs":3600000}
           JSON
-          status="$(curl --silent --show-error --output "$STATE_DIR/response.json" --write-out '%{http_code}' \
-            --request POST \
-            --header 'Content-Type: application/json' \
-            --header "Origin: ${PUBLIC_URL}" \
-            --data-binary @"$STATE_DIR/request.json" \
-            "${PUBLIC_URL}/api/cookie-sessions")"
-          test "$status" = '400'
-          jq -e '.status == "error" and .error == "COOKIE_SET_INCOMPLETE"' "$STATE_DIR/response.json" >/dev/null
+          cookie_ready=0
+          for attempt in $(seq 1 20); do
+            status="$(curl --silent --show-error --output "$STATE_DIR/response.json" --write-out '%{http_code}' \
+              --request POST \
+              --header 'Content-Type: application/json' \
+              --header "Origin: ${PUBLIC_URL}" \
+              --data-binary @"$STATE_DIR/request.json" \
+              "${PUBLIC_URL}/api/cookie-sessions")"
+            error_code="$(jq -r '.error // "NON_JSON"' "$STATE_DIR/response.json" 2>/dev/null || echo NON_JSON)"
+            echo "COOKIE_BACKEND_SMOKE_ATTEMPT=${attempt} HTTP_STATUS=${status} ERROR_CODE=${error_code}"
+            if [[ "$status" == '400' && "$error_code" == 'COOKIE_SET_INCOMPLETE' ]]; then
+              cookie_ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$cookie_ready" = '1'
           echo 'PUBLIC_COOKIE_BACKEND_ROUTE_SMOKE=PASS'
 
           native_status="$(curl --silent --show-error --output "$STATE_DIR/native.json" --write-out '%{http_code}' \
