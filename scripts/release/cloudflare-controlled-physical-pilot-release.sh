@@ -12,6 +12,7 @@ set -Eeuo pipefail
 # offline-stop-browser-qa.ts
 # PUBLIC_POST_PROMOTION_QA
 # RELEASE_EVIDENCE_BEFORE_ROLLBACK_DISARM
+# PUBLIC_VERSION_ID_HASH
 
 CORE='scripts/release/cloudflare-controlled-physical-pilot-release-core.sh'
 TEMP="${RUNNER_TEMP:-/tmp}/stracker-controlled-physical-pilot-release-runtime.sh"
@@ -77,8 +78,29 @@ replace_once(
     'ROLLBACK_DISARM_BEFORE_EVIDENCE',
 )
 replace_once(
+    "def value(name): return (root/name).read_text().strip()\nevidence = {",
+    "def value(name): return (root/name).read_text().strip()\ncandidate_version_hash = hashed(root/'candidate-version-id.txt')\napi_gates = dict(api['gates'])\napi_gates.pop('PUBLIC_VERSION_ID', None)\napi_gates['PUBLIC_VERSION_ID_HASH'] = candidate_version_hash\nevidence = {",
+    'RELEASE_EVIDENCE_VERSION_SANITIZER',
+)
+replace_once(
+    "  'publicVersionId': value('candidate-version-id.txt'),",
+    "  'publicVersionIdHash': candidate_version_hash,",
+    'RELEASE_EVIDENCE_RAW_VERSION_FIELD',
+)
+replace_once("  'apiGates': api['gates'],", "  'apiGates': api_gates,", 'RELEASE_EVIDENCE_API_GATE_VERSION')
+replace_once(
+    "  'secretsExposed': False,",
+    "  'secretsExposed': False,\n  'rawVersionIdRetained': False,",
+    'RELEASE_EVIDENCE_RAW_VERSION_ATTESTATION',
+)
+replace_once(
+    "out.write_text(json.dumps(evidence, indent=2, sort_keys=True)+'\\n')\n(root/'release-evidence.sha256').write_text",
+    "out.write_text(json.dumps(evidence, indent=2, sort_keys=True)+'\\n')\nif value('candidate-version-id.txt') in out.read_text(): raise SystemExit('RAW_VERSION_ID_IN_RELEASE_EVIDENCE')\n(root/'release-evidence.sha256').write_text",
+    'RELEASE_EVIDENCE_RAW_VERSION_SCAN',
+)
+replace_once(
     "print('CONTROLLED_PHYSICAL_PILOT_READY=YES')\nPY\n\necho \"RELEASE_EVIDENCE_DIR=$STATE_DIR\"",
-    "print('CONTROLLED_PHYSICAL_PILOT_READY=YES')\nPY\n\nrollback_required=0\ntrap - ERR\necho 'RELEASE_EVIDENCE_BEFORE_ROLLBACK_DISARM=PASS'\n\necho \"RELEASE_EVIDENCE_DIR=$STATE_DIR\"",
+    "print('CONTROLLED_PHYSICAL_PILOT_READY=YES')\nPY\n\nrollback_required=0\ntrap - ERR\necho 'RELEASE_EVIDENCE_BEFORE_ROLLBACK_DISARM=PASS'\necho 'RAW_VERSION_ID_IN_RELEASE_ARTIFACT=NO'\n\necho \"RELEASE_EVIDENCE_DIR=$STATE_DIR\"",
     'ROLLBACK_DISARM_AFTER_EVIDENCE',
 )
 
@@ -91,6 +113,8 @@ required = [
     '${CANDIDATE_VERSION}@100%',
     '|| return 1',
     'RELEASE_EVIDENCE_BEFORE_ROLLBACK_DISARM=PASS',
+    'PUBLIC_VERSION_ID_HASH',
+    'RAW_VERSION_ID_IN_RELEASE_EVIDENCE',
 ]
 for marker in required:
     if marker not in source:
@@ -106,6 +130,7 @@ print('RELEASE_RUNTIME_PATCH_EXACT_ONCE=PASS')
 print('ZERO_PERCENT_OVERRIDE_PREFLIGHT_RESTORED=PASS')
 print('POST_PROMOTION_QA_FAIL_FAST=PASS')
 print('ROLLBACK_ARMED_THROUGH_RELEASE_EVIDENCE=PASS')
+print('RELEASE_ARTIFACT_VERSION_ID_SANITIZATION=PASS')
 PY
 
 chmod 700 "$TEMP"
