@@ -299,7 +299,7 @@ export class CookieSessionMemoryRuntime {
 
   async importSession(input: CookieSessionImportInput): Promise<RpcResult<CookieSessionPublicStatus>> {
     try {
-      if (!TOKEN.test(input.sessionId) || !/^[0-9a-f]{64}$/.test(input.ownerVerifier)) {
+      if (!TOKEN.test(input.sessionId) || !TOKEN.test(input.ownerVerifier)) {
         return { ok: false, status: 400, code: 'REQUEST_INVALID' }
       }
       const parsed = parseCookieSession(input.raw)
