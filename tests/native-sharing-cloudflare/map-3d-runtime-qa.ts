@@ -91,6 +91,17 @@ async function settle() {
   map.triggerRepaint()
   await delay(1200)
 }
+async function waitForPublicBuildings(fixtureId, timeout = 30000) {
+  const deadline = Date.now() + timeout
+  let last = snapshot(fixtureId)
+  while (Date.now() < deadline) {
+    map.triggerRepaint()
+    await delay(500)
+    last = snapshot(fixtureId)
+    if (last.renderedFeatureCount > 0 && last.sourceIdle) return last
+  }
+  return last
+}
 function numeric(value) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
@@ -172,8 +183,7 @@ async function run() {
     map.jumpTo({ center: fixture.center, zoom: 17, pitch: 52, bearing: -22 })
     configureBuildings3d(map, { enabled: true, density: 'full' })
     addMarker(fixture.center)
-    await settle()
-    const candidate = snapshot(fixture.id)
+    const candidate = await waitForPublicBuildings(fixture.id)
     if (candidate.renderedFeatureCount > 0 && candidate.sourceIdle) {
       selected = candidate
       break
