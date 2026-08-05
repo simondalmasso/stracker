@@ -7,8 +7,9 @@ set -Eeuo pipefail
 # ${CANDIDATE_VERSION}@1%
 # ${CANDIDATE_VERSION}@100%
 # Cloudflare-Workers-Version-Overrides
-# offline-stop-browser-qa.ts
+# ZERO_PERCENT_OVERRIDE_QA
 # santa-fe-affinity-canary-qa.ts
+# PUBLIC_POST_PROMOTION_QA
 
 CORE='scripts/release/cloudflare-controlled-physical-pilot-release-core.sh'
 TEMP="${RUNNER_TEMP:-/tmp}/stracker-controlled-physical-pilot-release-runtime.sh"
@@ -18,25 +19,65 @@ from pathlib import Path
 import sys
 
 source = Path(sys.argv[1]).read_text()
+
+def replace_once(old: str, new: str, code: str) -> None:
+    global source
+    count = source.count(old)
+    if count != 1:
+        raise SystemExit(f'{code}_EXPECTED_ONCE_OBSERVED_{count}')
+    source = source.replace(old, new, 1)
+
+replace_once(
+    "assert not any(str(route).startswith('/data/santa-fe-3d') for route in public['assets'].get('run_worker_first', []))",
+    "assert '/data/santa-fe-3d/*.pmtiles' in public['assets'].get('run_worker_first', [])",
+    'PMTILES_RUN_WORKER_FIRST_ASSERTION',
+)
+replace_once("print('PMTILES_RUN_WORKER_FIRST=NO')", "print('PMTILES_RUN_WORKER_FIRST=YES')", 'PMTILES_RUN_WORKER_FIRST_MARKER')
+
 start_marker = '\nfor kind in version build; do\n'
 end_marker = "echo 'BUILD_JSON_ASSET_ATTESTATION=PASS'\n"
-start = source.find(start_marker)
-if start < 0:
-    raise SystemExit('ZERO_PERCENT_OVERRIDE_BLOCK_START_NOT_FOUND')
+if source.count(start_marker) != 1:
+    raise SystemExit(f'ZERO_PERCENT_OVERRIDE_BLOCK_START_EXPECTED_ONCE_OBSERVED_{source.count(start_marker)}')
+start = source.index(start_marker)
 end = source.find(end_marker, start)
 if end < 0:
     raise SystemExit('ZERO_PERCENT_OVERRIDE_BLOCK_END_NOT_FOUND')
 end += len(end_marker)
-replacement = "\necho 'ZERO_PERCENT_DEPLOYMENT_ATTESTATION=PASS'\n"
-source = source[:start] + replacement + source[end:]
-source = source.replace(
-    "assert not any(str(route).startswith('/data/santa-fe-3d') for route in public['assets'].get('run_worker_first', []))",
-    "assert '/data/santa-fe-3d/*.pmtiles' in public['assets'].get('run_worker_first', [])",
-)
-source = source.replace("print('PMTILES_RUN_WORKER_FIRST=NO')", "print('PMTILES_RUN_WORKER_FIRST=YES')")
-source = source.replace("'zeroPercentMetadataOverrideQa': True", "'zeroPercentMetadataOverrideQa': False")
-source = source.replace("'zero-percent-metadata', 'one-percent-version-affinity-static-and-render'", "'zero-percent-deployment', 'one-percent-version-affinity-static-and-render'")
+replacement = r'''
+STRACKER_QA_URL="$TARGET_URL" \
+STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
+STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" \
+STRACKER_PUBLIC_WORKER="$PUBLIC_WORKER" \
+STRACKER_ZERO_PERCENT_QA_OUTPUT="$STATE_DIR/zero-percent-override-qa.json" \
+bun scripts/release/santa-fe-zero-percent-preflight.ts
+jq -e '.privateDataUsed == false and .realUserCoordinatesUsed == false and .coordinateValuesRetained == false and .rawVersionIdRetained == false and .authorizationValuesRetained == false' "$STATE_DIR/zero-percent-override-qa.json" >/dev/null
+jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$STATE_DIR/zero-percent-override-qa.json" >/dev/null
+echo 'VERSION_METADATA_OVERRIDE=PASS'
+echo 'BUILD_JSON_ASSET_ATTESTATION=PASS'
+echo 'SANTA_FE_MANIFEST_OVERRIDE=PASS'
+echo 'PMTILES_QUERY_RANGE_OVERRIDE=PASS'
+echo 'ZERO_PERCENT_OVERRIDE_QA=PASS'
+'''
+source = source[:start] + '\n' + replacement + source[end:]
+
+required = [
+    'ZERO_PERCENT_OVERRIDE_QA=PASS',
+    'santa-fe-zero-percent-preflight.ts',
+    'santa-fe-affinity-canary-qa.ts',
+    '${CANDIDATE_VERSION}@0%',
+    '${CANDIDATE_VERSION}@1%',
+    '${CANDIDATE_VERSION}@100%',
+]
+for marker in required:
+    if marker not in source:
+        raise SystemExit('MATERIALIZED_RELEASE_MARKER_MISSING_' + marker.replace('/', '_'))
+if source.index('${CANDIDATE_VERSION}@0%') > source.index('${CANDIDATE_VERSION}@1%'):
+    raise SystemExit('MATERIALIZED_ZERO_AFTER_CANARY')
+if source.index('${CANDIDATE_VERSION}@1%') > source.index('${CANDIDATE_VERSION}@100%'):
+    raise SystemExit('MATERIALIZED_CANARY_AFTER_PROMOTION')
 Path(sys.argv[2]).write_text(source)
+print('RELEASE_RUNTIME_PATCH_EXACT_ONCE=PASS')
+print('ZERO_PERCENT_OVERRIDE_PREFLIGHT_RESTORED=PASS')
 PY
 
 chmod 700 "$TEMP"
