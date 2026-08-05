@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test'
 import { freshnessFromTimestamp } from '../../src/lib/location-source/contracts'
 import { initialCameraControllerState, MAP_PERSPECTIVE_PITCH_DEG, planCamera } from '../../src/lib/location-source/camera-controller'
 import { configureBuildings3d } from '../../src/lib/location-source/map-engine/openfreemap-style'
+import { parseAuthorizedViewerLink, STRACKER_PUBLIC_ORIGIN } from '../../src/lib/location-source/viewer-link-policy'
+import { runMap3dRuntimeQa } from '../native-sharing-cloudflare/map-3d-runtime-qa'
 import {
   PILOT_RETRY_DELAYS_MS,
   buildPilotDiagnostic,
@@ -77,6 +79,34 @@ describe('controlled physical pilot runtime', () => {
     expect(configureBuildings3d(map as never, { enabled: false, density: 'full' })).toBe(true)
     expect(visibility.get('stracker-buildings-3d')).toBe('none')
   })
+
+  test('accepts only strict URLs from the authorized STRACKER runtime', () => {
+    const capability = `${'a'.repeat(43)}.${'b'.repeat(43)}`
+    const official = `${STRACKER_PUBLIC_ORIGIN}/shared#v=${capability}`
+    expect(parseAuthorizedViewerLink(official)?.capability).toBe(capability)
+    expect(parseAuthorizedViewerLink(`${official}&v=${capability}`)).toBeNull()
+    expect(parseAuthorizedViewerLink(`${STRACKER_PUBLIC_ORIGIN}/shared?next=x#v=${capability}`)).toBeNull()
+    expect(parseAuthorizedViewerLink(`${STRACKER_PUBLIC_ORIGIN}/share#v=${capability}`)).toBeNull()
+    expect(parseAuthorizedViewerLink(`https://evil.example/shared#v=${capability}`)).toBeNull()
+    expect(parseAuthorizedViewerLink(`http://stracker.simondalmasso44.workers.dev/shared#v=${capability}`)).toBeNull()
+    expect(parseAuthorizedViewerLink(`https://user@stracker.simondalmasso44.workers.dev/shared#v=${capability}`)).toBeNull()
+    expect(parseAuthorizedViewerLink(capability)).toBeNull()
+
+    const localOrigin = 'http://127.0.0.1:8787'
+    expect(parseAuthorizedViewerLink(`${localOrigin}/shared/#v=${capability}`, localOrigin)?.capability).toBe(capability)
+    expect(parseAuthorizedViewerLink(`http://localhost:8787/shared#v=${capability}`, localOrigin)).toBeNull()
+  })
+
+  test('MAP_3D_RUNTIME_TESTS renders public OSM buildings with visible toggle effect', async () => {
+    const result = await runMap3dRuntimeQa()
+    expect(result.renderedFeatureCount).toBeGreaterThan(0)
+    expect(result.gates.MAP_3D_RUNTIME_TESTS).toBe('PASS')
+    expect(result.gates.BUILDING_TOGGLE_VISIBLE_EFFECT).toBe('PASS')
+    expect(result.gates.MARKER_ABOVE_BUILDINGS).toBe('PASS')
+    expect(result.gates.LABELS_USABLE_ABOVE_BUILDINGS).toBe('PASS')
+    expect(result.realUserCoordinatesUsed).toBe(false)
+    expect(result.coordinateValuesRetained).toBe(false)
+  }, 120_000)
 
   test('classifies last-success age without timestamps in output', () => {
     const now = Date.parse('2026-08-02T12:00:00.000Z')

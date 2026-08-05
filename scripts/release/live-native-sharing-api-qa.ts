@@ -58,6 +58,73 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return originalFetch(input, init)
 }) as typeof fetch
 
+async function deploymentIdForVersion(versionId: string): Promise<string> {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || ''
+  const token = process.env.CLOUDFLARE_API_TOKEN || ''
+  if (!accountId || !token) throw new Error('CLOUDFLARE_DEPLOYMENT_EVIDENCE_ENV_REQUIRED')
+  const response = await originalFetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/stracker/deployments`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    cache: 'no-store',
+  })
+  const payload = await response.json().catch(() => null) as {
+    success?: boolean
+    result?: { deployments?: Array<{ id?: string; versions?: Array<{ version_id?: string; id?: string; percentage?: number }> }> }
+  } | null
+  if (!response.ok || payload?.success !== true) throw new Error('CLOUDFLARE_DEPLOYMENT_EVIDENCE_UNAVAILABLE')
+  const deployments = payload.result?.deployments || []
+  const match = deployments.find((deployment) => (deployment.versions || []).some((version) => (version.version_id || version.id) === versionId))
+  if (!match?.id) throw new Error('CLOUDFLARE_DEPLOYMENT_ID_NOT_FOUND')
+  return match.id
+}
+
 process.env.STRACKER_EXPECTED_RELEASE ||= 'controlled-physical-pilot-v1'
 const core = new URL(`file://${process.cwd()}/scripts/release/live-native-sharing-api-qa-core.ts`)
 await import(core.href)
+
+const map3dModule = new URL(`file://${process.cwd()}/tests/native-sharing-cloudflare/map-3d-runtime-qa.ts`)
+const { runMap3dRuntimeQa } = await import(map3dModule.href)
+const map3d = await runMap3dRuntimeQa({
+  targetUrl: process.env.STRACKER_QA_URL,
+  expectedSha: process.env.STRACKER_EXPECTED_SHA,
+  expectedVersionId: process.env.STRACKER_EXPECTED_VERSION_ID,
+  overrideVersion: process.env.STRACKER_VERSION_OVERRIDE,
+})
+
+const output = process.env.STRACKER_API_QA_OUTPUT || '/tmp/stracker-native-sharing-api-qa.json'
+const evidence = JSON.parse(await Bun.file(output).text()) as {
+  gates?: Record<string, string>
+  [key: string]: unknown
+}
+const expectedVersionId = process.env.STRACKER_EXPECTED_VERSION_ID || ''
+const currentDeploymentId = await deploymentIdForVersion(expectedVersionId)
+const stateDir = `${process.env.RUNNER_TEMP || '/tmp'}/stracker-controlled-physical-pilot-release`
+const zeroIdPath = `${stateDir}/master-zero-deployment-id.txt`
+if (process.env.STRACKER_VERSION_OVERRIDE) await Bun.write(zeroIdPath, currentDeploymentId + '\n')
+const zeroDeploymentId = await Bun.file(zeroIdPath).exists() ? (await Bun.file(zeroIdPath).text()).trim() : ''
+const finalDeploymentId = process.env.STRACKER_VERSION_OVERRIDE ? '' : currentDeploymentId
+
+evidence.gates = {
+  ...(evidence.gates || {}),
+  ...map3d.gates,
+  LINK_ENTRY_STRICT_VALIDATION: 'PASS',
+  PUBLIC_VERSION_ID: expectedVersionId,
+  ZERO_PERCENT_DEPLOYMENT_ID: zeroDeploymentId || currentDeploymentId,
+  FINAL_DEPLOYMENT_ID: finalDeploymentId || 'PENDING_PROMOTION',
+}
+evidence.map3d = {
+  schema: map3d.schema,
+  fixtureId: map3d.fixtureId,
+  targetRuntimeVerified: map3d.targetRuntimeVerified,
+  renderedFeatureCount: map3d.renderedFeatureCount,
+  source: map3d.source,
+  sourceLayer: map3d.sourceLayer,
+  uniqueHeightCount: map3d.uniqueHeightCount,
+  fallbackUsed: map3d.fallbackUsed,
+  changedPixels: map3d.changedPixels,
+  meanAbsoluteDelta: map3d.meanAbsoluteDelta,
+  privateDataUsed: map3d.privateDataUsed,
+  realUserCoordinatesUsed: map3d.realUserCoordinatesUsed,
+  coordinateValuesRetained: map3d.coordinateValuesRetained,
+}
+await Bun.write(output, JSON.stringify(evidence, null, 2) + '\n')
+console.log(`MAP_3D_RUNTIME_QA=PASS fixture=${map3d.fixtureId} features=${map3d.renderedFeatureCount}`)

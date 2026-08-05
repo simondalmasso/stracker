@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { ChevronLeft, Cookie, Link2, Radio } from 'lucide-react'
-import { parseViewerCapabilityValue, viewerFragmentLink } from '@/lib/location-source/native-sharing-api'
+import { viewerFragmentLink } from '@/lib/location-source/native-sharing-api'
+import { parseAuthorizedViewerLink } from '@/lib/location-source/viewer-link-policy'
 import CookieSessionPanel from './CookieSessionPanel'
 
 interface NativeSharingHubProps {
@@ -18,9 +19,9 @@ export default function NativeSharingHub({ onBack }: NativeSharingHubProps) {
   if (cookieMode) return <CookieSessionPanel onBack={() => setCookieMode(false)} />
 
   const openLink = () => {
-    const parsed = parseViewerCapabilityValue(value)
+    const parsed = parseAuthorizedViewerLink(value, window.location.origin)
     if (!parsed) {
-      setError('Pegá un enlace privado válido de STRACKER.')
+      setError('Pegá una URL válida de este STRACKER.')
       return
     }
     window.location.assign(viewerFragmentLink(parsed.capability))
@@ -41,8 +42,8 @@ export default function NativeSharingHub({ onBack }: NativeSharingHubProps) {
           </button>
           {opening ? (
             <div className="rounded-[22px] border border-white/10 p-3">
-              <label htmlFor="viewer-link" className="text-xs font-semibold text-white/50">ENLACE PRIVADO</label>
-              <input id="viewer-link" value={value} onChange={(event) => { setValue(event.target.value); setError(null) }} autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="https://…/shared#v=…" className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black px-3 text-sm" />
+              <label htmlFor="viewer-link" className="text-xs font-semibold text-white/50">URL PRIVADA DE STRACKER</label>
+              <input id="viewer-link" value={value} onChange={(event) => { setValue(event.target.value); setError(null) }} autoCapitalize="off" autoCorrect="off" spellCheck={false} inputMode="url" placeholder="https://…/shared#v=…" className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black px-3 text-sm" />
               {error ? <p role="alert" className="mt-2 text-xs text-white/65">{error}</p> : null}
               <button type="button" onClick={openLink} className="mt-3 min-h-11 w-full rounded-2xl bg-white text-sm font-semibold text-black">ABRIR</button>
             </div>
