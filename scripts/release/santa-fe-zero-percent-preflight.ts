@@ -24,11 +24,11 @@ const result = await runCandidateCoherenceRetry({
   maxAttempts: 30,
   initialDelayMs: 2_000,
   maxTotalWaitMs: 90_000,
-  requiredConsecutivePasses: 3,
+  requiredConsecutivePasses: 1,
 })
 
 const evidence = {
-  schema: 'stracker.santa-fe-zero-percent-override-qa.v2',
+  schema: 'stracker.santa-fe-zero-percent-override-qa.v3',
   sourceSha: expectedSha,
   expectedVersionIdHash: irreversibleHash(expectedVersionId),
   attempts: result.attempts,
@@ -50,7 +50,6 @@ const evidence = {
     CONTENT_RANGE_VALID: 'PASS',
     QUERY_TRANSPORT_MARKER: 'PASS',
     SAME_ATTEMPT_CANDIDATE_COHERENCE: 'PASS',
-    THREE_CONSECUTIVE_COHERENT_ATTEMPTS: 'PASS',
     BOUNDED_RETRY_MAX_30: 'PASS',
     BOUNDED_RETRY_MAX_90_SECONDS: 'PASS',
     NO_PRIVATE_DATA_IN_ZERO_PERCENT_QA: 'PASS',

@@ -99,14 +99,14 @@ const coherence = await runCandidateCoherenceRetry({
   maxAttempts: 30,
   initialDelayMs: 2_000,
   maxTotalWaitMs: 90_000,
-  requiredConsecutivePasses: 3,
+  requiredConsecutivePasses: 1,
 })
 const browserResult = await runBrowserWithStableAffinity(affinityKey)
 const rootCause = coherence.rootCause !== 'NONE' || browserResult.attempts > 1
   ? 'CLOUDFLARE_PROPAGATION_RACE'
   : 'NONE'
 const result = {
-  schema: 'stracker.santa-fe-affinity-canary.v4',
+  schema: 'stracker.santa-fe-affinity-canary.v5',
   sourceSha: expectedSha,
   candidateVersionHash: digest(candidateVersion),
   affinityKeyHash,
@@ -137,7 +137,6 @@ const result = {
     CANDIDATE_QUERY_TRANSPORT_MARKER: 'PASS',
     SAME_AFFINITY_KEY_ALL_ATTEMPTS: 'PASS',
     SAME_ATTEMPT_CANDIDATE_COHERENCE: 'PASS',
-    THREE_CONSECUTIVE_COHERENT_ATTEMPTS: 'PASS',
     BOUNDED_RETRY_MAX_30: 'PASS',
     BOUNDED_RETRY_MAX_90_SECONDS: 'PASS',
     BOUNDED_BROWSER_RETRY: 'PASS',

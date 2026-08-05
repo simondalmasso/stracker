@@ -184,13 +184,12 @@ async function observeAttempt(
     const rangeUrl = new URL(options.expected.manifest.asset_paths[0], target)
     rangeUrl.searchParams.set('pmtilesOffset', '0')
     rangeUrl.searchParams.set('pmtilesLength', '16384')
-    rangeUrl.searchParams.set('candidate', nonce)
     const [buildResponse, versionResponse, manifestResponse, rangeResponse] = await Promise.all([
       options.fetchImpl(new URL(`/__stracker/build.json?candidate=${nonce}`, target), { headers, cache: 'no-store', signal: controller.signal }),
       options.fetchImpl(new URL(`/__stracker/version.json?candidate=${nonce}`, target), { headers, cache: 'no-store', signal: controller.signal }),
       options.fetchImpl(new URL(`/data/santa-fe-3d/manifest.json?candidate=${nonce}`, target), { headers, cache: 'no-store', signal: controller.signal }),
       options.fetchImpl(rangeUrl, {
-        headers: { ...headers, Range: 'bytes=0-16383', 'Accept-Encoding': 'identity' },
+        headers: { ...headers, Range: 'bytes=0-16383', 'Accept-Encoding': 'identity', 'X-Stracker-QA-Attempt': nonce },
         cache: 'no-store',
         signal: controller.signal,
       }),
