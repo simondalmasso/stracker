@@ -95,16 +95,17 @@ describe('native capability and opaque viewer sessions', () => {
     expect((await service.getStatus(created.sessionId, replacement.viewerSessionToken)).state).toBe('active')
   })
 
-  test('VIEWER_SESSION_SHORT_LIVED and VIEWER_LOGOUT', async () => {
+  test('VIEWER_SESSION_FULL_SHARE_LIFETIME and VIEWER_LOGOUT', async () => {
     const h = harness()
     const first = await createAndExchange(h.service, 60 * 60_000)
-    expect(Date.parse(first.viewer.expiresAt) - h.now()).toBe(VIEWER_SESSION_TTL_MS)
+    expect(Date.parse(first.viewer.expiresAt) - h.now()).toBe(60 * 60_000)
     await h.service.logoutViewer(first.created.sessionId, first.viewer.viewerSessionToken)
     await expectCode(h.service.getStatus(first.created.sessionId, first.viewer.viewerSessionToken), 'VIEWER_SESSION_INVALID')
 
-    const second = await createAndExchange(h.service, 60 * 60_000)
-    h.advance(VIEWER_SESSION_TTL_MS + 1)
-    await expectCode(h.service.getStatus(second.created.sessionId, second.viewer.viewerSessionToken), 'VIEWER_SESSION_EXPIRED')
+    const second = await createAndExchange(h.service, VIEWER_SESSION_TTL_MS)
+    expect(Date.parse(second.viewer.expiresAt) - h.now()).toBe(VIEWER_SESSION_TTL_MS)
+    h.advance(VIEWER_SESSION_TTL_MS - 1)
+    expect((await h.service.getStatus(second.created.sessionId, second.viewer.viewerSessionToken)).state).toBe('stale')
   })
 })
 
