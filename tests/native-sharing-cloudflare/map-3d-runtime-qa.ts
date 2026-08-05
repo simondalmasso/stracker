@@ -33,23 +33,29 @@ async function verifyRuntimeIdentity(options: Map3dQaOptions): Promise<void> {
   if (!options.targetUrl) return
   const target = new URL(options.targetUrl)
   ok(target.protocol === 'https:', 'MAP3D_HTTPS_TARGET_REQUIRED')
-  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   const headers = {
     Accept: 'application/json',
     'Cache-Control': 'no-cache',
     ...overrideHeaders(options.overrideVersion || ''),
   }
-  const [buildResponse, versionResponse] = await Promise.all([
-    fetch(new URL(`/__stracker/build.json?map3d=${nonce}`, target), { headers, cache: 'no-store' }),
-    fetch(new URL(`/__stracker/version.json?map3d=${nonce}`, target), { headers, cache: 'no-store' }),
-  ])
-  ok(buildResponse.status === 200 && versionResponse.status === 200, 'MAP3D_RUNTIME_IDENTITY_UNAVAILABLE')
-  const build = await buildResponse.json() as { sourceSha?: string; release?: string }
-  const version = await versionResponse.json() as { sourceSha?: string; versionId?: string }
-  ok(build.sourceSha === options.expectedSha, 'MAP3D_BUILD_SHA_MISMATCH')
-  ok(build.release === 'controlled-physical-pilot-v1', 'MAP3D_BUILD_RELEASE_MISMATCH')
-  ok(version.sourceSha === options.expectedSha, 'MAP3D_VERSION_SHA_MISMATCH')
-  ok(version.versionId === options.expectedVersionId, 'MAP3D_VERSION_ID_MISMATCH')
+  let lastCode = 'MAP3D_RUNTIME_IDENTITY_UNAVAILABLE'
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    const nonce = `${Date.now()}-${attempt}-${Math.random().toString(36).slice(2)}`
+    const [buildResponse, versionResponse] = await Promise.all([
+      fetch(new URL(`/__stracker/build.json?map3d=${nonce}`, target), { headers, cache: 'no-store' }),
+      fetch(new URL(`/__stracker/version.json?map3d=${nonce}`, target), { headers, cache: 'no-store' }),
+    ])
+    const build = await buildResponse.json().catch(() => null) as { sourceSha?: string; release?: string } | null
+    const version = await versionResponse.json().catch(() => null) as { sourceSha?: string; versionId?: string } | null
+    if (buildResponse.status !== 200 || versionResponse.status !== 200 || !build || !version) lastCode = 'MAP3D_RUNTIME_IDENTITY_UNAVAILABLE'
+    else if (build.sourceSha !== options.expectedSha) lastCode = 'MAP3D_BUILD_SHA_MISMATCH'
+    else if (build.release !== 'controlled-physical-pilot-v1') lastCode = 'MAP3D_BUILD_RELEASE_MISMATCH'
+    else if (version.sourceSha !== options.expectedSha) lastCode = 'MAP3D_VERSION_SHA_MISMATCH'
+    else if (version.versionId !== options.expectedVersionId) lastCode = 'MAP3D_VERSION_ID_MISMATCH'
+    else return
+    if (attempt < 20) await Bun.sleep(1_000)
+  }
+  throw new Map3dQaFailure(lastCode)
 }
 
 function browserEntry(): string {
