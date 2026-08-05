@@ -2,11 +2,15 @@ import { describe, expect, test } from 'bun:test'
 import manifest from '../../public/data/santa-fe-3d/manifest.json'
 
 describe('Santa Fe affinity canary release contract', () => {
-  test('keeps dense PMTiles on direct static asset routing', async () => {
+  test('routes content-addressed PMTiles through cacheable Worker range handling', async () => {
     const config = await Bun.file('native-sharing-cloudflare/wrangler.release.jsonc').json()
     const routes = config.assets?.run_worker_first || []
-    expect(routes.some((route: string) => route.startsWith('/data/santa-fe-3d'))).toBe(false)
+    expect(routes).toContain('/data/santa-fe-3d/*.pmtiles')
     expect(manifest.asset_paths.length).toBeGreaterThanOrEqual(2)
+    const worker = await Bun.file('native-sharing-cloudflare/src/minimal-worker.ts').text()
+    expect(worker).toContain("headers.set('Accept-Ranges', 'bytes')")
+    expect(worker).toContain("headers.set('Cache-Control', 'public, max-age=31536000, immutable')")
+    expect(worker).toContain("assetHeaders.delete('Range')")
   })
 
   test('uses zero, one-percent affinity canary, then full promotion', async () => {

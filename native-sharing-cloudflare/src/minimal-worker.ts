@@ -36,6 +36,7 @@ const COOKIE_IMPORT_WINDOW_MS = 60_000
 const COOKIE_IMPORT_LIMIT = 20
 const cookieImportWindows = new Map<string, { startedAt: number; count: number }>()
 const COOKIE_ROUTE = new RegExp(`^/api/cookie-sessions/(${SESSION_ID_PATTERN})(?:/(status|point|refresh))?$`)
+const SANTA_FE_PMTILES_ROUTE = /^\/data\/santa-fe-3d\/santa-fe-buildings-3d-[a-z-]+\.[a-f0-9]{16}\.pmtiles$/
 
 function jsonError(status: number, error: string): Response {
   return new Response(JSON.stringify({ status: 'error', error }), {
@@ -76,6 +77,44 @@ function hardenAssetResponse(request: Request, response: Response): Response {
     headers.set('Pragma', 'no-cache')
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
+async function serveSantaFePmtiles(request: Request, env: MinimalRuntimeEnv, url: URL): Promise<Response> {
+  if (url.search) return jsonError(400, 'REQUEST_INVALID')
+  if (request.method !== 'GET' && request.method !== 'HEAD') return jsonError(405, 'METHOD_NOT_ALLOWED')
+  if (!env.ASSETS) return jsonError(503, 'ASSET_BINDING_UNAVAILABLE')
+
+  const assetHeaders = new Headers(request.headers)
+  assetHeaders.delete('Range')
+  assetHeaders.delete('If-Range')
+  assetHeaders.delete('Authorization')
+  assetHeaders.delete('Cookie')
+  assetHeaders.set('Accept-Encoding', 'identity')
+  const assetRequest = new Request(url.toString(), {
+    method: 'GET',
+    headers: assetHeaders,
+  })
+
+  try {
+    const asset = await env.ASSETS.fetch(assetRequest)
+    if (asset.status !== 200) return jsonError(asset.status === 404 ? 404 : 503, asset.status === 404 ? 'NOT_FOUND' : 'ASSET_UNAVAILABLE')
+    const headers = new Headers(asset.headers)
+    headers.set('Accept-Ranges', 'bytes')
+    headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+    headers.set('Content-Type', 'application/vnd.pmtiles')
+    headers.set('Content-Disposition', 'inline')
+    headers.set('Referrer-Policy', 'no-referrer')
+    headers.set('X-Content-Type-Options', 'nosniff')
+    headers.delete('Content-Security-Policy')
+    headers.delete('Permissions-Policy')
+    return new Response(request.method === 'HEAD' ? null : asset.body, {
+      status: 200,
+      statusText: asset.statusText,
+      headers,
+    })
+  } catch {
+    return jsonError(503, 'ASSET_UNAVAILABLE')
+  }
 }
 
 function allowedNativeMethods(pathname: string): readonly string[] | null {
@@ -168,6 +207,7 @@ export async function handleMinimumRuntimeRequest(request: Request, env: Minimal
     const versionInfo = runtimeVersionInfo(env)
     return versionInfo || jsonError(503, 'VERSION_METADATA_UNAVAILABLE')
   }
+  if (SANTA_FE_PMTILES_ROUTE.test(url.pathname)) return serveSantaFePmtiles(request, env, url)
   if (url.pathname.startsWith('/api/share/') || url.pathname.startsWith('/api/cookie-sessions')) {
     return forwardApi(request, env, url)
   }

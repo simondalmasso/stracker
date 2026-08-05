@@ -29,6 +29,11 @@ if end < 0:
 end += len(end_marker)
 replacement = "\necho 'ZERO_PERCENT_DEPLOYMENT_ATTESTATION=PASS'\n"
 source = source[:start] + replacement + source[end:]
+source = source.replace(
+    "assert not any(str(route).startswith('/data/santa-fe-3d') for route in public['assets'].get('run_worker_first', []))",
+    "assert '/data/santa-fe-3d/*.pmtiles' in public['assets'].get('run_worker_first', [])",
+)
+source = source.replace("print('PMTILES_RUN_WORKER_FIRST=NO')", "print('PMTILES_RUN_WORKER_FIRST=YES')")
 source = source.replace("'zeroPercentMetadataOverrideQa': True", "'zeroPercentMetadataOverrideQa': False")
 source = source.replace("'zero-percent-metadata', 'one-percent-version-affinity-static-and-render'", "'zero-percent-deployment', 'one-percent-version-affinity-static-and-render'")
 Path(sys.argv[2]).write_text(source)
