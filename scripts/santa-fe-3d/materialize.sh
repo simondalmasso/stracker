@@ -32,10 +32,11 @@ tippecanoe \
   --output="$MBTILES" \
   --layer=santa_fe_buildings_3d \
   --minimum-zoom=13 \
-  --maximum-zoom=18 \
+  --maximum-zoom=17 \
   --drop-densest-as-needed \
+  --drop-smallest-as-needed \
   --extend-zooms-if-still-dropping \
-  --simplification=2 \
+  --simplification=4 \
   --detect-shared-borders \
   --name="STRACKER Santa Fe dense city 3D" \
   --description="Public low-poly LOD1 building massing for Santa Fe Capital, Argentina" \
