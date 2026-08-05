@@ -23,6 +23,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       TIPPECANOE_COMMIT: 7c80fccdc17e4f8d9f4a52d518b4845290224366
+      PMTILES_ARCHIVE_SHA256: 23a2a2222f658320b539ccd06ac3b9b3b803ecbdd39a6cb5249d2ce2e16e38ae
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,11 +37,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.25.0'
-          cache: false
 
       - name: EXACT_HEAD
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
@@ -57,9 +53,15 @@ jobs:
           git -C "${RUNNER_TEMP}/tippecanoe" checkout --detach "$TIPPECANOE_COMMIT"
           make -C "${RUNNER_TEMP}/tippecanoe" -j2
           sudo make -C "${RUNNER_TEMP}/tippecanoe" install
-          GOBIN="${RUNNER_TEMP}/bin" go install github.com/protomaps/go-pmtiles/cmd/pmtiles@v1.30.1
+          curl --fail --location --retry 3 \
+            --output "${RUNNER_TEMP}/go-pmtiles.tar.gz" \
+            https://github.com/protomaps/go-pmtiles/releases/download/v1.30.1/go-pmtiles_1.30.1_Linux_x86_64.tar.gz
+          test "$(sha256sum "${RUNNER_TEMP}/go-pmtiles.tar.gz" | cut -d' ' -f1)" = "$PMTILES_ARCHIVE_SHA256"
+          mkdir -p "${RUNNER_TEMP}/bin"
+          tar -xzf "${RUNNER_TEMP}/go-pmtiles.tar.gz" -C "${RUNNER_TEMP}/bin"
+          test -x "${RUNNER_TEMP}/bin/pmtiles"
           echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
-          "${RUNNER_TEMP}/bin/pmtiles" --version
+          "${RUNNER_TEMP}/bin/pmtiles" help >/dev/null
           tippecanoe --version
           echo 'PINNED_BUILD_TOOLCHAIN=PASS'
 
