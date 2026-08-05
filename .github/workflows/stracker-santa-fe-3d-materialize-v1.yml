@@ -72,14 +72,106 @@ jobs:
           bun install --frozen-lockfile
           echo 'PMTILES_JS_PIN=PASS'
 
+      - name: OVERTURE_STAC_AND_TINY_BBOX_DIAGNOSTIC
+        run: |
+          python - <<'PY'
+          import json
+          import traceback
+          from pathlib import Path
+          from urllib.request import urlopen
+          from overturemaps.core import record_batch_reader
+
+          release = "2026-07-22.0"
+          tiny_bbox = (-60.7045, -31.6485, -60.6945, -31.6385)
+          report = {"release": release, "tiny_bbox_public_fixture": True, "datasets": {}}
+          try:
+              with urlopen("https://stac.overturemaps.org/catalog.json", timeout=45) as response:
+                  catalog = json.load(response)
+              releases = {
+                  link.get("href", "").strip("./").split("/")[0]
+                  for link in catalog.get("links", [])
+                  if link.get("rel") == "child"
+              }
+              report["stac_latest_release"] = catalog.get("latest")
+              report["pinned_release_exists"] = release in releases
+              if release not in releases:
+                  raise RuntimeError(f"PINNED_RELEASE_UNAVAILABLE:{release}")
+
+              for kind in ("building", "building_part"):
+                  collection_url = f"https://stac.overturemaps.org/{release}/buildings/{kind}/collection.json"
+                  with urlopen(collection_url, timeout=45) as response:
+                      collection = json.load(response)
+                  if collection.get("id") != kind:
+                      raise RuntimeError(f"STAC_COLLECTION_MISMATCH:{kind}:{collection.get('id')}")
+                  reader = record_batch_reader(
+                      kind,
+                      bbox=tiny_bbox,
+                      release=release,
+                      connect_timeout=45,
+                      request_timeout=240,
+                      stac=True,
+                  )
+                  if reader is None:
+                      raise RuntimeError(f"OVERTURE_READER_UNAVAILABLE:{kind}")
+                  table = reader.read_all()
+                  report["datasets"][kind] = {
+                      "rows": table.num_rows,
+                      "columns": table.schema.names,
+                      "geometry_column_type": str(table.schema.field("geometry").type),
+                      "height_columns": [
+                          name for name in ("height", "num_floors", "min_height", "min_floor")
+                          if name in table.schema.names
+                      ],
+                  }
+                  if kind == "building" and table.num_rows <= 0:
+                      raise RuntimeError("BUILDING_READ_ROWS_NOT_GT_ZERO")
+              Path("${RUNNER_TEMP}/overture-preflight.json").write_text(json.dumps(report, indent=2, sort_keys=True))
+              print(json.dumps(report, indent=2, sort_keys=True))
+              print("OVERTURE_STAC_AND_TINY_BBOX_DIAGNOSTIC=PASS")
+          except Exception as exc:
+              signature = f"{type(exc).__name__}:{exc}".replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=STRACKER_OVERTURE_PREFLIGHT::{signature}")
+              traceback.print_exc()
+              raise
+          PY
+
       - name: MATERIALIZE_SANTA_FE_CITY
         run: |
           chmod +x scripts/santa-fe-3d/materialize.sh
-          bash scripts/santa-fe-3d/materialize.sh
+          stdout="${RUNNER_TEMP}/santa-fe-materialize.stdout.log"
+          stderr="${RUNNER_TEMP}/santa-fe-materialize.stderr.log"
+          set +e
+          bash scripts/santa-fe-3d/materialize.sh >"$stdout" 2>"$stderr"
+          code=$?
+          set -e
+          cat "$stdout"
+          cat "$stderr" >&2
+          if [ "$code" -ne 0 ]; then
+            signature="$(tail -n 24 "$stderr" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/%/%25/g; s/\r/%0D/g; s/\n/%0A/g' | cut -c1-1800)"
+            echo "::error title=STRACKER_MATERIALIZATION_ROOT_CAUSE::exit=${code};${signature}"
+            exit "$code"
+          fi
           python scripts/santa-fe-3d/validate_static_asset.py \
             --manifest public/data/santa-fe-3d/manifest.json \
             --root public
           echo 'SANTA_FE_DENSE_CITY_MATERIALIZED=PASS'
+
+      - name: PREPARE_DIAGNOSTIC_ARTIFACT
+        if: failure()
+        run: |
+          mkdir -p "${RUNNER_TEMP}/santa-fe-3d-diagnostic"
+          cp "${RUNNER_TEMP}"/overture-preflight.json "${RUNNER_TEMP}/santa-fe-3d-diagnostic/" 2>/dev/null || true
+          cp "${RUNNER_TEMP}"/santa-fe-materialize.*.log "${RUNNER_TEMP}/santa-fe-3d-diagnostic/" 2>/dev/null || true
+          printf '%s\n' "$SOURCE_SHA" > "${RUNNER_TEMP}/santa-fe-3d-diagnostic/source-sha.txt"
+          ! grep -RIE 'authorization:|bearer |capability|private[_ -]?link|cookie' "${RUNNER_TEMP}/santa-fe-3d-diagnostic"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: stracker-santa-fe-3d-diagnostic-${{ env.SOURCE_SHA }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/santa-fe-3d-diagnostic
+          if-no-files-found: error
+          retention-days: 14
 
       - name: PREPARE_MATERIALIZATION_ARTIFACT
         run: |
