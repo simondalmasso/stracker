@@ -105,7 +105,7 @@ describe('native capability and opaque viewer sessions', () => {
     const second = await createAndExchange(h.service, VIEWER_SESSION_TTL_MS)
     expect(Date.parse(second.viewer.expiresAt) - h.now()).toBe(VIEWER_SESSION_TTL_MS)
     h.advance(VIEWER_SESSION_TTL_MS - 1)
-    expect((await h.service.getStatus(second.created.sessionId, second.viewer.viewerSessionToken)).state).toBe('stale')
+    expect((await h.service.getStatus(second.created.sessionId, second.viewer.viewerSessionToken)).state).toBe('active')
   })
 })
 
