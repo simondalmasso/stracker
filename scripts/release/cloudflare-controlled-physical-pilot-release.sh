@@ -9,6 +9,7 @@ set -Eeuo pipefail
 # Cloudflare-Workers-Version-Overrides
 # ZERO_PERCENT_OVERRIDE_QA
 # santa-fe-affinity-canary-qa.ts
+# offline-stop-browser-qa.ts
 # PUBLIC_POST_PROMOTION_QA
 
 CORE='scripts/release/cloudflare-controlled-physical-pilot-release-core.sh'
