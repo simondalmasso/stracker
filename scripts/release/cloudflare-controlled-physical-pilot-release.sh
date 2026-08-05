@@ -12,6 +12,7 @@ API_QA_OUTPUT="$STATE_DIR/api-qa.json"
 BASE_BROWSER_QA_OUTPUT="$STATE_DIR/base-browser-qa.json"
 PILOT_BROWSER_QA_OUTPUT="$STATE_DIR/pilot-browser-qa.json"
 OFFLINE_STOP_QA_OUTPUT="$STATE_DIR/offline-stop-qa.json"
+AFFINITY_QA_OUTPUT="$STATE_DIR/santa-fe-affinity-canary.json"
 mkdir -p "$STATE_DIR"
 
 if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
@@ -53,11 +54,13 @@ assert public['workers_dev'] is True and public['preview_urls'] is False and pub
 assert public['assets']['binding'] == 'ASSETS'
 assert public['version_metadata']['binding'] == 'CF_VERSION_METADATA'
 assert public['services'] == [{'binding': 'NATIVE_SHARING_BACKEND', 'service': 'stracker-native-sharing-backend'}]
+assert not any(str(route).startswith('/data/santa-fe-3d') for route in public['assets'].get('run_worker_first', []))
 assert backend['name'] == 'stracker-native-sharing-backend'
 assert backend['workers_dev'] is False and backend['preview_urls'] is False and backend.get('routes') == []
 assert backend['durable_objects']['bindings'] == [{'name': 'NATIVE_SHARING', 'class_name': 'NativeSharingDurableObject'}]
 assert backend['exports'] == {'NativeSharingDurableObject': {'type': 'durable-object', 'storage': 'sqlite'}}
 print('RELEASE_CONFIG_INVARIANTS=PASS')
+print('PMTILES_RUN_WORKER_FIRST=NO')
 PY
 
 api_get '/user/tokens/verify' "$STATE_DIR/token.json"
@@ -146,6 +149,7 @@ for item in items:
 else: raise SystemExit('CANDIDATE_VERSION_NOT_FOUND')
 PY
 CANDIDATE_VERSION="$(cat "$STATE_DIR/candidate-version-id.txt")"
+PREVIOUS_VERSION="$(cat "$STATE_DIR/previous-version-id.txt")"
 
 rollback_required=0
 rollback() {
@@ -158,7 +162,7 @@ rollback() {
 }
 trap rollback ERR
 rollback_required=1
-run_wrangler "$STATE_DIR/zero.log" versions deploy "$(cat "$STATE_DIR/rollback-spec.txt")" "${CANDIDATE_VERSION}@0%" --name "$PUBLIC_WORKER" --message 'STRACKER controlled pilot zero-percent validation' -y
+run_wrangler "$STATE_DIR/zero.log" versions deploy "$(cat "$STATE_DIR/rollback-spec.txt")" "${CANDIDATE_VERSION}@0%" --name "$PUBLIC_WORKER" --message 'STRACKER controlled pilot zero-percent metadata validation' -y
 api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${PUBLIC_WORKER}/deployments" "$STATE_DIR/zero-deployments.json"
 python - "$STATE_DIR" "$CANDIDATE_VERSION" <<'PY'
 import json, sys
@@ -168,7 +172,9 @@ deployments = json.loads((root/'zero-deployments.json').read_text())['result'].g
 if not deployments: raise SystemExit('ZERO_DEPLOYMENT_UNAVAILABLE')
 match = [v for v in (deployments[0].get('versions') or []) if (v.get('version_id') or v.get('id')) == candidate]
 if len(match) != 1 or float(match[0].get('percentage', -1)) != 0: raise SystemExit('ZERO_PERCENT_MISMATCH')
-(root/'zero-deployment-id.txt').write_text(str(deployments[0].get('id') or 'unknown')+'\n')
+identifier = str(deployments[0].get('id') or 'unknown')
+(root/'zero-deployment-id.txt').write_text(identifier+'\n')
+(root/'master-zero-deployment-id.txt').write_text(identifier+'\n')
 print('PUBLIC_ZERO_PERCENT_DEPLOYMENT=PASS')
 PY
 
@@ -199,6 +205,36 @@ done
 echo 'VERSION_METADATA_OVERRIDE=PASS'
 echo 'BUILD_JSON_ASSET_ATTESTATION=PASS'
 
+run_wrangler "$STATE_DIR/canary.log" versions deploy "${PREVIOUS_VERSION}@99%" "${CANDIDATE_VERSION}@1%" --name "$PUBLIC_WORKER" --message 'STRACKER Santa Fe dense-city one-percent affinity canary' -y
+api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${PUBLIC_WORKER}/deployments" "$STATE_DIR/canary-deployments.json"
+python - "$STATE_DIR" "$PREVIOUS_VERSION" "$CANDIDATE_VERSION" <<'PY'
+import json, sys
+from pathlib import Path
+root, previous, candidate = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+deployments = json.loads((root/'canary-deployments.json').read_text())['result'].get('deployments') or []
+if not deployments: raise SystemExit('CANARY_DEPLOYMENT_UNAVAILABLE')
+current = deployments[0]
+versions = current.get('versions') or []
+def percentage(version):
+    match = [v for v in versions if (v.get('version_id') or v.get('id')) == version]
+    return float(match[0].get('percentage', -1)) if len(match) == 1 else -1
+if percentage(previous) != 99 or percentage(candidate) != 1: raise SystemExit('CANARY_PERCENTAGE_MISMATCH')
+(root/'canary-deployment-id.txt').write_text(str(current.get('id') or 'unknown')+'\n')
+print('PUBLIC_ONE_PERCENT_AFFINITY_CANARY=PASS')
+PY
+
+STRACKER_QA_URL="$TARGET_URL" \
+STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
+STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" \
+STRACKER_PUBLIC_WORKER="$PUBLIC_WORKER" \
+STRACKER_AFFINITY_QA_OUTPUT="$AFFINITY_QA_OUTPUT" \
+STRACKER_AFFINITY_SCREENSHOT_DIR="$STATE_DIR" \
+CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
+bun scripts/release/santa-fe-affinity-canary-qa.ts
+jq -e '.privateDataUsed == false and .realUserCoordinatesUsed == false and .coordinateValuesRetained == false' "$AFFINITY_QA_OUTPUT" >/dev/null
+jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$AFFINITY_QA_OUTPUT" >/dev/null
+echo 'ONE_PERCENT_AFFINITY_SANTA_FE_QA=PASS'
+
 python - "$STATE_DIR/pilot-api-qa.ts" <<'PY'
 from pathlib import Path
 import sys
@@ -218,7 +254,6 @@ run_qas() {
   STRACKER_QA_URL="$TARGET_URL" STRACKER_EXPECTED_SHA="$SOURCE_SHA" STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" STRACKER_VERSION_OVERRIDE="$override" OFFLINE_STOP_QA_OUTPUT="$OFFLINE_STOP_QA_OUTPUT" CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts
   echo "$suffix=PASS"
 }
-run_qas "$CANDIDATE_VERSION" 'ZERO_PERCENT_OVERRIDE_PILOT_E2E'
 
 run_wrangler "$STATE_DIR/promote.log" versions deploy "${CANDIDATE_VERSION}@100%" --name "$PUBLIC_WORKER" --message "STRACKER controlled pilot ${SOURCE_SHA}" -y
 post_ok=0
@@ -258,37 +293,38 @@ PY
 
 rollback_required=0
 trap - ERR
-python - "$STATE_DIR" "$SOURCE_SHA" "$TARGET_URL" "$API_QA_OUTPUT" "$BASE_BROWSER_QA_OUTPUT" "$PILOT_BROWSER_QA_OUTPUT" "$OFFLINE_STOP_QA_OUTPUT" <<'PY'
+python - "$STATE_DIR" "$SOURCE_SHA" "$TARGET_URL" "$TAG" "$API_QA_OUTPUT" "$BASE_BROWSER_QA_OUTPUT" "$PILOT_BROWSER_QA_OUTPUT" "$OFFLINE_STOP_QA_OUTPUT" "$AFFINITY_QA_OUTPUT" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
-root, sha, url = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-api = json.loads(Path(sys.argv[4]).read_text())
-base = json.loads(Path(sys.argv[5]).read_text())
-pilot = json.loads(Path(sys.argv[6]).read_text())
-offline_stop = json.loads(Path(sys.argv[7]).read_text())
+root, sha, url, tag = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+api = json.loads(Path(sys.argv[5]).read_text())
+base = json.loads(Path(sys.argv[6]).read_text())
+pilot = json.loads(Path(sys.argv[7]).read_text())
+offline_stop = json.loads(Path(sys.argv[8]).read_text())
+affinity = json.loads(Path(sys.argv[9]).read_text())
 def hashed(path): return hashlib.sha256(path.read_text().strip().encode()).hexdigest()
-def short(path):
-    value = path.read_text().strip()
-    return value[:8] if value != 'unknown' else value
+def value(name): return (root/name).read_text().strip()
 evidence = {
-  'schema': 'stracker.controlled-physical-pilot.release.v1',
+  'schema': 'stracker.controlled-physical-pilot.release.v2',
   'sourceSha': sha,
   'targetUrl': url,
+  'publicVersionId': value('candidate-version-id.txt'),
+  'publicVersionTag': tag,
   'publicPreviousVersionHash': hashed(root/'previous-version-id.txt'),
   'publicCandidateVersionHash': hashed(root/'candidate-version-id.txt'),
-  'backendVersionHash': (root/'backend-version-hash.txt').read_text().strip(),
-  'zeroPercentDeploymentShort': short(root/'zero-deployment-id.txt'),
-  'finalDeploymentShort': short(root/'final-deployment-id.txt'),
+  'backendVersionHash': value('backend-version-hash.txt'),
+  'zeroPercentDeploymentId': value('zero-deployment-id.txt'),
+  'onePercentCanaryDeploymentId': value('canary-deployment-id.txt'),
+  'finalDeploymentId': value('final-deployment-id.txt'),
   'backendReusedUnchanged': True,
   'backendRedeployed': False,
   'backendPublicIngress': False,
   'versionMetadataMatch': True,
   'buildAssetShaMatch': True,
-  'zeroPercentOverrideApiE2e': True,
-  'zeroPercentOverrideBaseBrowserE2e': True,
-  'zeroPercentOverridePilotE2e': True,
-  'zeroPercentOverrideOfflineStopE2e': True,
+  'zeroPercentMetadataOverrideQa': True,
+  'onePercentAffinitySantaFeQa': True,
   'publicPostPromotionQa': True,
+  'stagedReleaseSequence': ['zero-percent-metadata', 'one-percent-version-affinity-static-and-render', 'one-hundred-percent-post-promotion'],
   'privateDataUsed': False,
   'realCoordinatesUsed': False,
   'syntheticCoordinateValuesRetained': False,
@@ -298,6 +334,7 @@ evidence = {
   'destructiveDeletions': False,
   'publicRollbackArmedUntilFinalQa': True,
   'physicalValidation': 'PENDING_HUMAN',
+  'affinityCanary': affinity,
   'apiGates': api['gates'],
   'baseBrowserGates': base['gates'],
   'pilotBrowserGates': pilot['gates'],
