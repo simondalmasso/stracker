@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: read
 
 concurrency:
@@ -40,6 +40,15 @@ jobs:
 
       - name: EXACT_HEAD
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - name: DETECT_COMMITTED_MATERIALIZATION
+        id: asset_state
+        run: |
+          if git ls-files 'public/data/santa-fe-3d/*.pmtiles' | grep -q .; then
+            echo 'had_assets=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'had_assets=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: PINNED_BUILD_TOOLCHAIN
         run: |
@@ -74,8 +83,9 @@ jobs:
 
       - name: PIPELINE_UNIT_TESTS
         run: |
-          python -m unittest tests.santa_fe_3d.test_streaming_reader -v
+          python -m unittest discover -s tests/santa_fe_3d -p 'test_*.py' -v
           echo 'PIPELINE_STREAMING_REGRESSION=PASS'
+          echo 'MULTI_ASSET_VALIDATOR_REGRESSION=PASS'
 
       - name: OVERTURE_STAC_AND_TINY_BBOX_DIAGNOSTIC
         run: |
@@ -208,3 +218,20 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+      - name: COMMIT_FIRST_MATERIALIZATION_TO_CANONICAL_BRANCH
+        if: github.event_name == 'pull_request' && steps.asset_state.outputs.had_assets == 'false'
+        env:
+          CANONICAL_BRANCH: feat/stracker-controlled-physical-pilot-v1
+        run: |
+          test "$GITHUB_HEAD_REF" = "$CANONICAL_BRANCH"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          remote_head="$(git ls-remote origin "refs/heads/$CANONICAL_BRANCH" | cut -f1)"
+          test "$remote_head" = "$SOURCE_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json bun.lock public/data/santa-fe-3d src/lib/location-source/map-engine/santa-fe-3d-generated.ts
+          ! git diff --cached --quiet
+          git commit -m 'build(map): materialize Santa Fe dense city assets'
+          git push origin "HEAD:refs/heads/$CANONICAL_BRANCH"
+          echo 'MATERIALIZED_ASSETS_COMMITTED=PASS'
