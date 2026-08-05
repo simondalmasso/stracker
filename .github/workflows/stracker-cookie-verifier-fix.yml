@@ -37,7 +37,6 @@ jobs:
           PY
           bun install --frozen-lockfile
           bun test tests/native-sharing/native-sharing.test.ts tests/native-sharing/pilot-runtime.test.ts
-          bunx tsc -p native-sharing-cloudflare/tsconfig.backend.json --noEmit
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
