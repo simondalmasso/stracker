@@ -5,6 +5,8 @@ const expectedSha = process.env.STRACKER_EXPECTED_SHA || ''
 const expectedVersionId = process.env.STRACKER_EXPECTED_VERSION_ID || ''
 const overrideVersion = process.env.STRACKER_VERSION_OVERRIDE || ''
 const output = process.env.STRACKER_API_QA_OUTPUT || '/tmp/stracker-native-sharing-api-qa.json'
+const expectedRelease = process.env.STRACKER_EXPECTED_RELEASE || 'native-sharing-live-synthetic-v1'
+const RUNTIME_IDENTITY_ATTEMPTS = 20
 
 if (target.protocol !== 'https:' || !target.hostname) throw new Error('HTTPS_TARGET_REQUIRED')
 if (!/^[0-9a-f]{40}$/.test(expectedSha)) throw new Error('EXPECTED_SHA_REQUIRED')
@@ -139,6 +141,28 @@ async function pointsRequest(sessionId: string, token: string): Promise<Response
   })
 }
 
+async function waitForRuntimeIdentity(): Promise<void> {
+  let lastCode = 'VERSION_METADATA_UNAVAILABLE'
+  for (let attempt = 1; attempt <= RUNTIME_IDENTITY_ATTEMPTS; attempt += 1) {
+    const nonce = `${Date.now()}-${attempt}-${Math.random().toString(36).slice(2)}`
+    const versionResponse = await request(`/__stracker/version.json?qa=api-${nonce}`)
+    const version = await versionResponse.json().catch(() => null) as { sourceSha?: string; versionId?: string } | null
+    if (versionResponse.status !== 200 || !version) lastCode = 'VERSION_METADATA_UNAVAILABLE'
+    else if (version.sourceSha !== expectedSha) lastCode = 'VERSION_SOURCE_SHA_MISMATCH'
+    else if (version.versionId !== expectedVersionId) lastCode = 'VERSION_ID_MISMATCH'
+    else {
+      const buildResponse = await request(`/__stracker/build.json?qa=api-${nonce}`)
+      const build = await buildResponse.json().catch(() => null) as { sourceSha?: string; release?: string } | null
+      if (buildResponse.status !== 200 || !build) lastCode = 'BUILD_INFO_UNAVAILABLE'
+      else if (build.sourceSha !== expectedSha) lastCode = 'BUILD_SOURCE_SHA_MISMATCH'
+      else if (build.release !== expectedRelease) lastCode = 'BUILD_RELEASE_MISMATCH'
+      else return
+    }
+    if (attempt < RUNTIME_IDENTITY_ATTEMPTS) await Bun.sleep(1_000)
+  }
+  throw new QaFailure(lastCode)
+}
+
 const result = {
   schema: 'stracker.native-sharing-live-api-qa.v1',
   sourceSha: expectedSha,
@@ -154,17 +178,7 @@ const result = {
 let first: CreatedSession | null = null
 let second: CreatedSession | null = null
 try {
-  const versionResponse = await request('/__stracker/version.json?qa=api')
-  ok(versionResponse.status === 200, 'VERSION_METADATA_UNAVAILABLE')
-  const version = await payload<{ sourceSha?: string; versionId?: string }>(versionResponse)
-  ok(version.sourceSha === expectedSha, 'VERSION_SOURCE_SHA_MISMATCH')
-  ok(version.versionId === expectedVersionId, 'VERSION_ID_MISMATCH')
-
-  const buildResponse = await request('/__stracker/build.json?qa=api')
-  ok(buildResponse.status === 200, 'BUILD_INFO_UNAVAILABLE')
-  const build = await payload<{ sourceSha?: string; release?: string }>(buildResponse)
-  ok(build.sourceSha === expectedSha, 'BUILD_SOURCE_SHA_MISMATCH')
-  ok(build.release === 'native-sharing-live-synthetic-v1', 'BUILD_RELEASE_MISMATCH')
+  await waitForRuntimeIdentity()
 
   first = await createSession()
   const baseTime = new Date(Date.now() - 15_000)
