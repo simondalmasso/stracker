@@ -1,7 +1,7 @@
 import type { CameraMode, MotionState } from './contracts'
 import { clamp, smoothBearing } from './geo'
 
-export const MAP_PERSPECTIVE_PITCH_DEG = 45
+export const MAP_PERSPECTIVE_PITCH_DEG = 56
 
 export interface CameraControllerState {
   mode: CameraMode
@@ -87,7 +87,7 @@ export function planCamera(input: CameraControllerInput): CameraPlan {
   return {
     state: { mode: 'overview', bearingDeg: nextBearing },
     pitchDeg: input.hasPoint ? MAP_PERSPECTIVE_PITCH_DEG : 0,
-    zoom: input.hasPoint ? 15.5 : 4,
+    zoom: input.hasPoint ? 16.3 : 4,
     offsetYRatio: 0,
     durationMs: reduced ? 0 : 350,
     animate: !reduced,

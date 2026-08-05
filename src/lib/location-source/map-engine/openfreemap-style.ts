@@ -3,8 +3,7 @@ import type { Map as MapLibreMap } from 'maplibre-gl'
 export const OPENFREEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 export const OPENFREEMAP_ATTRIBUTION = 'OpenFreeMap © OpenMapTiles Data from OpenStreetMap'
 export const MAP_PROVIDER_ID = 'openfreemap-openstreetmap'
-
-const STRACKER_BUILDING_LAYER_ID = 'stracker-buildings-3d'
+export const STRACKER_GENERIC_BUILDING_LAYER_ID = 'stracker-buildings-3d'
 
 export interface BuildingLayerOptions {
   enabled: boolean
@@ -42,7 +41,7 @@ function buildingSourceCandidate(map: MapLibreMap): BuildingSourceCandidate | nu
 
 function hideUncontrolledBuildingExtrusions(map: MapLibreMap): void {
   for (const layer of map.getStyle().layers ?? []) {
-    if (layer.id === STRACKER_BUILDING_LAYER_ID || layer.type !== 'fill-extrusion') continue
+    if (layer.id === STRACKER_GENERIC_BUILDING_LAYER_ID || layer.type !== 'fill-extrusion') continue
     const candidate = layer as typeof layer & { 'source-layer'?: string }
     const sourceLayer = candidate['source-layer']?.toLowerCase() ?? ''
     const identity = `${layer.id} ${sourceLayer}`.toLowerCase()
@@ -52,7 +51,7 @@ function hideUncontrolledBuildingExtrusions(map: MapLibreMap): void {
   }
 }
 
-function configureSceneLight(map: MapLibreMap): void {
+export function configureSceneLight(map: MapLibreMap): void {
   const mapWithLight = map as MapLibreMap & {
     setLight?: (light: {
       anchor: 'map'
@@ -63,36 +62,70 @@ function configureSceneLight(map: MapLibreMap): void {
   }
   mapWithLight.setLight?.({
     anchor: 'map',
-    color: '#f4f7fa',
-    intensity: 0.62,
-    position: [1.25, 205, 42],
+    color: '#fffdf5',
+    intensity: 0.78,
+    position: [1.2, 215, 42],
   })
 }
 
+function hasTextField(layer: { layout?: unknown }): boolean {
+  return Boolean(layer.layout && typeof layer.layout === 'object' && 'text-field' in layer.layout)
+}
+
 export function setDarkBaseStyle(map: MapLibreMap): void {
-  const style = map.getStyle()
-  for (const layer of style.layers ?? []) {
+  for (const layer of map.getStyle().layers ?? []) {
+    const id = layer.id.toLowerCase()
     if (layer.type === 'background') {
       map.setPaintProperty(layer.id, 'background-color', '#050505')
+    } else if (layer.type === 'fill') {
+      if (id.includes('water')) map.setPaintProperty(layer.id, 'fill-color', '#0b1117')
+      else if (id.includes('land') || id.includes('park')) map.setPaintProperty(layer.id, 'fill-color', '#101214')
+    } else if (layer.type === 'line' && (id.includes('road') || id.includes('street'))) {
+      map.setPaintProperty(layer.id, 'line-color', '#3c4146')
+    }
+  }
+}
+
+export function setLightCityBaseStyle(map: MapLibreMap): void {
+  for (const layer of map.getStyle().layers ?? []) {
+    const id = layer.id.toLowerCase()
+    if (layer.type === 'background') {
+      map.setPaintProperty(layer.id, 'background-color', '#f2f1ed')
       continue
     }
     if (layer.type === 'fill') {
-      const id = layer.id.toLowerCase()
-      if (id.includes('water')) map.setPaintProperty(layer.id, 'fill-color', '#0b1117')
-      else if (id.includes('land') || id.includes('park')) map.setPaintProperty(layer.id, 'fill-color', '#101214')
+      if (id.includes('water')) map.setPaintProperty(layer.id, 'fill-color', '#dce8eb')
+      else if (id.includes('park') || id.includes('green') || id.includes('wood')) map.setPaintProperty(layer.id, 'fill-color', '#e5ebe3')
+      else if (id.includes('land') || id.includes('background')) map.setPaintProperty(layer.id, 'fill-color', '#efefeb')
+      else if (id.includes('building')) map.setPaintProperty(layer.id, 'fill-color', '#e2e3df')
+      continue
     }
     if (layer.type === 'line') {
-      const id = layer.id.toLowerCase()
-      if (id.includes('road') || id.includes('street')) map.setPaintProperty(layer.id, 'line-color', '#3c4146')
+      if (id.includes('road') || id.includes('street') || id.includes('transport')) {
+        map.setPaintProperty(layer.id, 'line-color', id.includes('outline') || id.includes('casing') ? '#c9cdcf' : '#ffffff')
+      } else if (id.includes('boundary')) {
+        map.setPaintProperty(layer.id, 'line-color', '#c6c9ca')
+      }
+      continue
+    }
+    if (layer.type === 'symbol' && hasTextField(layer)) {
+      map.setPaintProperty(layer.id, 'text-color', '#4b535a')
+      map.setPaintProperty(layer.id, 'text-halo-color', '#fbfaf7')
+      map.setPaintProperty(layer.id, 'text-halo-width', 1.25)
     }
   }
+  configureSceneLight(map)
 }
 
 export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOptions): boolean {
   hideUncontrolledBuildingExtrusions(map)
 
-  if (map.getLayer(STRACKER_BUILDING_LAYER_ID)) {
-    map.setLayoutProperty(STRACKER_BUILDING_LAYER_ID, 'visibility', options.enabled && options.density !== 'off' ? 'visible' : 'none')
+  if (map.getLayer(STRACKER_GENERIC_BUILDING_LAYER_ID)) {
+    map.setLayoutProperty(
+      STRACKER_GENERIC_BUILDING_LAYER_ID,
+      'visibility',
+      options.enabled && options.density !== 'off' ? 'visible' : 'none',
+    )
     if (options.enabled && options.density !== 'off') configureSceneLight(map)
     return true
   }
@@ -103,7 +136,7 @@ export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOpt
 
   const before = (map.getStyle().layers ?? []).find((layer) => layer.type === 'symbol')?.id
   map.addLayer({
-    id: STRACKER_BUILDING_LAYER_ID,
+    id: STRACKER_GENERIC_BUILDING_LAYER_ID,
     type: 'fill-extrusion',
     source: candidate.source,
     'source-layer': candidate.sourceLayer,
@@ -124,10 +157,10 @@ export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOpt
             12,
           ],
         ],
-        0, '#272c31',
-        30, '#444b52',
-        80, '#68727c',
-        180, '#8d98a3',
+        0, '#e3e4e0',
+        30, '#cbd0d2',
+        80, '#adb5bd',
+        180, '#929da7',
       ],
       'fill-extrusion-height': [
         'max',
@@ -147,7 +180,7 @@ export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOpt
         ['has', 'min_height'], ['to-number', ['get', 'min_height'], 0],
         0,
       ],
-      'fill-extrusion-opacity': options.density === 'reduced' ? 0.72 : 0.9,
+      'fill-extrusion-opacity': options.density === 'reduced' ? 0.78 : 0.92,
       'fill-extrusion-vertical-gradient': true,
     },
   }, before)

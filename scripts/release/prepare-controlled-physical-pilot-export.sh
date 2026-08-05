@@ -3,6 +3,13 @@ set -euo pipefail
 
 SOURCE_SHA="${SOURCE_SHA:?SOURCE_SHA required}"
 
+python scripts/santa-fe-3d/validate_static_asset.py \
+  --manifest public/data/santa-fe-3d/manifest.json \
+  --root public
+bun test tests/vector-map
+
+echo 'SANTA_FE_3D_PIPELINE_AND_RUNTIME_CONTRACTS=PASS'
+
 rm -rf out
 mkdir -p public/__stracker
 cleanup() {
@@ -47,9 +54,27 @@ for required in \
   out/index.html \
   out/share/index.html \
   out/shared/index.html \
-  out/__stracker/build.json; do
+  out/__stracker/build.json \
+  out/data/santa-fe-3d/manifest.json; do
   test -f "$required"
 done
+
+python scripts/santa-fe-3d/validate_static_asset.py \
+  --manifest out/data/santa-fe-3d/manifest.json \
+  --root out
+
+python - <<'PY'
+import json
+from pathlib import Path
+manifest = json.loads(Path('out/data/santa-fe-3d/manifest.json').read_text())
+assert manifest['final_features'] >= 200_000
+assert manifest['unique_height_bucket_count'] >= 6
+assert manifest['uniform_default_height_fraction'] < 0.35
+assert manifest['asset_shard_count'] == len(manifest['asset_paths']) >= 2
+assert all(path.startswith('/data/santa-fe-3d/') and path.endswith('.pmtiles') for path in manifest['asset_paths'])
+assert all(size < 25 * 1024 * 1024 for size in manifest['asset_sizes'])
+print('SANTA_FE_DENSE_CITY_STATIC_EXPORT=PASS')
+PY
 
 if find out -type f \( \
   -name '.env*' -o \

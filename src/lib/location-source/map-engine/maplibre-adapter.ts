@@ -4,8 +4,21 @@ import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from 'maplibr
 import { circlePolygon } from '../geo'
 import type { BasemapMode } from '../contracts'
 import type { CameraUpdate, MapEngineAdapter, MapEngineCallbacks, MapPerformanceSnapshot, MapRenderState } from './contracts'
-import { configureBuildings3d, OPENFREEMAP_ATTRIBUTION, OPENFREEMAP_STYLE_URL, setDarkBaseStyle } from './openfreemap-style'
+import {
+  configureBuildings3d,
+  OPENFREEMAP_ATTRIBUTION,
+  OPENFREEMAP_STYLE_URL,
+  setDarkBaseStyle,
+  setLightCityBaseStyle,
+} from './openfreemap-style'
 import { SATELLITE_LAYER_ID, SATELLITE_PROVIDER, SATELLITE_SOURCE_ID, usesSatelliteImagery } from './satellite-provider'
+import { SANTA_FE_3D_LAYER_IDS } from './santa-fe-city-config'
+import {
+  acquireSantaFePmtilesProtocol,
+  configureSantaFeCity3d,
+  isSantaFe3dSourceId,
+  removeSantaFeCity3d,
+} from './santa-fe-city-runtime'
 
 const SOURCE_MARKER = 'stracker-marker'
 const SOURCE_ACCURACY = 'stracker-accuracy'
@@ -17,6 +30,7 @@ const RUNTIME_LAYER_IDS = new Set([
   'stracker-marker-halo',
   'stracker-marker',
   'stracker-buildings-3d',
+  ...SANTA_FE_3D_LAYER_IDS,
   SATELLITE_LAYER_ID,
 ])
 
@@ -82,7 +96,7 @@ function addRuntimeLayers(map: MapLibreMap, state: MapRenderState): void {
       id: 'stracker-accuracy-line',
       type: 'line',
       source: SOURCE_ACCURACY,
-      paint: { 'line-color': '#c8d6df', 'line-opacity': 0.34, 'line-width': 1 },
+      paint: { 'line-color': '#647784', 'line-opacity': 0.42, 'line-width': 1 },
     })
   }
   if (!map.getLayer('stracker-ghostrail-line')) {
@@ -92,8 +106,8 @@ function addRuntimeLayers(map: MapLibreMap, state: MapRenderState): void {
       source: SOURCE_RAIL,
       layout: { 'line-cap': 'round', 'line-join': 'round', visibility: state.railVisible ? 'visible' : 'none' },
       paint: {
-        'line-color': '#f5f7f8',
-        'line-opacity': 0.74,
+        'line-color': '#e85d68',
+        'line-opacity': 0.84,
         'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 18, 4],
       },
     })
@@ -106,8 +120,8 @@ function addRuntimeLayers(map: MapLibreMap, state: MapRenderState): void {
       paint: {
         'circle-radius': ['case', ['==', ['get', 'health'], 'receiving'], 18, 14],
         'circle-color': '#ffffff',
-        'circle-opacity': ['case', ['==', ['get', 'health'], 'receiving'], 0.12, 0.04],
-        'circle-blur': 0.55,
+        'circle-opacity': ['case', ['==', ['get', 'health'], 'receiving'], 0.24, 0.1],
+        'circle-blur': 0.5,
       },
     })
   }
@@ -119,7 +133,7 @@ function addRuntimeLayers(map: MapLibreMap, state: MapRenderState): void {
       paint: {
         'circle-radius': 8,
         'circle-color': '#ffffff',
-        'circle-stroke-color': '#050505',
+        'circle-stroke-color': '#101418',
         'circle-stroke-width': 3,
       },
     })
@@ -206,6 +220,8 @@ export function createMapLibreAdapter(): MapEngineAdapter {
   let satelliteFailureActive = false
   let satelliteAvailabilityTimer: ReturnType<typeof setTimeout> | null = null
   let appliedBasemapMode: BasemapMode | null = null
+  let appliedVectorTheme: 'dark' | 'light-city' | null = null
+  let releasePmtilesProtocol: (() => void) | null = null
   let createdAtMs = 0
   let firstMapVisibleMs: number | null = null
   let firstInteractiveMs: number | null = null
@@ -261,6 +277,32 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     }
   }
 
+  const applyBuildingPresentation = (mode: BasemapMode) => {
+    if (!map || !latestState) return
+    const vectorBuildingsEnabled = mode === 'vector-3d' && latestState.buildings3d
+    const center = map.getCenter()
+    const density = latestState.reducedMotion ? 'reduced' : 'full'
+    const customVisible = configureSantaFeCity3d(map, {
+      enabled: vectorBuildingsEnabled,
+      density,
+      center: { lng: center.lng, lat: center.lat },
+      origin: window.location.origin,
+    })
+    configureBuildings3d(map, {
+      enabled: vectorBuildingsEnabled && !customVisible,
+      density,
+    })
+
+    if (mode === 'vector-3d') {
+      const theme = vectorBuildingsEnabled ? 'light-city' : 'dark'
+      if (theme !== appliedVectorTheme) {
+        if (theme === 'light-city') setLightCityBaseStyle(map)
+        else setDarkBaseStyle(map)
+        appliedVectorTheme = theme
+      }
+    }
+  }
+
   const applyBasemapMode = (mode: BasemapMode) => {
     if (!map) return
     addSatelliteLayer(map)
@@ -288,10 +330,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       callbacks?.onBasemapProviderState('idle')
     }
 
-    configureBuildings3d(map, {
-      enabled: mode === 'vector-3d' && Boolean(latestState?.buildings3d),
-      density: latestState?.reducedMotion ? 'reduced' : 'full',
-    })
+    applyBuildingPresentation(mode)
     appliedBasemapMode = mode
   }
 
@@ -313,8 +352,8 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     const currentMap = map
     const currentState = latestState
     if (currentMap && currentState && currentMap.isStyleLoaded()) {
-      addRuntimeLayers(currentMap, currentState)
       applyBasemapMode(currentState.basemapMode)
+      addRuntimeLayers(currentMap, currentState)
       adapter.render(currentState)
       callbacks?.onProviderState('available')
     }
@@ -333,18 +372,20 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       contextLostActive = false
       satelliteFailureActive = false
       appliedBasemapMode = null
+      appliedVectorTheme = null
       clearSatelliteAvailabilityTimer()
       createdAtMs = performance.now()
       fpsWindowStart = createdAtMs
       performance.clearResourceTimings()
+      releasePmtilesProtocol = acquireSantaFePmtilesProtocol()
 
       map = new maplibregl.Map({
         container,
         style: OPENFREEMAP_STYLE_URL,
         center: [initial.point.lng, initial.point.lat],
-        zoom: 16,
-        pitch: 0,
-        bearing: 0,
+        zoom: 16.3,
+        pitch: initial.buildings3d ? 56 : 0,
+        bearing: initial.buildings3d ? 25 : 0,
         minZoom: 3,
         maxZoom: 20,
         maxPitch: 65,
@@ -372,6 +413,10 @@ export function createMapLibreAdapter(): MapEngineAdapter {
           markSatelliteUnavailable()
           return
         }
+        if (isSantaFe3dSourceId(candidate.sourceId) || errorUrl.includes('/data/santa-fe-3d/')) {
+          callbacks?.onProviderState('degraded')
+          return
+        }
         callbacks?.onProviderState('degraded')
       })
       map.on('sourcedata', (event) => {
@@ -382,9 +427,10 @@ export function createMapLibreAdapter(): MapEngineAdapter {
         if (!map || !latestState) return
         captureBaseVisibility()
         setDarkBaseStyle(map)
+        appliedVectorTheme = 'dark'
         addSatelliteLayer(map)
-        addRuntimeLayers(map, latestState)
         applyBasemapMode(latestState.basemapMode)
+        addRuntimeLayers(map, latestState)
       })
       map.once('load', () => {
         loaded = true
@@ -402,6 +448,9 @@ export function createMapLibreAdapter(): MapEngineAdapter {
         emitPerformance()
       })
       map.on('render', () => { renderFrames += 1 })
+      map.on('moveend', () => {
+        if (map && latestState && map.isStyleLoaded()) applyBuildingPresentation(latestState.basemapMode)
+      })
       for (const eventName of ['dragstart', 'rotatestart', 'pitchstart', 'zoomstart'] as const) {
         map.on(eventName, (event) => {
           if (event.originalEvent) callbacks?.onManualInteraction()
@@ -430,7 +479,10 @@ export function createMapLibreAdapter(): MapEngineAdapter {
     render(state) {
       latestState = state
       if (!map || contextLostActive) return
-      if (map.isStyleLoaded() && appliedBasemapMode !== state.basemapMode) applyBasemapMode(state.basemapMode)
+      if (map.isStyleLoaded()) {
+        if (appliedBasemapMode !== state.basemapMode) applyBasemapMode(state.basemapMode)
+        else applyBuildingPresentation(state.basemapMode)
+      }
       if (!loaded) return
       setSourceData(map, SOURCE_MARKER, markerData(state))
       setSourceData(map, SOURCE_ACCURACY, accuracyData(state))
@@ -438,10 +490,6 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       if (map.getLayer('stracker-ghostrail-line')) {
         map.setLayoutProperty('stracker-ghostrail-line', 'visibility', state.railVisible ? 'visible' : 'none')
       }
-      configureBuildings3d(map, {
-        enabled: state.basemapMode === 'vector-3d' && state.buildings3d,
-        density: state.reducedMotion ? 'reduced' : 'full',
-      })
       emitPerformance()
     },
     updateCamera(update: CameraUpdate) {
@@ -467,8 +515,13 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       performanceTimer = null
       performanceObserver?.disconnect()
       performanceObserver = null
-      map?.stop()
-      map?.remove()
+      if (map) {
+        map.stop()
+        if (map.isStyleLoaded()) removeSantaFeCity3d(map)
+        map.remove()
+      }
+      releasePmtilesProtocol?.()
+      releasePmtilesProtocol = null
       map = null
       callbacks = null
       latestState = null
@@ -476,6 +529,7 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       contextLostActive = false
       satelliteFailureActive = false
       appliedBasemapMode = null
+      appliedVectorTheme = null
       baseLayerVisibility.clear()
     },
   }
