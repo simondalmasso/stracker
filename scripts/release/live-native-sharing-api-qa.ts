@@ -36,6 +36,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     url.searchParams.set('transport', `curl-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     return curlMetadata(url, init)
   }
+  if (url.pathname.endsWith('.pmtiles')) {
+    url.search = ''
+    const headers = new Headers(init?.headers)
+    headers.set('Accept-Encoding', 'identity')
+    return originalFetch(url, { ...init, headers })
+  }
   return originalFetch(input, init)
 }) as typeof fetch
 
@@ -112,8 +118,8 @@ async function waitForSantaFeStaticAssets(): Promise<void> {
           let allRangesReady = true
           for (const path of expected.asset_paths) {
             const rangeResponse = await originalFetch(
-              new URL(`${path}?propagation=${nonce}`, target),
-              { headers: { ...headers, Range: 'bytes=0-16383' }, cache: 'no-store' },
+              new URL(path, target),
+              { headers: { ...headers, Range: 'bytes=0-16383', 'Accept-Encoding': 'identity' }, cache: 'no-store' },
             )
             const body = await rangeResponse.arrayBuffer()
             const contentRange = rangeResponse.headers.get('content-range') || ''
