@@ -125,6 +125,7 @@ function snapshot(fixtureId) {
   const style = map.getStyle()
   const layers = style.layers || []
   const building = map.getLayer(buildingLayerId)
+  const serializedBuilding = layers.find((layer) => layer.id === buildingLayerId)
   const buildingIndex = layers.findIndex((layer) => layer.id === buildingLayerId)
   const markerIndex = layers.findIndex((layer) => layer.id === markerLayerId)
   const firstSymbolIndex = layers.findIndex((layer) => layer.type === 'symbol')
@@ -134,9 +135,9 @@ function snapshot(fixtureId) {
   const uniqueHeights = [...new Set(heights.map((item) => Math.round(item.height * 100) / 100))]
   return {
     fixtureId,
-    layerType: building?.type || null,
-    source: building?.source || null,
-    sourceLayer: building?.['source-layer'] || null,
+    layerType: serializedBuilding?.type || building?.type || null,
+    source: serializedBuilding?.source || building?.source || null,
+    sourceLayer: serializedBuilding?.['source-layer'] || serializedBuilding?.sourceLayer || building?.['source-layer'] || building?.sourceLayer || null,
     visible: Boolean(visible),
     renderedFeatureCount: features.length,
     uniqueHeightCount: uniqueHeights.length,
