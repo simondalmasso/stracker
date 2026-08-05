@@ -94,6 +94,18 @@ test ! -e out/.github
 CHROME_BIN="${CHROME_BIN:-$(command -v google-chrome || command -v chromium || command -v chromium-browser)}"
 test -n "$CHROME_BIN"
 export CHROME_BIN
+VALIDATION_EVIDENCE_DIR="${RUNNER_TEMP:-/tmp}/stracker-controlled-pilot-validation"
+mkdir -p "$VALIDATION_EVIDENCE_DIR"
+STRACKER_MAP3D_QA_OUTPUT="$VALIDATION_EVIDENCE_DIR/santa-fe-dense-city-qa.json" \
+STRACKER_MAP3D_SCREENSHOT_DIR="$VALIDATION_EVIDENCE_DIR" \
+  bun tests/native-sharing-cloudflare/map-3d-runtime-qa.ts
+jq -e '.privateDataUsed == false and .realUserCoordinatesUsed == false and .coordinateValuesRetained == false' "$VALIDATION_EVIDENCE_DIR/santa-fe-dense-city-qa.json" >/dev/null
+jq -e '.featureCount >= 200000 and .uniqueHeightBucketCount >= 6 and .uniformDefaultHeightFraction < 0.35' "$VALIDATION_EVIDENCE_DIR/santa-fe-dense-city-qa.json" >/dev/null
+jq -e '.localRange.requests > 0 and .localRange.fullRequests == 0 and .localRange.contentRangeFailures == 0' "$VALIDATION_EVIDENCE_DIR/santa-fe-dense-city-qa.json" >/dev/null
+jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$VALIDATION_EVIDENCE_DIR/santa-fe-dense-city-qa.json" >/dev/null
+test -s "$VALIDATION_EVIDENCE_DIR/santa-fe-dense-city-on.png"
+test -s "$VALIDATION_EVIDENCE_DIR/santa-fe-dense-city-off.png"
+echo 'SANTA_FE_DENSE_CITY_AUTOMATED=PASS'
 COOKIE_SESSION_BROWSER_QA_OUTPUT="${COOKIE_SESSION_BROWSER_QA_OUTPUT:-${RUNNER_TEMP:-/tmp}/stracker-cookie-session-browser.json}"
 export COOKIE_SESSION_BROWSER_QA_OUTPUT
 bun tests/native-sharing-cloudflare/cookie-session-browser-qa.ts

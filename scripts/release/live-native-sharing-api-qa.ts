@@ -12,41 +12,22 @@ function requestUrl(input: RequestInfo | URL): URL {
 async function curlMetadata(url: URL, init?: RequestInit): Promise<Response> {
   const requestHeaders = new Headers(init?.headers)
   const args = [
-    'curl',
-    '--silent',
-    '--show-error',
-    '--max-time',
-    '20',
-    '--write-out',
-    '\n%{http_code}',
-    '-H',
-    `Accept: ${requestHeaders.get('Accept') || 'application/json'}`,
-    '-H',
-    `Cache-Control: ${requestHeaders.get('Cache-Control') || 'no-cache'}`,
+    'curl', '--silent', '--show-error', '--max-time', '20', '--write-out', '\n%{http_code}',
+    '-H', `Accept: ${requestHeaders.get('Accept') || 'application/json'}`,
+    '-H', `Cache-Control: ${requestHeaders.get('Cache-Control') || 'no-cache'}`,
   ]
   const versionOverride = requestHeaders.get('Cloudflare-Workers-Version-Overrides')
   if (versionOverride) args.push('-H', `Cloudflare-Workers-Version-Overrides: ${versionOverride}`)
   args.push(url.href)
-
   const subprocess = Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe' })
-  const [stdout, exitCode] = await Promise.all([
-    new Response(subprocess.stdout).text(),
-    subprocess.exited,
-  ])
+  const [stdout, exitCode] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited])
   if (exitCode !== 0) return new Response('', { status: 503 })
-
   const boundary = stdout.lastIndexOf('\n')
   if (boundary < 0) return new Response('', { status: 503 })
   const body = stdout.slice(0, boundary)
   const parsedStatus = Number(stdout.slice(boundary + 1).trim())
   const status = Number.isInteger(parsedStatus) && parsedStatus >= 200 && parsedStatus <= 599 ? parsedStatus : 503
-  return new Response(body, {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store, max-age=0',
-    },
-  })
+  return new Response(body, { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, max-age=0' } })
 }
 
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -58,18 +39,14 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return originalFetch(input, init)
 }) as typeof fetch
 
-interface DeploymentEvidence {
-  id: string
-  percentage: number
-}
+interface DeploymentEvidence { id: string; percentage: number }
 
 async function deploymentForVersion(versionId: string): Promise<DeploymentEvidence> {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || ''
   const token = process.env.CLOUDFLARE_API_TOKEN || ''
   if (!accountId || !token) throw new Error('CLOUDFLARE_DEPLOYMENT_EVIDENCE_ENV_REQUIRED')
   const response = await originalFetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/stracker/deployments`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    cache: 'no-store',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store',
   })
   const payload = await response.json().catch(() => null) as {
     success?: boolean
@@ -96,6 +73,8 @@ process.env.STRACKER_EXPECTED_RELEASE ||= 'controlled-physical-pilot-v1'
 const core = new URL(`file://${process.cwd()}/scripts/release/live-native-sharing-api-qa-core.ts`)
 await import(core.href)
 
+const stateDir = `${process.env.RUNNER_TEMP || '/tmp'}/stracker-controlled-physical-pilot-release`
+const map3dOutput = process.env.STRACKER_MAP3D_QA_OUTPUT || `${stateDir}/santa-fe-dense-city-public-qa.json`
 const map3dModule = new URL(`file://${process.cwd()}/tests/native-sharing-cloudflare/map-3d-runtime-qa.ts`)
 const { runMap3dRuntimeQa } = await import(map3dModule.href)
 const map3d = await runMap3dRuntimeQa({
@@ -103,16 +82,14 @@ const map3d = await runMap3dRuntimeQa({
   expectedSha: process.env.STRACKER_EXPECTED_SHA,
   expectedVersionId: process.env.STRACKER_EXPECTED_VERSION_ID,
   overrideVersion: process.env.STRACKER_VERSION_OVERRIDE,
+  output: map3dOutput,
+  screenshotDir: process.env.STRACKER_MAP3D_SCREENSHOT_DIR || stateDir,
 })
 
 const output = process.env.STRACKER_API_QA_OUTPUT || '/tmp/stracker-native-sharing-api-qa.json'
-const evidence = JSON.parse(await Bun.file(output).text()) as {
-  gates?: Record<string, string>
-  [key: string]: unknown
-}
+const evidence = JSON.parse(await Bun.file(output).text()) as { gates?: Record<string, string>; [key: string]: unknown }
 const expectedVersionId = process.env.STRACKER_EXPECTED_VERSION_ID || ''
 const currentDeployment = await deploymentForVersion(expectedVersionId)
-const stateDir = `${process.env.RUNNER_TEMP || '/tmp'}/stracker-controlled-physical-pilot-release`
 const zeroIdPath = `${stateDir}/master-zero-deployment-id.txt`
 if (currentDeployment.percentage === 0) await Bun.write(zeroIdPath, currentDeployment.id + '\n')
 const zeroDeploymentId = await Bun.file(zeroIdPath).exists() ? (await Bun.file(zeroIdPath).text()).trim() : ''
@@ -126,20 +103,6 @@ evidence.gates = {
   ZERO_PERCENT_DEPLOYMENT_ID: zeroDeploymentId || currentDeployment.id,
   FINAL_DEPLOYMENT_ID: finalDeploymentId || 'PENDING_PROMOTION',
 }
-evidence.map3d = {
-  schema: map3d.schema,
-  fixtureId: map3d.fixtureId,
-  targetRuntimeVerified: map3d.targetRuntimeVerified,
-  renderedFeatureCount: map3d.renderedFeatureCount,
-  source: map3d.source,
-  sourceLayer: map3d.sourceLayer,
-  uniqueHeightCount: map3d.uniqueHeightCount,
-  fallbackUsed: map3d.fallbackUsed,
-  changedPixels: map3d.changedPixels,
-  meanAbsoluteDelta: map3d.meanAbsoluteDelta,
-  privateDataUsed: map3d.privateDataUsed,
-  realUserCoordinatesUsed: map3d.realUserCoordinatesUsed,
-  coordinateValuesRetained: map3d.coordinateValuesRetained,
-}
+evidence.map3d = map3d
 await Bun.write(output, JSON.stringify(evidence, null, 2) + '\n')
 console.log(`MAP_3D_RUNTIME_QA=PASS fixture=${map3d.fixtureId} features=${map3d.renderedFeatureCount}`)
