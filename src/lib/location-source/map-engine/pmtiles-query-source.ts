@@ -9,6 +9,10 @@ function exactInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`INVALID_${name}`)
 }
 
+function isLoopback(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
+}
+
 export function pmtilesQueryRangeUrl(archiveUrl: string, offset: number, length: number): URL {
   exactInteger(offset, 'PMTILES_OFFSET')
   exactInteger(length, 'PMTILES_LENGTH')
@@ -52,7 +56,7 @@ export class SameOriginQueryRangeSource implements Source {
       signal,
     })
     if (response.status !== 206) throw new Error(`PMTILES_QUERY_RANGE_HTTP_${response.status}`)
-    if (response.headers.get('x-stracker-pmtiles-transport') !== PMTILES_QUERY_TRANSPORT) {
+    if (!isLoopback(url.hostname) && response.headers.get('x-stracker-pmtiles-transport') !== PMTILES_QUERY_TRANSPORT) {
       throw new Error('PMTILES_QUERY_RANGE_TRANSPORT_MISSING')
     }
     const contentRange = response.headers.get('content-range') || ''
