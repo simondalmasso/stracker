@@ -1,0 +1,188 @@
+name: STRACKER Cookie Backend Recovery
+
+on:
+  push:
+    branches:
+      - feat/stracker-controlled-physical-pilot-v1
+    paths:
+      - .github/workflows/stracker-cookie-backend-recovery.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stracker-cookie-backend-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover-private-backend:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BACKEND_WORKER: stracker-native-sharing-backend
+      PUBLIC_URL: https://stracker.simondalmasso44.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/stracker-controlled-physical-pilot-v1
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: EXACT_HEAD_AND_CONFIG
+        run: |
+          set -Eeuo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test "$(git rev-parse --abbrev-ref HEAD)" = 'feat/stracker-controlled-physical-pilot-v1'
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          cfg = json.loads(Path('native-sharing-cloudflare/wrangler.backend.jsonc').read_text())
+          assert cfg['name'] == 'stracker-native-sharing-backend'
+          assert cfg['workers_dev'] is False
+          assert cfg['preview_urls'] is False
+          assert cfg.get('routes') == []
+          assert cfg['durable_objects']['bindings'] == [{'name':'NATIVE_SHARING','class_name':'NativeSharingDurableObject'}]
+          assert cfg['exports'] == {'NativeSharingDurableObject': {'type':'durable-object','storage':'sqlite'}}
+          source = Path('native-sharing-cloudflare/src/durable-object.ts').read_text()
+          for method in ('importCookieSession', 'getCookieSessionStatus', 'getCookieSessionPoint', 'refreshCookieSession', 'deleteCookieSession'):
+              assert method in source
+          print('COOKIE_BACKEND_EXACT_HEAD_CONTRACT=PASS')
+          PY
+
+      - name: INSTALL_AND_VALIDATE
+        run: |
+          set -Eeuo pipefail
+          bun install --frozen-lockfile
+          bunx wrangler@4.111.0 types native-sharing-cloudflare/worker-backend-configuration.d.ts --config native-sharing-cloudflare/wrangler.backend.jsonc
+          bunx tsc -p native-sharing-cloudflare/tsconfig.backend.json
+          rm -f native-sharing-cloudflare/worker-backend-configuration.d.ts
+          bun test tests/cookie-session/cookie-session.test.ts tests/native-sharing-cloudflare/cookie-session-gateway.test.ts
+          bunx wrangler@4.111.0 deploy --dry-run --config native-sharing-cloudflare/wrangler.backend.jsonc --outdir "${RUNNER_TEMP}/cookie-backend-dist"
+          echo 'COOKIE_BACKEND_PREFLIGHT=PASS'
+
+      - name: DEPLOY_WITH_ROLLBACK_AND_SMOKE
+        run: |
+          set -Eeuo pipefail
+          STATE_DIR="${RUNNER_TEMP}/cookie-backend-recovery"
+          mkdir -p "$STATE_DIR"
+          WRANGLER=(bunx wrangler@4.111.0)
+          SOURCE_SHA="$(git rev-parse HEAD)"
+
+          api_get() {
+            curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              "https://api.cloudflare.com/client/v4$1" > "$2"
+            jq -e '.success == true' "$2" >/dev/null
+          }
+
+          api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${BACKEND_WORKER}/deployments" "$STATE_DIR/before.json"
+          python - "$STATE_DIR/before.json" "$STATE_DIR/rollback.txt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          payload = json.loads(Path(sys.argv[1]).read_text())['result']
+          deployments = payload.get('deployments') or []
+          if not deployments: raise SystemExit('BACKEND_DEPLOYMENT_UNAVAILABLE')
+          live = [v for v in (deployments[0].get('versions') or []) if float(v.get('percentage', -1)) == 100]
+          if len(live) != 1: raise SystemExit('BACKEND_LIVE_VERSION_NOT_EXACT')
+          version = live[0].get('version_id') or live[0].get('id')
+          if not version: raise SystemExit('BACKEND_VERSION_UNAVAILABLE')
+          Path(sys.argv[2]).write_text(version + '@100%\n')
+          print('BACKEND_ROLLBACK_READY=PASS')
+          PY
+
+          rollback_required=1
+          rollback() {
+            code=$?
+            if [[ "$rollback_required" == '1' ]]; then
+              "${WRANGLER[@]}" versions deploy "$(cat "$STATE_DIR/rollback.txt")" --name "$BACKEND_WORKER" --message 'Automatic rollback after cookie backend recovery failure' -y >/dev/null 2>&1 || true
+              echo 'COOKIE_BACKEND_ROLLBACK_EXECUTED=YES'
+            fi
+            exit "$code"
+          }
+          trap rollback ERR
+
+          TAG="cookie-recovery-${SOURCE_SHA}"
+          "${WRANGLER[@]}" versions upload --config native-sharing-cloudflare/wrangler.backend.jsonc --keep-vars --tag "$TAG" --message "STRACKER cookie backend recovery ${SOURCE_SHA}" > "$STATE_DIR/upload.log"
+          "${WRANGLER[@]}" versions list --name "$BACKEND_WORKER" --json > "$STATE_DIR/versions.json"
+          python - "$STATE_DIR/versions.json" "$STATE_DIR/candidate.txt" "$TAG" <<'PY'
+          import json, sys
+          from pathlib import Path
+          items = json.loads(Path(sys.argv[1]).read_text())
+          if isinstance(items, dict): items = items.get('versions') or items.get('result') or []
+          for item in items:
+              annotations = item.get('annotations') or item.get('metadata', {}).get('annotations') or {}
+              if (item.get('tag') or annotations.get('workers/tag')) == sys.argv[3]:
+                  version = item.get('id') or item.get('version_id')
+                  if version:
+                      Path(sys.argv[2]).write_text(version + '\n')
+                      print('COOKIE_BACKEND_VERSION_UPLOAD=PASS')
+                      raise SystemExit(0)
+          raise SystemExit('COOKIE_BACKEND_CANDIDATE_NOT_FOUND')
+          PY
+          CANDIDATE="$(cat "$STATE_DIR/candidate.txt")"
+          "${WRANGLER[@]}" versions deploy "${CANDIDATE}@100%" --name "$BACKEND_WORKER" --message "STRACKER cookie backend ${SOURCE_SHA}" -y > "$STATE_DIR/deploy.log"
+
+          api_get "/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${BACKEND_WORKER}/deployments" "$STATE_DIR/after.json"
+          python - "$STATE_DIR/after.json" "$CANDIDATE" <<'PY'
+          import json, sys
+          from pathlib import Path
+          deployments = json.loads(Path(sys.argv[1]).read_text())['result'].get('deployments') or []
+          if not deployments: raise SystemExit('BACKEND_FINAL_DEPLOYMENT_UNAVAILABLE')
+          match = [v for v in (deployments[0].get('versions') or []) if (v.get('version_id') or v.get('id')) == sys.argv[2]]
+          if len(match) != 1 or float(match[0].get('percentage', -1)) != 100: raise SystemExit('BACKEND_FINAL_VERSION_MISMATCH')
+          print('COOKIE_BACKEND_DEPLOYMENT_100_PERCENT=PASS')
+          PY
+
+          cat > "$STATE_DIR/request.json" <<'JSON'
+          {"raw":"[{\"name\":\"NID\",\"value\":\"synthetic-noncredential\",\"domain\":\".google.com\",\"path\":\"/\"}]","durationMs":3600000}
+          JSON
+          status="$(curl --silent --show-error --output "$STATE_DIR/response.json" --write-out '%{http_code}' \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --header "Origin: ${PUBLIC_URL}" \
+            --data-binary @"$STATE_DIR/request.json" \
+            "${PUBLIC_URL}/api/cookie-sessions")"
+          test "$status" = '400'
+          jq -e '.status == "error" and .error == "COOKIE_SET_INCOMPLETE"' "$STATE_DIR/response.json" >/dev/null
+          echo 'PUBLIC_COOKIE_BACKEND_ROUTE_SMOKE=PASS'
+
+          native_status="$(curl --silent --show-error --output "$STATE_DIR/native.json" --write-out '%{http_code}' \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --header "Origin: ${PUBLIC_URL}" \
+            --data '{"durationMs":300000}' \
+            "${PUBLIC_URL}/api/share/sessions")"
+          test "$native_status" = '201'
+          jq -e '.sessionId and .emitterToken and .viewerCapability' "$STATE_DIR/native.json" >/dev/null
+          session_id="$(jq -r '.sessionId' "$STATE_DIR/native.json")"
+          emitter="$(jq -r '.emitterToken' "$STATE_DIR/native.json")"
+          revoke_status="$(curl --silent --show-error --output "$STATE_DIR/revoke.json" --write-out '%{http_code}' \
+            --request DELETE \
+            --header "Origin: ${PUBLIC_URL}" \
+            --header "X-Stracker-Emitter: ${emitter}" \
+            "${PUBLIC_URL}/api/share/sessions/${session_id}")"
+          test "$revoke_status" = '200'
+          jq -e '.status == "ok" and .state == "revoked"' "$STATE_DIR/revoke.json" >/dev/null
+          rm -f "$STATE_DIR/native.json" "$STATE_DIR/revoke.json" "$STATE_DIR/request.json" "$STATE_DIR/response.json"
+          echo 'NATIVE_SHARING_POST_BACKEND_DEPLOY_SMOKE=PASS'
+
+          rollback_required=0
+          trap - ERR
+          echo 'COOKIE_BACKEND_RECOVERY=PASS'
+
+      - name: REMOVE_ONE_TIME_WORKFLOW
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/stracker-cookie-backend-recovery.yml
+          git commit -m 'chore: remove one-time cookie backend recovery'
+          git push origin HEAD:feat/stracker-controlled-physical-pilot-v1
