@@ -51,7 +51,7 @@ describe('live native sharing Cloudflare boundary', () => {
     expect(backend).not.toHaveProperty('zone_id')
   })
 
-  test('public Worker has a single exact service binding and no lifecycle declaration', async () => {
+  test('public Worker has a single exact service binding and cookie-session API stays worker-first', async () => {
     const publicConfig = await config('native-sharing-cloudflare/wrangler.release.jsonc')
     expect(publicConfig.name).toBe('stracker')
     expect(publicConfig.workers_dev).toBe(true)
@@ -64,6 +64,8 @@ describe('live native sharing Cloudflare boundary', () => {
     ])
     expect(publicConfig.assets?.run_worker_first).toEqual(expect.arrayContaining([
       '/api/share/*',
+      '/api/cookie-sessions',
+      '/api/cookie-sessions/*',
       '/shared',
       '/shared/*',
       '/__stracker/version.json',
