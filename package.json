@@ -110,9 +110,11 @@
     "vitest": "^4.1.0"
   },
   "overrides": {
-    "brace-expansion": "1.1.17",
+    "brace-expansion": "1.1.18",
     "js-yaml": "4.3.0",
     "postcss": "8.5.18",
-    "sharp": "0.35.3"
+    "sharp": "0.35.3",
+    "socket.io-parser": "4.2.7",
+    "undici": "7.29.0"
   }
 }
