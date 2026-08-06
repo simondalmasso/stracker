@@ -73,17 +73,7 @@ function hasTextField(layer: { layout?: unknown }): boolean {
 }
 
 export function setDarkBaseStyle(map: MapLibreMap): void {
-  for (const layer of map.getStyle().layers ?? []) {
-    const id = layer.id.toLowerCase()
-    if (layer.type === 'background') {
-      map.setPaintProperty(layer.id, 'background-color', '#050505')
-    } else if (layer.type === 'fill') {
-      if (id.includes('water')) map.setPaintProperty(layer.id, 'fill-color', '#0b1117')
-      else if (id.includes('land') || id.includes('park')) map.setPaintProperty(layer.id, 'fill-color', '#101214')
-    } else if (layer.type === 'line' && (id.includes('road') || id.includes('street'))) {
-      map.setPaintProperty(layer.id, 'line-color', '#3c4146')
-    }
-  }
+  setLightCityBaseStyle(map)
 }
 
 export function setLightCityBaseStyle(map: MapLibreMap): void {

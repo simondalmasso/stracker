@@ -113,6 +113,15 @@ jq -e '.privateDataUsed == false and .realCookieValuesUsed == false and .realCoo
 jq -e '.pageErrorTotal == 0 and .relevantConsoleErrors == 0 and .unexpectedNetworkErrors == 0 and .appApi404Total == 0 and .horizontalOverflowTotal == 0 and .fakeSuccessTotal == 0' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
 jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
 
+VIEWER_SESSION_LIFECYCLE_QA_OUTPUT="${VIEWER_SESSION_LIFECYCLE_QA_OUTPUT:-${RUNNER_TEMP:-/tmp}/stracker-viewer-session-lifecycle.json}"
+export VIEWER_SESSION_LIFECYCLE_QA_OUTPUT
+bun tests/native-sharing-cloudflare/viewer-session-lifecycle-browser-qa.ts
+jq -e '.privateDataUsed == false and .realCoordinatesUsed == false and .capabilityOrTokenRetained == false' "$VIEWER_SESSION_LIFECYCLE_QA_OUTPUT" >/dev/null
+jq -e '.cookieValuesPersisted == false and .emitterTokenPersisted == false and .originalViewerCapabilityPersisted == false and .localStorageUsed == false and .indexedDbUsed == false and .crossTabSharingUsed == false' "$VIEWER_SESSION_LIFECYCLE_QA_OUTPUT" >/dev/null
+jq -e '.remoteLogoutRequests == 0 and .viewerExchangeRequests == 1' "$VIEWER_SESSION_LIFECYCLE_QA_OUTPUT" >/dev/null
+jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$VIEWER_SESSION_LIFECYCLE_QA_OUTPUT" >/dev/null
+
 echo 'CONTROLLED_PILOT_RELEASE_ASSET_ALLOWLIST=PASS'
 echo 'CONTROLLED_PILOT_UI_ENABLED=PASS'
 echo 'COOKIE_SESSION_BROWSER_QA=PASS'
+echo 'VIEWER_SESSION_LIFECYCLE_BROWSER_QA=PASS'

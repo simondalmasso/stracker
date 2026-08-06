@@ -30,6 +30,11 @@ import {
   removeViewerCapabilityFragment,
 } from './native-sharing-api'
 import {
+  clearPersistedViewerSession,
+  persistViewerSession,
+  readPersistedViewerSession,
+} from './viewer-session-recovery'
+import {
   buildPilotDiagnostic,
   fetchPilotRuntimeIdentity,
   pilotHttpStatusCategory,
@@ -74,6 +79,8 @@ export function useNativeViewer(): NativeViewerController {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const freshnessRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const requestRef = useRef<AbortController | null>(null)
+  const resumeRef = useRef<(() => void) | null>(null)
+  const autoRecoveryStartedRef = useRef(false)
   const generationRef = useRef(0)
   const lastSequenceRef = useRef(0)
   const stateRef = useRef<ViewerSessionState>('unconfirmed')
@@ -92,6 +99,7 @@ export function useNativeViewer(): NativeViewerController {
     if (freshnessRef.current) clearInterval(freshnessRef.current)
     pollRef.current = null
     freshnessRef.current = null
+    resumeRef.current = null
     requestRef.current?.abort()
     requestRef.current = null
   }, [])
@@ -109,6 +117,7 @@ export function useNativeViewer(): NativeViewerController {
   const stop = useCallback(() => {
     const viewerSession = viewerSessionRef.current
     abortTransport()
+    clearPersistedViewerSession()
     clearLocalState()
     setExactState('unconfirmed')
     setNetworkState(onlineRef.current ? 'online' : 'offline')
@@ -123,6 +132,7 @@ export function useNativeViewer(): NativeViewerController {
     const online = () => {
       onlineRef.current = true
       setNetworkState(viewerSessionRef.current ? 'recovering' : 'online')
+      resumeRef.current?.()
     }
     const offline = () => {
       onlineRef.current = false
@@ -137,51 +147,71 @@ export function useNativeViewer(): NativeViewerController {
     }
   }, [])
 
+  useEffect(() => {
+    const resume = () => {
+      if (document.visibilityState !== 'visible' || !viewerSessionRef.current) return
+      setNetworkState(onlineRef.current ? 'recovering' : 'offline')
+      resumeRef.current?.()
+    }
+    document.addEventListener('visibilitychange', resume)
+    window.addEventListener('pageshow', resume)
+    return () => {
+      document.removeEventListener('visibilitychange', resume)
+      window.removeEventListener('pageshow', resume)
+    }
+  }, [])
+
   useEffect(() => () => {
-    const viewerSession = viewerSessionRef.current
     abortTransport()
-    viewerSessionRef.current = null
-    if (viewerSession) void logoutNativeViewer(viewerSession.sessionId, viewerSession.viewerSessionToken).catch(() => undefined)
   }, [abortTransport])
 
   const start = useCallback(async () => {
+    const viewerCapability = readViewerCapabilityFromFragment()
+    const recoveredSession = viewerCapability ? null : readPersistedViewerSession()
     const priorViewerSession = viewerSessionRef.current
     abortTransport()
     clearLocalState()
-    if (priorViewerSession) void logoutNativeViewer(priorViewerSession.sessionId, priorViewerSession.viewerSessionToken).catch(() => undefined)
+    if (priorViewerSession && viewerCapability) {
+      clearPersistedViewerSession()
+      void logoutNativeViewer(priorViewerSession.sessionId, priorViewerSession.viewerSessionToken).catch(() => undefined)
+    }
     setLoading(true)
     setExactState('validating')
     setPollAttemptCount(0)
     setPollSuccessCount(0)
 
-    let viewerCapability = readViewerCapabilityFromFragment()
-    if (!viewerCapability) {
-      setLoading(false)
-      setExactState('invalid')
-      setError('El enlace privado no es válido.')
-      return
-    }
-
     const generation = generationRef.current
-    const exchangeController = new AbortController()
-    requestRef.current = exchangeController
-    try {
-      setNetworkState(onlineRef.current ? 'sending' : 'offline')
-      const exchanged = await exchangeNativeViewerCapability(viewerCapability, exchangeController.signal)
-      if (generation !== generationRef.current || exchangeController.signal.aborted) return
-      setLastHttpStatusCategory('HTTP_2XX')
-      viewerSessionRef.current = exchanged
-      removeViewerCapabilityFragment()
-      viewerCapability = ''
-    } catch (caught) {
-      viewerCapability = ''
-      if (generation !== generationRef.current || exchangeController.signal.aborted) return
-      setLastHttpStatusCategory(caught instanceof NativeSharingApiError ? pilotHttpStatusCategory(caught.status) : pilotHttpStatusCategory(caught))
-      setNetworkState(onlineRef.current ? 'error' : 'offline')
-      setLoading(false)
-      setExactState(caught instanceof NativeSharingApiError && caught.code === 'SESSION_EXPIRED' ? 'expired' : caught instanceof NativeSharingApiError && caught.code === 'SESSION_REVOKED' ? 'revoked' : 'invalid')
-      setError(message(caught))
-      return
+    if (recoveredSession) {
+      viewerSessionRef.current = recoveredSession
+      setNetworkState(onlineRef.current ? 'recovering' : 'offline')
+    } else {
+      if (!viewerCapability) {
+        setLoading(false)
+        setExactState('invalid')
+        setError('El enlace privado no es válido o la recuperación segura de esta pestaña venció.')
+        return
+      }
+
+      const exchangeController = new AbortController()
+      requestRef.current = exchangeController
+      try {
+        setNetworkState(onlineRef.current ? 'sending' : 'offline')
+        const exchanged = await exchangeNativeViewerCapability(viewerCapability, exchangeController.signal)
+        if (generation !== generationRef.current || exchangeController.signal.aborted) return
+        setLastHttpStatusCategory('HTTP_2XX')
+        viewerSessionRef.current = exchanged
+        persistViewerSession(exchanged)
+        removeViewerCapabilityFragment()
+      } catch (caught) {
+        if (generation !== generationRef.current || exchangeController.signal.aborted) return
+        clearPersistedViewerSession()
+        setLastHttpStatusCategory(caught instanceof NativeSharingApiError ? pilotHttpStatusCategory(caught.status) : pilotHttpStatusCategory(caught))
+        setNetworkState(onlineRef.current ? 'error' : 'offline')
+        setLoading(false)
+        setExactState(caught instanceof NativeSharingApiError && caught.code === 'SESSION_EXPIRED' ? 'expired' : caught instanceof NativeSharingApiError && caught.code === 'SESSION_REVOKED' ? 'revoked' : 'invalid')
+        setError(message(caught))
+        return
+      }
     }
 
     const load = async () => {
@@ -189,6 +219,7 @@ export function useNativeViewer(): NativeViewerController {
       if (!viewerSession || generation !== generationRef.current) return
       if (Date.now() > Date.parse(viewerSession.expiresAt)) {
         abortTransport()
+        clearPersistedViewerSession()
         clearLocalState()
         setExactState('expired')
         setError('La sesión de visualización venció.')
@@ -248,14 +279,17 @@ export function useNativeViewer(): NativeViewerController {
         setGhostrail(pipelineRef.current.rail.segments)
         if (caught instanceof NativeSharingApiError && (caught.code === 'SESSION_REVOKED' || caught.code === 'VIEWER_SESSION_INVALID')) {
           abortTransport()
+          clearPersistedViewerSession()
           clearLocalState()
           setExactState('revoked')
         } else if (caught instanceof NativeSharingApiError && (caught.code === 'SESSION_EXPIRED' || caught.code === 'VIEWER_SESSION_EXPIRED')) {
           abortTransport()
+          clearPersistedViewerSession()
           clearLocalState()
           setExactState('expired')
         } else if (caught instanceof NativeSharingApiError && caught.status === 404) {
           abortTransport()
+          clearPersistedViewerSession()
           clearLocalState()
           setExactState('invalid')
         } else {
@@ -267,6 +301,7 @@ export function useNativeViewer(): NativeViewerController {
       }
     }
 
+    resumeRef.current = () => { void load() }
     await load()
     if (generation !== generationRef.current || !viewerSessionRef.current || ['expired', 'revoked', 'invalid'].includes(stateRef.current)) return
     pollRef.current = setInterval(() => void load(), 10_000)
@@ -277,6 +312,14 @@ export function useNativeViewer(): NativeViewerController {
       setGhostrail(pipelineRef.current.rail.segments)
     }, 1_000)
   }, [abortTransport, clearLocalState, setExactState])
+
+  useEffect(() => {
+    if (autoRecoveryStartedRef.current) return
+    if (readViewerCapabilityFromFragment() || !readPersistedViewerSession()) return
+    autoRecoveryStartedRef.current = true
+    const timer = window.setTimeout(() => { void start() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [start])
 
   const getDiagnostic = useCallback(async () => serializePilotDiagnostic(await buildPilotDiagnostic({
     identity: runtimeIdentity,

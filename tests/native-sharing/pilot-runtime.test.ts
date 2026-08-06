@@ -6,6 +6,13 @@ import { configureBuildings3d } from '../../src/lib/location-source/map-engine/o
 import { parseAuthorizedViewerLink, STRACKER_PUBLIC_ORIGIN } from '../../src/lib/location-source/viewer-link-policy'
 import { runMap3dRuntimeQa } from '../native-sharing-cloudflare/map-3d-runtime-qa'
 import {
+  clearPersistedViewerSession,
+  persistViewerSession,
+  readPersistedViewerSession,
+  VIEWER_SESSION_STORAGE_KEY,
+  type SessionStorageLike,
+} from '../../src/lib/location-source/viewer-session-recovery'
+import {
   PILOT_RETRY_DELAYS_MS,
   buildPilotDiagnostic,
   pilotAccuracyState,
@@ -13,6 +20,13 @@ import {
   pilotLastSuccessAgeBucket,
   serializePilotDiagnostic,
 } from '../../src/lib/location-source/pilot-runtime'
+
+class MemorySessionStorage implements SessionStorageLike {
+  values = new Map<string, string>()
+  getItem(key: string): string | null { return this.values.get(key) ?? null }
+  setItem(key: string, value: string): void { this.values.set(key, value) }
+  removeItem(key: string): void { this.values.delete(key) }
+}
 
 describe('controlled physical pilot runtime', () => {
   test('uses exact shared-location freshness thresholds', () => {
@@ -67,6 +81,7 @@ describe('controlled physical pilot runtime', () => {
       setLayoutProperty: (id: string, _property: string, value: string) => visibility.set(id, value),
       addLayer: (layer: Record<string, unknown>) => layers.push(layer),
       setLight: () => undefined,
+      setPaintProperty: () => undefined,
     }
 
     expect(configureBuildings3d(map as never, { enabled: true, density: 'full' })).toBe(true)
@@ -95,6 +110,42 @@ describe('controlled physical pilot runtime', () => {
     const localOrigin = 'http://127.0.0.1:8787'
     expect(parseAuthorizedViewerLink(`${localOrigin}/shared/#v=${capability}`, localOrigin)?.capability).toBe(capability)
     expect(parseAuthorizedViewerLink(`http://localhost:8787/shared#v=${capability}`, localOrigin)).toBeNull()
+  })
+
+  test('persists only the scoped viewer session in sessionStorage and enforces TTL', () => {
+    const now = Date.parse('2026-08-06T03:30:00.000Z')
+    const storage = new MemorySessionStorage()
+    const session = {
+      sessionId: 'a'.repeat(43),
+      viewerSessionToken: 'b'.repeat(43),
+      viewerGeneration: 1,
+      expiresAt: new Date(now + 60 * 60 * 1000).toISOString(),
+    }
+    expect(persistViewerSession(session, storage)).toBe(true)
+    expect(readPersistedViewerSession(storage, now)).toEqual(session)
+    const raw = storage.getItem(VIEWER_SESSION_STORAGE_KEY) ?? ''
+    expect(raw).not.toContain('viewerCapability')
+    expect(raw).not.toContain('emitterToken')
+    expect(raw).not.toContain('cookie')
+
+    expect(readPersistedViewerSession(storage, now + 61 * 60 * 1000)).toBeNull()
+    expect(storage.getItem(VIEWER_SESSION_STORAGE_KEY)).toBeNull()
+    expect(persistViewerSession(session, storage)).toBe(true)
+    clearPersistedViewerSession(storage)
+    expect(storage.getItem(VIEWER_SESSION_STORAGE_KEY)).toBeNull()
+  })
+
+  test('rejects malformed or overlong viewer recovery state', () => {
+    const now = Date.parse('2026-08-06T03:30:00.000Z')
+    const storage = new MemorySessionStorage()
+    storage.setItem(VIEWER_SESSION_STORAGE_KEY, JSON.stringify({
+      sessionId: 'a'.repeat(43),
+      viewerSessionToken: 'b'.repeat(43),
+      viewerGeneration: 1,
+      expiresAt: new Date(now + 5 * 60 * 60 * 1000).toISOString(),
+    }))
+    expect(readPersistedViewerSession(storage, now)).toBeNull()
+    expect(storage.getItem(VIEWER_SESSION_STORAGE_KEY)).toBeNull()
   })
 
   test('MAP_3D_RUNTIME_TESTS renders public OSM buildings with visible toggle effect', async () => {
