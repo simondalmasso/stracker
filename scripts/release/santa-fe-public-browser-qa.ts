@@ -1,4 +1,4 @@
 export {
   runSantaFePublicBrowserQa,
   type SantaFePublicBrowserQaOptions,
-} from './santa-fe-public-browser-qa-v3'
+} from './santa-fe-public-browser-qa-v4'
