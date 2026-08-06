@@ -49,6 +49,9 @@ interface RuntimeHealthMemory {
   healthy: boolean
   styleSignature: string
   styleGeneration: number
+  probeQueued: boolean
+  observersInstalled: boolean
+  lastOptions: SantaFe3dRuntimeOptions | null
 }
 
 const healthByMap = new WeakMap<MapLibreMap, RuntimeHealthMemory>()
@@ -106,7 +109,16 @@ function memoryFor(map: MapLibreMap): RuntimeHealthMemory {
   const signature = `${Object.keys(style.sources ?? {}).sort().join('|')}::${(style.layers ?? []).map((layer) => layer.id).join('|')}`
   const existing = healthByMap.get(map)
   if (!existing) {
-    const created = { consecutiveHealthy: 0, consecutiveEmpty: 0, healthy: false, styleSignature: signature, styleGeneration: 1 }
+    const created: RuntimeHealthMemory = {
+      consecutiveHealthy: 0,
+      consecutiveEmpty: 0,
+      healthy: false,
+      styleSignature: signature,
+      styleGeneration: 1,
+      probeQueued: false,
+      observersInstalled: false,
+      lastOptions: null,
+    }
     healthByMap.set(map, created)
     return created
   }
@@ -118,6 +130,29 @@ function memoryFor(map: MapLibreMap): RuntimeHealthMemory {
     existing.healthy = false
   }
   return existing
+}
+
+function queueHealthProbe(map: MapLibreMap, memory: RuntimeHealthMemory): void {
+  if (memory.probeQueued || !memory.lastOptions) return
+  memory.probeQueued = true
+  window.requestAnimationFrame(() => {
+    memory.probeQueued = false
+    const options = memory.lastOptions
+    if (!options || !map.isStyleLoaded()) return
+    configureSantaFeCity3d(map, options)
+  })
+}
+
+function installHealthObservers(map: MapLibreMap, memory: RuntimeHealthMemory): void {
+  if (memory.observersInstalled) return
+  memory.observersInstalled = true
+  map.on('sourcedata', (event) => {
+    if (!isSantaFe3dSourceId(event.sourceId)) return
+    queueHealthProbe(map, memory)
+  })
+  map.on('idle', () => {
+    if (!memory.healthy || memory.consecutiveEmpty > 0) queueHealthProbe(map, memory)
+  })
 }
 
 function safeRenderedFeatureCount(map: MapLibreMap, layerIds: string[]): number {
@@ -204,6 +239,13 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   const inside = isInsideSantaFe3dBounds(options.center)
   const eligible = options.enabled && options.density !== 'off' && inside
   const memory = memoryFor(map)
+  memory.lastOptions = {
+    enabled: options.enabled,
+    density: options.density,
+    center: { ...options.center },
+    origin: options.origin,
+  }
+  installHealthObservers(map, memory)
 
   if (!eligible) {
     const customLayerCount = hideCustomLayers(map)
