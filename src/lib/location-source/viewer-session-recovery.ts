@@ -10,6 +10,9 @@ export interface SessionStorageLike {
   removeItem(key: string): void
 }
 
+let pendingBrowserSession: NativeViewerExchangeResponse | null = null
+let lifecyclePersistenceInstalled = false
+
 function defaultStorage(): SessionStorageLike | null {
   if (typeof window === 'undefined') return null
   try {
@@ -34,10 +37,7 @@ export function isRecoverableViewerSession(
   return expiresAtMs - nowMs <= MAX_RECOVERY_TTL_MS + 60_000
 }
 
-export function persistViewerSession(
-  session: NativeViewerExchangeResponse,
-  storage: SessionStorageLike | null = defaultStorage(),
-): boolean {
+function writeSession(session: NativeViewerExchangeResponse, storage: SessionStorageLike | null): boolean {
   if (!storage || !isRecoverableViewerSession(session)) return false
   try {
     storage.setItem(VIEWER_SESSION_STORAGE_KEY, JSON.stringify(session))
@@ -45,6 +45,38 @@ export function persistViewerSession(
   } catch {
     return false
   }
+}
+
+function flushPendingBrowserSession(): void {
+  const session = pendingBrowserSession
+  if (!session) return
+  if (writeSession(session, defaultStorage())) pendingBrowserSession = null
+}
+
+function installLifecyclePersistence(): void {
+  if (lifecyclePersistenceInstalled || typeof window === 'undefined' || typeof document === 'undefined') return
+  lifecyclePersistenceInstalled = true
+  window.addEventListener('pagehide', flushPendingBrowserSession)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushPendingBrowserSession()
+  })
+}
+
+export function persistViewerSession(
+  session: NativeViewerExchangeResponse,
+  storage?: SessionStorageLike | null,
+): boolean {
+  if (!isRecoverableViewerSession(session)) return false
+  if (storage !== undefined) return writeSession(session, storage)
+
+  const target = defaultStorage()
+  if (!target) return false
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    pendingBrowserSession = session
+    installLifecyclePersistence()
+    return true
+  }
+  return writeSession(session, target)
 }
 
 export function readPersistedViewerSession(
@@ -70,5 +102,6 @@ export function readPersistedViewerSession(
 export function clearPersistedViewerSession(
   storage: SessionStorageLike | null = defaultStorage(),
 ): void {
+  pendingBrowserSession = null
   try { storage?.removeItem(VIEWER_SESSION_STORAGE_KEY) } catch {}
 }
