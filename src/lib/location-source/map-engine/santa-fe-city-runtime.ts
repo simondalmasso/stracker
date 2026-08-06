@@ -95,12 +95,8 @@ function ensureSantaFeCity(map: MapLibreMap, origin: string, density: Exclude<Sa
   for (let index = 0; index < SANTA_FE_3D_ASSET_PATHS.length; index += 1) {
     const sourceId = SANTA_FE_3D_SOURCE_IDS[index]
     const layerId = SANTA_FE_3D_LAYER_IDS[index]
-    if (!map.getSource(sourceId)) {
-      map.addSource(sourceId, santaFe3dSourceDefinition(SANTA_FE_3D_ASSET_PATHS[index], origin))
-    }
-    if (!map.getLayer(layerId)) {
-      map.addLayer(santaFe3dLayerDefinition(sourceId, layerId, density), before)
-    }
+    if (!map.getSource(sourceId)) map.addSource(sourceId, santaFe3dSourceDefinition(SANTA_FE_3D_ASSET_PATHS[index], origin))
+    if (!map.getLayer(layerId)) map.addLayer(santaFe3dLayerDefinition(sourceId, layerId, density), before)
   }
 }
 
@@ -135,12 +131,12 @@ function memoryFor(map: MapLibreMap): RuntimeHealthMemory {
 function queueHealthProbe(map: MapLibreMap, memory: RuntimeHealthMemory): void {
   if (memory.probeQueued || !memory.lastOptions) return
   memory.probeQueued = true
-  window.requestAnimationFrame(() => {
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
     memory.probeQueued = false
     const options = memory.lastOptions
     if (!options || !map.isStyleLoaded()) return
     configureSantaFeCity3d(map, options)
-  })
+  }))
 }
 
 function installHealthObservers(map: MapLibreMap, memory: RuntimeHealthMemory): void {
@@ -157,19 +153,13 @@ function installHealthObservers(map: MapLibreMap, memory: RuntimeHealthMemory): 
 
 function safeRenderedFeatureCount(map: MapLibreMap, layerIds: string[]): number {
   if (!layerIds.length) return 0
-  try {
-    return map.queryRenderedFeatures({ layers: layerIds }).length
-  } catch {
-    return 0
-  }
+  try { return map.queryRenderedFeatures({ layers: layerIds }).length } catch { return 0 }
 }
 
 function safeSourceFeatureCount(map: MapLibreMap, sourceIds: string[]): number {
   let total = 0
   for (const sourceId of sourceIds) {
-    try {
-      total += map.querySourceFeatures(sourceId, { sourceLayer: SANTA_FE_3D_SOURCE_LAYER }).length
-    } catch {}
+    try { total += map.querySourceFeatures(sourceId, { sourceLayer: SANTA_FE_3D_SOURCE_LAYER }).length } catch {}
   }
   return total
 }
@@ -197,7 +187,6 @@ function publishStatus(map: MapLibreMap, status: SantaFe3dRuntimeStatus): void {
     main.dataset.genericFallbackVisible = status.genericFallbackVisible ? 'true' : 'false'
     main.dataset.mapStyleGeneration = String(status.styleGeneration)
   }
-
   let badge = container.querySelector<HTMLElement>('[data-stracker-3d-status]')
   if (!badge) {
     badge = document.createElement('div')
@@ -221,7 +210,6 @@ function publishStatus(map: MapLibreMap, status: SantaFe3dRuntimeStatus): void {
   }
   badge.textContent = statusLabel(status.providerState)
   badge.dataset.state = status.providerState
-
   window.dispatchEvent(new CustomEvent('stracker:buildings-3d-state', { detail: status }))
 }
 
@@ -239,12 +227,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   const inside = isInsideSantaFe3dBounds(options.center)
   const eligible = options.enabled && options.density !== 'off' && inside
   const memory = memoryFor(map)
-  memory.lastOptions = {
-    enabled: options.enabled,
-    density: options.density,
-    center: { ...options.center },
-    origin: options.origin,
-  }
+  memory.lastOptions = { enabled: options.enabled, density: options.density, center: { ...options.center }, origin: options.origin }
   installHealthObservers(map, memory)
 
   if (!eligible) {
@@ -278,7 +261,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
 
   for (const layerId of existingLayerIds) {
     map.setLayoutProperty(layerId, 'visibility', 'visible')
-    map.setPaintProperty(layerId, 'fill-extrusion-opacity', memory.healthy ? desiredOpacity : 0.01)
+    map.setPaintProperty(layerId, 'fill-extrusion-opacity', desiredOpacity)
   }
 
   const loadedSourceIds = existingSourceIds.filter((sourceId) => {
@@ -296,9 +279,9 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   }
   if (!memory.healthy && memory.consecutiveHealthy >= 1) memory.healthy = true
   if (memory.healthy && memory.consecutiveEmpty >= 2) memory.healthy = false
-
-  for (const layerId of existingLayerIds) {
-    map.setPaintProperty(layerId, 'fill-extrusion-opacity', memory.healthy ? desiredOpacity : 0.01)
+  if (!memory.healthy && sourceFeatureCount > 0 && memory.consecutiveEmpty <= 8) {
+    map.triggerRepaint()
+    queueHealthProbe(map, memory)
   }
 
   const sourceLoaded = loadedSourceIds.length > 0
@@ -330,11 +313,7 @@ export function isSantaFe3dSourceId(sourceId: string | undefined): boolean {
 }
 
 export function removeSantaFeCity3d(map: MapLibreMap): void {
-  for (const layerId of [...SANTA_FE_3D_LAYER_IDS].reverse()) {
-    if (map.getLayer(layerId)) map.removeLayer(layerId)
-  }
-  for (const sourceId of [...SANTA_FE_3D_SOURCE_IDS].reverse()) {
-    if (map.getSource(sourceId)) map.removeSource(sourceId)
-  }
+  for (const layerId of [...SANTA_FE_3D_LAYER_IDS].reverse()) if (map.getLayer(layerId)) map.removeLayer(layerId)
+  for (const sourceId of [...SANTA_FE_3D_SOURCE_IDS].reverse()) if (map.getSource(sourceId)) map.removeSource(sourceId)
   healthByMap.delete(map)
 }
