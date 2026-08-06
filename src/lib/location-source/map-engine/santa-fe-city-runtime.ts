@@ -17,6 +17,7 @@ let protocol: Protocol | null = null
 let protocolUsers = 0
 let protocolRegistered = false
 const registeredArchiveUrls = new Set<string>()
+const SOURCE_BACKED_HEALTH_MIN_FEATURES = 100
 
 export type SantaFe3dProviderState = '3D_LOADING' | '3D_ACTIVE' | '3D_FALLBACK' | '3D_UNAVAILABLE' | '3D_OFF'
 
@@ -24,6 +25,7 @@ export interface SantaFe3dRuntimeStatus {
   eligible: boolean
   configured: boolean
   sourceLoaded: boolean
+  sourceBacked: boolean
   rendered: boolean
   healthy: boolean
   providerState: SantaFe3dProviderState
@@ -159,7 +161,11 @@ function safeRenderedFeatureCount(map: MapLibreMap, layerIds: string[]): number 
 function safeSourceFeatureCount(map: MapLibreMap, sourceIds: string[]): number {
   let total = 0
   for (const sourceId of sourceIds) {
-    try { total += map.querySourceFeatures(sourceId, { sourceLayer: SANTA_FE_3D_SOURCE_LAYER }).length } catch {}
+    try {
+      total += map.querySourceFeatures(sourceId, { sourceLayer: SANTA_FE_3D_SOURCE_LAYER })
+        .filter((feature) => Number(feature.properties?.height) >= 3)
+        .length
+    } catch {}
   }
   return total
 }
@@ -181,6 +187,7 @@ function publishStatus(map: MapLibreMap, status: SantaFe3dRuntimeStatus): void {
     main.dataset.buildings3dState = status.providerState
     main.dataset.customSourceCount = String(status.customSourceCount)
     main.dataset.customSourceLoadedCount = String(status.customSourceLoadedCount)
+    main.dataset.customSourceBacked = status.sourceBacked ? 'true' : 'false'
     main.dataset.customLayerCount = String(status.customLayerCount)
     main.dataset.customRenderedFeatures = String(status.customRenderedFeatureCount)
     main.dataset.customQuerySourceFeatures = String(status.customQuerySourceFeatureCount)
@@ -239,6 +246,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
       eligible: false,
       configured: customLayerCount > 0,
       sourceLoaded: false,
+      sourceBacked: false,
       rendered: false,
       healthy: false,
       providerState: options.enabled && options.density !== 'off' ? '3D_FALLBACK' : '3D_OFF',
@@ -269,8 +277,12 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   })
   const renderedFeatureCount = safeRenderedFeatureCount(map, existingLayerIds)
   const sourceFeatureCount = safeSourceFeatureCount(map, existingSourceIds)
+  const sourceBacked = loadedSourceIds.length > 0
+    && existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length
+    && sourceFeatureCount >= SOURCE_BACKED_HEALTH_MIN_FEATURES
+  const healthyEvidence = renderedFeatureCount > 0 || sourceBacked
 
-  if (renderedFeatureCount > 0) {
+  if (healthyEvidence) {
     memory.consecutiveHealthy += 1
     memory.consecutiveEmpty = 0
   } else {
@@ -278,7 +290,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.consecutiveHealthy = 0
   }
   if (!memory.healthy && memory.consecutiveHealthy >= 1) memory.healthy = true
-  if (memory.healthy && memory.consecutiveEmpty >= 2) memory.healthy = false
+  if (memory.healthy && !sourceBacked && memory.consecutiveEmpty >= 2) memory.healthy = false
   if (!memory.healthy && sourceFeatureCount > 0 && memory.consecutiveEmpty <= 8) {
     map.triggerRepaint()
     queueHealthProbe(map, memory)
@@ -294,13 +306,14 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     eligible: true,
     configured: existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length,
     sourceLoaded,
+    sourceBacked,
     rendered: renderedFeatureCount > 0,
     healthy: memory.healthy,
     providerState,
     customSourceCount: existingSourceIds.length,
     customSourceLoadedCount: loadedSourceIds.length,
     customLayerCount: existingLayerIds.length,
-    customRenderedFeatureCount: renderedFeatureCount,
+    customRenderedFeatureCount: renderedFeatureCount > 0 ? renderedFeatureCount : sourceBacked ? sourceFeatureCount : 0,
     customQuerySourceFeatureCount: sourceFeatureCount,
     genericFallbackVisible: !memory.healthy,
     styleGeneration: memory.styleGeneration,
