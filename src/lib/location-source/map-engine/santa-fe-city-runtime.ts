@@ -17,7 +17,6 @@ let protocol: Protocol | null = null
 let protocolUsers = 0
 let protocolRegistered = false
 const registeredArchiveUrls = new Set<string>()
-const SOURCE_BACKED_HEALTH_MIN_FEATURES = 100
 
 export type SantaFe3dProviderState = '3D_LOADING' | '3D_ACTIVE' | '3D_FALLBACK' | '3D_UNAVAILABLE' | '3D_OFF'
 
@@ -279,7 +278,6 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   const sourceFeatureCount = safeSourceFeatureCount(map, existingSourceIds)
   const sourceBacked = loadedSourceIds.length > 0
     && existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length
-    && sourceFeatureCount >= SOURCE_BACKED_HEALTH_MIN_FEATURES
   const healthyEvidence = renderedFeatureCount > 0 || sourceBacked
 
   if (healthyEvidence) {
@@ -313,7 +311,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     customSourceCount: existingSourceIds.length,
     customSourceLoadedCount: loadedSourceIds.length,
     customLayerCount: existingLayerIds.length,
-    customRenderedFeatureCount: renderedFeatureCount > 0 ? renderedFeatureCount : sourceBacked ? sourceFeatureCount : 0,
+    customRenderedFeatureCount: renderedFeatureCount,
     customQuerySourceFeatureCount: sourceFeatureCount,
     genericFallbackVisible: !memory.healthy,
     styleGeneration: memory.styleGeneration,
