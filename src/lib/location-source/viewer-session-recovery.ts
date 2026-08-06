@@ -22,23 +22,28 @@ function defaultStorage(): SessionStorageLike | null {
   }
 }
 
-export function isRecoverableViewerSession(
-  value: unknown,
-  nowMs = Date.now(),
-): value is NativeViewerExchangeResponse {
+function hasViewerSessionShape(value: unknown): value is NativeViewerExchangeResponse {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<NativeViewerExchangeResponse>
   if (!TOKEN_PATTERN.test(candidate.sessionId ?? '')) return false
   if (!TOKEN_PATTERN.test(candidate.viewerSessionToken ?? '')) return false
   if (!Number.isSafeInteger(candidate.viewerGeneration) || Number(candidate.viewerGeneration) < 1) return false
-  if (typeof candidate.expiresAt !== 'string') return false
-  const expiresAtMs = Date.parse(candidate.expiresAt)
-  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) return false
+  if (typeof candidate.expiresAt !== 'string' || !Number.isFinite(Date.parse(candidate.expiresAt))) return false
+  return true
+}
+
+export function isRecoverableViewerSession(
+  value: unknown,
+  nowMs = Date.now(),
+): value is NativeViewerExchangeResponse {
+  if (!hasViewerSessionShape(value)) return false
+  const expiresAtMs = Date.parse(value.expiresAt)
+  if (expiresAtMs <= nowMs) return false
   return expiresAtMs - nowMs <= MAX_RECOVERY_TTL_MS + 60_000
 }
 
 function writeSession(session: NativeViewerExchangeResponse, storage: SessionStorageLike | null): boolean {
-  if (!storage || !isRecoverableViewerSession(session)) return false
+  if (!storage || !hasViewerSessionShape(session)) return false
   try {
     storage.setItem(VIEWER_SESSION_STORAGE_KEY, JSON.stringify(session))
     return true
@@ -49,7 +54,10 @@ function writeSession(session: NativeViewerExchangeResponse, storage: SessionSto
 
 function flushPendingBrowserSession(): void {
   const session = pendingBrowserSession
-  if (!session) return
+  if (!session || !isRecoverableViewerSession(session)) {
+    pendingBrowserSession = null
+    return
+  }
   if (writeSession(session, defaultStorage())) pendingBrowserSession = null
 }
 
@@ -66,8 +74,8 @@ export function persistViewerSession(
   session: NativeViewerExchangeResponse,
   storage?: SessionStorageLike | null,
 ): boolean {
-  if (!isRecoverableViewerSession(session)) return false
   if (storage !== undefined) return writeSession(session, storage)
+  if (!isRecoverableViewerSession(session)) return false
 
   const target = defaultStorage()
   if (!target) return false
