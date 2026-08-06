@@ -48,6 +48,8 @@ interface RuntimeHealthMemory {
   consecutiveHealthy: number
   consecutiveEmpty: number
   healthy: boolean
+  sourceBacked: boolean
+  maxSourceLoadedCount: number
   styleSignature: string
   styleGeneration: number
   probeQueued: boolean
@@ -110,6 +112,8 @@ function memoryFor(map: MapLibreMap): RuntimeHealthMemory {
       consecutiveHealthy: 0,
       consecutiveEmpty: 0,
       healthy: false,
+      sourceBacked: false,
+      maxSourceLoadedCount: 0,
       styleSignature: signature,
       styleGeneration: 1,
       probeQueued: false,
@@ -125,6 +129,8 @@ function memoryFor(map: MapLibreMap): RuntimeHealthMemory {
     existing.consecutiveHealthy = 0
     existing.consecutiveEmpty = 0
     existing.healthy = false
+    existing.sourceBacked = false
+    existing.maxSourceLoadedCount = 0
   }
   return existing
 }
@@ -241,6 +247,8 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.consecutiveHealthy = 0
     memory.consecutiveEmpty = 0
     memory.healthy = false
+    memory.sourceBacked = false
+    memory.maxSourceLoadedCount = 0
     publishStatus(map, {
       eligible: false,
       configured: customLayerCount > 0,
@@ -276,8 +284,13 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   })
   const renderedFeatureCount = safeRenderedFeatureCount(map, existingLayerIds)
   const sourceFeatureCount = safeSourceFeatureCount(map, existingSourceIds)
-  const sourceBacked = loadedSourceIds.length > 0
+  const sourceBackedNow = loadedSourceIds.length > 0
     && existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length
+  if (sourceBackedNow) {
+    memory.sourceBacked = true
+    memory.maxSourceLoadedCount = Math.max(memory.maxSourceLoadedCount, loadedSourceIds.length)
+  }
+  const sourceBacked = memory.sourceBacked
   const healthyEvidence = renderedFeatureCount > 0 || sourceBacked
 
   if (healthyEvidence) {
@@ -294,7 +307,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     queueHealthProbe(map, memory)
   }
 
-  const sourceLoaded = loadedSourceIds.length > 0
+  const sourceLoaded = sourceBacked || loadedSourceIds.length > 0
   const providerState: SantaFe3dProviderState = memory.healthy
     ? '3D_ACTIVE'
     : sourceLoaded || sourceFeatureCount > 0
@@ -309,7 +322,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     healthy: memory.healthy,
     providerState,
     customSourceCount: existingSourceIds.length,
-    customSourceLoadedCount: loadedSourceIds.length,
+    customSourceLoadedCount: Math.max(loadedSourceIds.length, memory.maxSourceLoadedCount),
     customLayerCount: existingLayerIds.length,
     customRenderedFeatureCount: renderedFeatureCount,
     customQuerySourceFeatureCount: sourceFeatureCount,
