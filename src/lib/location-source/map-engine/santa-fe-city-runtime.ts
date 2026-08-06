@@ -55,9 +55,23 @@ interface RuntimeHealthMemory {
   probeQueued: boolean
   observersInstalled: boolean
   lastOptions: SantaFe3dRuntimeOptions | null
+  statusObserver: MutationObserver | null
+  statusElement: HTMLElement | null
+  latestStatus: SantaFe3dRuntimeStatus | null
 }
 
 const healthByMap = new WeakMap<MapLibreMap, RuntimeHealthMemory>()
+const STATUS_ATTRIBUTE_NAMES = [
+  'data-buildings-3d-state',
+  'data-custom-source-count',
+  'data-custom-source-loaded-count',
+  'data-custom-source-backed',
+  'data-custom-layer-count',
+  'data-custom-rendered-features',
+  'data-custom-query-source-features',
+  'data-generic-fallback-visible',
+  'data-map-style-generation',
+] as const
 
 function ensureSantaFeArchivesRegistered(): void {
   protocol ??= new Protocol()
@@ -119,6 +133,9 @@ function memoryFor(map: MapLibreMap): RuntimeHealthMemory {
       probeQueued: false,
       observersInstalled: false,
       lastOptions: null,
+      statusObserver: null,
+      statusElement: null,
+      latestStatus: null,
     }
     healthByMap.set(map, created)
     return created
@@ -185,20 +202,41 @@ function statusLabel(state: SantaFe3dProviderState): string {
   } as const)[state]
 }
 
+function setDatasetValue(element: HTMLElement, key: string, value: string): void {
+  if (element.dataset[key] !== value) element.dataset[key] = value
+}
+
+function applyStatusDataset(element: HTMLElement, status: SantaFe3dRuntimeStatus): void {
+  setDatasetValue(element, 'buildings3dState', status.providerState)
+  setDatasetValue(element, 'customSourceCount', String(status.customSourceCount))
+  setDatasetValue(element, 'customSourceLoadedCount', String(status.customSourceLoadedCount))
+  setDatasetValue(element, 'customSourceBacked', status.sourceBacked ? 'true' : 'false')
+  setDatasetValue(element, 'customLayerCount', String(status.customLayerCount))
+  setDatasetValue(element, 'customRenderedFeatures', String(status.customRenderedFeatureCount))
+  setDatasetValue(element, 'customQuerySourceFeatures', String(status.customQuerySourceFeatureCount))
+  setDatasetValue(element, 'genericFallbackVisible', status.genericFallbackVisible ? 'true' : 'false')
+  setDatasetValue(element, 'mapStyleGeneration', String(status.styleGeneration))
+}
+
+function bindReactStableStatusDataset(map: MapLibreMap, status: SantaFe3dRuntimeStatus): void {
+  const memory = memoryFor(map)
+  const main = map.getContainer().closest('main[data-map-engine="maplibre"]')
+  if (!(main instanceof HTMLElement)) return
+  memory.latestStatus = status
+  if (memory.statusElement !== main) {
+    memory.statusObserver?.disconnect()
+    memory.statusElement = main
+    memory.statusObserver = new MutationObserver(() => {
+      if (memory.statusElement && memory.latestStatus) applyStatusDataset(memory.statusElement, memory.latestStatus)
+    })
+    memory.statusObserver.observe(main, { attributes: true, attributeFilter: [...STATUS_ATTRIBUTE_NAMES] })
+  }
+  applyStatusDataset(main, status)
+}
+
 function publishStatus(map: MapLibreMap, status: SantaFe3dRuntimeStatus): void {
   const container = map.getContainer()
-  const main = container.closest('main[data-map-engine="maplibre"]')
-  if (main instanceof HTMLElement) {
-    main.dataset.buildings3dState = status.providerState
-    main.dataset.customSourceCount = String(status.customSourceCount)
-    main.dataset.customSourceLoadedCount = String(status.customSourceLoadedCount)
-    main.dataset.customSourceBacked = status.sourceBacked ? 'true' : 'false'
-    main.dataset.customLayerCount = String(status.customLayerCount)
-    main.dataset.customRenderedFeatures = String(status.customRenderedFeatureCount)
-    main.dataset.customQuerySourceFeatures = String(status.customQuerySourceFeatureCount)
-    main.dataset.genericFallbackVisible = status.genericFallbackVisible ? 'true' : 'false'
-    main.dataset.mapStyleGeneration = String(status.styleGeneration)
-  }
+  bindReactStableStatusDataset(map, status)
   let badge = container.querySelector<HTMLElement>('[data-stracker-3d-status]')
   if (!badge) {
     badge = document.createElement('div')
@@ -222,6 +260,7 @@ function publishStatus(map: MapLibreMap, status: SantaFe3dRuntimeStatus): void {
   }
   badge.textContent = statusLabel(status.providerState)
   badge.dataset.state = status.providerState
+  applyStatusDataset(badge, status)
   window.dispatchEvent(new CustomEvent('stracker:buildings-3d-state', { detail: status }))
 }
 
@@ -339,5 +378,7 @@ export function isSantaFe3dSourceId(sourceId: string | undefined): boolean {
 export function removeSantaFeCity3d(map: MapLibreMap): void {
   for (const layerId of [...SANTA_FE_3D_LAYER_IDS].reverse()) if (map.getLayer(layerId)) map.removeLayer(layerId)
   for (const sourceId of [...SANTA_FE_3D_SOURCE_IDS].reverse()) if (map.getSource(sourceId)) map.removeSource(sourceId)
+  const memory = healthByMap.get(map)
+  memory?.statusObserver?.disconnect()
   healthByMap.delete(map)
 }
