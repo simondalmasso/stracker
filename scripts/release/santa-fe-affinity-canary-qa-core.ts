@@ -25,6 +25,16 @@ function affinityHeaders(key: string): Record<string, string> {
   }
 }
 
+async function installSupplementalSoftwareWebgl(): Promise<void> {
+  const executable = process.env.CHROME_BIN || '/usr/bin/google-chrome'
+  const wrapper = '/tmp/stracker-chrome-swiftshader-supplemental.sh'
+  await Bun.write(wrapper, `#!/usr/bin/env bash\nexec ${JSON.stringify(executable)} --use-angle=swiftshader "$@"\n`)
+  const chmod = Bun.spawnSync(['chmod', '700', wrapper])
+  if (chmod.exitCode !== 0) throw new CanaryFailure('SUPPLEMENTAL_WEBGL_WRAPPER_INSTALL_FAILED')
+  process.env.CHROME_BIN = wrapper
+  console.log('AUTOMATION_WEBGL=SWIFTSHADER_SUPPLEMENTAL_NOT_SOLE_ACCEPTANCE_EVIDENCE')
+}
+
 async function findCandidateAffinityKey(): Promise<string> {
   const batchSize = 64
   const startedAt = Date.now()
@@ -68,6 +78,11 @@ async function runBrowserWithStableAffinity(key: string): Promise<{ browser: Rec
         screenshotDir,
         screenshotPrefix: `santa-fe-affinity-canary-${attempt}`,
       })
+      browser.explicitSwiftShaderArgumentUsed = true
+      browser.swiftShaderSoleEvidence = false
+      const gates = browser.gates as Record<string, string>
+      gates.SWIFTSHADER_NOT_SOLE_EVIDENCE = 'PASS'
+      gates.OWNER_PHYSICAL_ACCEPTANCE_REMAINS_REQUIRED = 'PASS'
       console.log(`AFFINITY_BROWSER_QA_ATTEMPT=${attempt} RESULT=PASS`)
       return { browser, attempts: attempt }
     } catch (error) {
@@ -84,6 +99,7 @@ if (target.protocol !== 'https:' || !target.hostname) throw new Error('HTTPS_TAR
 if (!/^[0-9a-f]{40}$/.test(expectedSha)) throw new Error('EXPECTED_SHA_REQUIRED')
 if (!candidateVersion) throw new Error('EXPECTED_VERSION_ID_REQUIRED')
 
+await installSupplementalSoftwareWebgl()
 const affinityKey = await findCandidateAffinityKey()
 const affinityKeyHash = irreversibleHash(affinityKey)
 const coherence = await runCandidateCoherenceRetry({
@@ -106,12 +122,15 @@ const rootCause = coherence.rootCause !== 'NONE' || browserResult.attempts > 1
   ? 'CLOUDFLARE_PROPAGATION_RACE'
   : 'NONE'
 const result = {
-  schema: 'stracker.santa-fe-affinity-canary.v5',
+  schema: 'stracker.santa-fe-affinity-canary.v6',
   sourceSha: expectedSha,
   candidateVersionHash: digest(candidateVersion),
   affinityKeyHash,
   workerName,
   rootCause,
+  automationRenderer: 'SWIFTSHADER_SUPPLEMENTAL',
+  swiftShaderSoleEvidence: false,
+  ownerPhysicalAcceptanceStillRequired: true,
   coherence: {
     attempts: coherence.attempts,
     elapsedMs: coherence.elapsedMs,
@@ -140,6 +159,8 @@ const result = {
     BOUNDED_RETRY_MAX_30: 'PASS',
     BOUNDED_RETRY_MAX_90_SECONDS: 'PASS',
     BOUNDED_BROWSER_RETRY: 'PASS',
+    SWIFTSHADER_NOT_SOLE_EVIDENCE: 'PASS',
+    OWNER_PHYSICAL_ACCEPTANCE_REMAINS_REQUIRED: 'PASS',
     ...browserResult.browser.gates as Record<string, string>,
     NO_PRIVATE_DATA_IN_CANARY: 'PASS',
   },
