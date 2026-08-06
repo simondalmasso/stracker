@@ -207,7 +207,10 @@ function setDatasetValue(element: HTMLElement, key: string, value: string): void
 }
 
 function applyStatusDataset(element: HTMLElement, status: SantaFe3dRuntimeStatus): void {
-  setDatasetValue(element, 'buildings3dState', status.providerState)
+  if (element.getAttribute('data-buildings-3d-state') !== status.providerState) {
+    element.setAttribute('data-buildings-3d-state', status.providerState)
+  }
+  element.removeAttribute('data-buildings3d-state')
   setDatasetValue(element, 'customSourceCount', String(status.customSourceCount))
   setDatasetValue(element, 'customSourceLoadedCount', String(status.customSourceLoadedCount))
   setDatasetValue(element, 'customSourceBacked', status.sourceBacked ? 'true' : 'false')
