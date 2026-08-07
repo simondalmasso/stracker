@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import puppeteer from 'puppeteer-core'
 import { runSantaFePublicBrowserQa } from './santa-fe-public-browser-qa'
 
 const target = new URL(process.env.STRACKER_QA_URL || '')
@@ -24,7 +25,7 @@ function safeError(value: unknown): string {
     .replace(/https?:\/\/\S+/gi, '[URL]')
     .replace(/[A-Za-z0-9_-]{43}(?:\.[A-Za-z0-9_-]{43})?/g, '[VALUE]')
     .replace(/[^A-Za-z0-9_[\]-]+/g, '_')
-    .slice(0, 160)
+    .slice(0, 220)
 }
 
 async function verifyExactHead(): Promise<void> {
@@ -50,12 +51,98 @@ async function installSupplementalSoftwareWebgl(): Promise<void> {
   process.env.CHROME_BIN = wrapper
 }
 
+async function diagnoseProductShell(): Promise<void> {
+  const browser = await puppeteer.launch({
+    executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome',
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--enable-webgl', '--enable-gpu', '--ignore-gpu-blocklist', '--disable-dev-shm-usage'],
+  })
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  const failedRequests: string[] = []
+  const badSameOrigin: string[] = []
+  try {
+    const page = await browser.newPage()
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true })
+    await page.evaluateOnNewDocument(() => {
+      const state = { watchCalls: 0, callbacks: 0 }
+      Object.defineProperty(window, '__strackerShellDiag', { value: state })
+      Object.defineProperty(navigator, 'geolocation', {
+        configurable: true,
+        value: {
+          getCurrentPosition(success: PositionCallback) {
+            state.callbacks += 1
+            setTimeout(() => success({ coords: { latitude: -31.6401, longitude: -60.7003, accuracy: 4, altitude: null, altitudeAccuracy: null, heading: 25, speed: 0, toJSON: () => ({}) }, timestamp: Date.now(), toJSON: () => ({}) }), 10)
+          },
+          watchPosition(success: PositionCallback) {
+            state.watchCalls += 1
+            const id = state.watchCalls
+            setTimeout(() => { state.callbacks += 1; success({ coords: { latitude: -31.6401, longitude: -60.7003, accuracy: 4, altitude: null, altitudeAccuracy: null, heading: 25, speed: 0, toJSON: () => ({}) }, timestamp: Date.now(), toJSON: () => ({}) }) }, 50)
+            return id
+          },
+          clearWatch() {},
+        },
+      })
+    })
+    page.on('pageerror', (error) => pageErrors.push(safeError(error)))
+    page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(safeError(message.text())) })
+    page.on('requestfailed', (request) => failedRequests.push(`${safeError(new URL(request.url()).pathname)}:${safeError(request.failure()?.errorText)}`))
+    page.on('response', (response) => {
+      try {
+        const url = new URL(response.url())
+        if (url.origin === target.origin && response.status() >= 400) badSameOrigin.push(`${response.status()}:${safeError(url.pathname)}`)
+      } catch {}
+    })
+    const url = new URL(`/?post3d-shell=${Date.now()}`, target)
+    const response = await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    ok(response?.status() === 200, `POST_3D_SHELL_ROOT_${response?.status() || 0}`)
+    await page.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'), { timeout: 30_000 })
+    await page.$$eval('button', (buttons) => {
+      const button = buttons.find((item) => item.textContent?.toUpperCase().includes('MI UBICACIÓN')) as HTMLButtonElement | undefined
+      if (!button) throw new Error('MI_UBICACION_NOT_FOUND')
+      button.click()
+    })
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some((button) => button.textContent?.includes('PERMITIR UBICACIÓN')), { timeout: 30_000 })
+    await page.$$eval('button', (buttons) => {
+      const button = buttons.find((item) => item.textContent?.includes('PERMITIR UBICACIÓN')) as HTMLButtonElement | undefined
+      if (!button) throw new Error('PERMITIR_UBICACION_NOT_FOUND')
+      button.click()
+    })
+    const canvasReady = await page.waitForSelector('canvas.maplibregl-canvas', { timeout: 20_000 }).then(() => true).catch(() => false)
+    const dom = await page.evaluate(() => {
+      const main = document.querySelector('main')
+      const diag = (window as unknown as { __strackerShellDiag?: { watchCalls: number; callbacks: number } }).__strackerShellDiag
+      return {
+        canvasCount: document.querySelectorAll('canvas.maplibregl-canvas').length,
+        mapMain: Boolean(document.querySelector('main[data-map-engine="maplibre"]')),
+        provider: document.querySelector('main[data-map-engine="maplibre"]')?.getAttribute('data-map-provider') || 'NONE',
+        flowText: (main?.textContent || '').replace(/\s+/g, ' ').slice(0, 180),
+        watchCalls: diag?.watchCalls || 0,
+        callbacks: diag?.callbacks || 0,
+      }
+    })
+    const diagnostic = {
+      canvasReady,
+      ...dom,
+      pageErrors: [...new Set(pageErrors)].slice(0, 6),
+      consoleErrors: [...new Set(consoleErrors)].slice(0, 8),
+      failedRequests: [...new Set(failedRequests)].slice(0, 8),
+      badSameOrigin: [...new Set(badSameOrigin)].slice(0, 8),
+    }
+    console.log(`POST_3D_PRODUCT_SHELL_DIAGNOSTIC=${JSON.stringify(diagnostic)}`)
+    ok(canvasReady, `POST_3D_PRODUCT_SHELL_CANVAS_MISSING_${safeError(JSON.stringify(diagnostic))}`)
+  } finally {
+    await browser.close()
+  }
+}
+
 if (target.protocol !== 'https:' || !target.hostname) throw new Error('HTTPS_TARGET_REQUIRED')
 if (!/^[0-9a-f]{40}$/.test(expectedSha)) throw new Error('EXPECTED_SHA_REQUIRED')
 if (!expectedVersionId) throw new Error('EXPECTED_VERSION_ID_REQUIRED')
 
 await verifyExactHead()
 await installSupplementalSoftwareWebgl()
+await diagnoseProductShell()
 
 let browser: Record<string, unknown> | null = null
 let browserAttempts = 0
@@ -90,13 +177,14 @@ ok(browser, `POST_3D_BROWSER_FAILED_${firstFailure}`)
 const gates = browser.gates as Record<string, string>
 gates.POST_PROMOTION_100_PERCENT_EXACT_HEAD = 'PASS'
 gates.POST_PROMOTION_PUBLIC_SANTA_FE_3D_RENDER = 'PASS'
+gates.POST_PROMOTION_PRODUCT_SHELL_CANVAS = 'PASS'
 gates.POST_PROMOTION_BROWSER_CACHE_BYPASS = 'PASS'
 gates.POST_PROMOTION_BROWSER_RETRY_BOUNDED = 'PASS'
 gates.SWIFTSHADER_NOT_SOLE_EVIDENCE = 'PASS'
 gates.OWNER_PHYSICAL_ACCEPTANCE_REMAINS_REQUIRED = 'PASS'
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v2',
+  schema: 'stracker.santa-fe-post-promotion-3d.v3',
   sourceSha: expectedSha,
   expectedVersionIdHash: hash(expectedVersionId),
   browserAttempts,
