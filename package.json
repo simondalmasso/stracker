@@ -112,7 +112,7 @@
   },
   "overrides": {
     "brace-expansion": "1.1.18",
-    "js-yaml": "4.3.0",
+    "js-yaml": "5.2.2",
     "postcss": "8.5.18",
     "sharp": "0.35.3",
     "socket.io-parser": "4.2.7",
