@@ -9,6 +9,7 @@ set -Eeuo pipefail
 # Cloudflare-Workers-Version-Overrides
 # ZERO_PERCENT_OVERRIDE_QA
 # santa-fe-affinity-canary-qa.ts
+# santa-fe-post-promotion-browser-qa.ts
 # offline-stop-browser-qa.ts
 # PUBLIC_POST_PROMOTION_QA
 # RELEASE_EVIDENCE_BEFORE_ROLLBACK_DISARM
@@ -36,6 +37,11 @@ replace_once(
     'PMTILES_RUN_WORKER_FIRST_ASSERTION',
 )
 replace_once("print('PMTILES_RUN_WORKER_FIRST=NO')", "print('PMTILES_RUN_WORKER_FIRST=YES')", 'PMTILES_RUN_WORKER_FIRST_MARKER')
+replace_once(
+    'AFFINITY_QA_OUTPUT="$STATE_DIR/santa-fe-affinity-canary.json"',
+    'AFFINITY_QA_OUTPUT="$STATE_DIR/santa-fe-affinity-canary.json"\nPOST_3D_QA_OUTPUT="$STATE_DIR/santa-fe-post-promotion-3d.json"',
+    'POST_3D_QA_OUTPUT_DECLARATION',
+)
 
 start_marker = '\nfor kind in version build; do\n'
 end_marker = "echo 'BUILD_JSON_ASSET_ATTESTATION=PASS'\n"
@@ -67,11 +73,38 @@ qa_commands = [
     ('STRACKER_API_QA_OUTPUT="$API_QA_OUTPUT" bun "$STATE_DIR/pilot-api-qa.ts"', 'STRACKER_API_QA_OUTPUT="$API_QA_OUTPUT" bun "$STATE_DIR/pilot-api-qa.ts" || return 1', 'API_QA_FAIL_FAST'),
     ('bun scripts/release/live-native-sharing-browser-qa.ts', 'bun scripts/release/live-native-sharing-browser-qa.ts || return 1', 'BASE_BROWSER_QA_FAIL_FAST'),
     ('bun scripts/release/live-controlled-physical-pilot-browser-qa.ts', 'bun scripts/release/live-controlled-physical-pilot-browser-qa.ts || return 1', 'PILOT_BROWSER_QA_FAIL_FAST'),
-    ('bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts', 'bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts || return 1', 'OFFLINE_STOP_QA_FAIL_FAST'),
+    (
+        'bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts',
+        'bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts || return 1\n'
+        '  STRACKER_QA_URL="$TARGET_URL" STRACKER_EXPECTED_SHA="$SOURCE_SHA" STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" '
+        'STRACKER_POST_3D_QA_OUTPUT="$POST_3D_QA_OUTPUT" STRACKER_POST_3D_SCREENSHOT_DIR="$STATE_DIR" '
+        'CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" bun scripts/release/santa-fe-post-promotion-browser-qa.ts || return 1',
+        'OFFLINE_STOP_AND_POST_3D_QA_FAIL_FAST',
+    ),
 ]
 for old, new, code in qa_commands:
     replace_once(old, new, code)
 
+replace_once(
+    ' "$AFFINITY_QA_OUTPUT" <<\'PY\'',
+    ' "$AFFINITY_QA_OUTPUT" "$POST_3D_QA_OUTPUT" <<\'PY\'',
+    'RELEASE_EVIDENCE_POST_3D_ARG',
+)
+replace_once(
+    "affinity = json.loads(Path(sys.argv[9]).read_text())",
+    "affinity = json.loads(Path(sys.argv[9]).read_text())\npost_3d = json.loads(Path(sys.argv[10]).read_text())",
+    'RELEASE_EVIDENCE_POST_3D_LOAD',
+)
+replace_once(
+    "  'affinityCanary': affinity,",
+    "  'affinityCanary': affinity,\n  'postPromotionSantaFe3d': post_3d,",
+    'RELEASE_EVIDENCE_POST_3D_FIELD',
+)
+replace_once(
+    "  'stagedReleaseSequence': ['zero-percent-metadata', 'one-percent-version-affinity-static-and-render', 'one-hundred-percent-post-promotion'],",
+    "  'stagedReleaseSequence': ['zero-percent-metadata', 'one-percent-version-affinity-static', 'one-hundred-percent-post-promotion-render'],",
+    'RELEASE_EVIDENCE_STAGED_SEQUENCE',
+)
 replace_once(
     'rollback_required=0\ntrap - ERR\npython - "$STATE_DIR" "$SOURCE_SHA"',
     'python - "$STATE_DIR" "$SOURCE_SHA"',
@@ -108,6 +141,7 @@ required = [
     'ZERO_PERCENT_OVERRIDE_QA=PASS',
     'santa-fe-zero-percent-preflight.ts',
     'santa-fe-affinity-canary-qa.ts',
+    'santa-fe-post-promotion-browser-qa.ts',
     '${CANDIDATE_VERSION}@0%',
     '${CANDIDATE_VERSION}@1%',
     '${CANDIDATE_VERSION}@100%',
@@ -129,6 +163,7 @@ Path(sys.argv[2]).write_text(source)
 print('RELEASE_RUNTIME_PATCH_EXACT_ONCE=PASS')
 print('ZERO_PERCENT_OVERRIDE_PREFLIGHT_RESTORED=PASS')
 print('POST_PROMOTION_QA_FAIL_FAST=PASS')
+print('POST_PROMOTION_SANTA_FE_3D_QA_FAIL_FAST=PASS')
 print('ROLLBACK_ARMED_THROUGH_RELEASE_EVIDENCE=PASS')
 print('RELEASE_ARTIFACT_VERSION_ID_SANITIZATION=PASS')
 PY
