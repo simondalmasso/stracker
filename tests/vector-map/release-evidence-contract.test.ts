@@ -8,7 +8,7 @@ describe('release evidence and rollback contract', () => {
     expect(wrapper).toContain('API_QA_FAIL_FAST')
     expect(wrapper).toContain('BASE_BROWSER_QA_FAIL_FAST')
     expect(wrapper).toContain('PILOT_BROWSER_QA_FAIL_FAST')
-    expect(wrapper).toContain('OFFLINE_STOP_QA_FAIL_FAST')
+    expect(wrapper).toContain('OFFLINE_STOP_AND_POST_3D_QA_FAIL_FAST')
     expect(wrapper.match(/\|\| return 1/g)?.length).toBeGreaterThanOrEqual(4)
   })
 
