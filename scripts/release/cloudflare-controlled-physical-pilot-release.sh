@@ -10,6 +10,7 @@ set -Eeuo pipefail
 # ZERO_PERCENT_OVERRIDE_QA
 # santa-fe-affinity-canary-qa.ts
 # santa-fe-post-promotion-browser-qa.ts
+# POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP
 # offline-stop-browser-qa.ts
 # PUBLIC_POST_PROMOTION_QA
 # RELEASE_EVIDENCE_BEFORE_ROLLBACK_DISARM
@@ -73,17 +74,29 @@ qa_commands = [
     ('STRACKER_API_QA_OUTPUT="$API_QA_OUTPUT" bun "$STATE_DIR/pilot-api-qa.ts"', 'STRACKER_API_QA_OUTPUT="$API_QA_OUTPUT" bun "$STATE_DIR/pilot-api-qa.ts" || return 1', 'API_QA_FAIL_FAST'),
     ('bun scripts/release/live-native-sharing-browser-qa.ts', 'bun scripts/release/live-native-sharing-browser-qa.ts || return 1', 'BASE_BROWSER_QA_FAIL_FAST'),
     ('bun scripts/release/live-controlled-physical-pilot-browser-qa.ts', 'bun scripts/release/live-controlled-physical-pilot-browser-qa.ts || return 1', 'PILOT_BROWSER_QA_FAIL_FAST'),
-    (
-        'bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts',
-        'bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts || return 1\n'
-        '  STRACKER_QA_URL="$TARGET_URL" STRACKER_EXPECTED_SHA="$SOURCE_SHA" STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" '
-        'STRACKER_POST_3D_QA_OUTPUT="$POST_3D_QA_OUTPUT" STRACKER_POST_3D_SCREENSHOT_DIR="$STATE_DIR" '
-        'CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" bun scripts/release/santa-fe-post-promotion-browser-qa.ts || return 1',
-        'OFFLINE_STOP_AND_POST_3D_QA_FAIL_FAST',
-    ),
+    ('bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts', 'bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts || return 1', 'OFFLINE_STOP_QA_FAIL_FAST'),
 ]
 for old, new, code in qa_commands:
     replace_once(old, new, code)
+
+replace_once(
+    "echo 'PUBLIC_POST_PROMOTION_QA=PASS'\n",
+    r'''echo 'PUBLIC_POST_PROMOTION_QA=PASS'
+STRACKER_QA_URL="$TARGET_URL" \
+STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
+STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" \
+STRACKER_POST_3D_QA_OUTPUT="$POST_3D_QA_OUTPUT" \
+STRACKER_POST_3D_SCREENSHOT_DIR="$STATE_DIR" \
+CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
+bun scripts/release/santa-fe-post-promotion-browser-qa.ts
+jq -e '.privateDataUsed == false and .realUserCoordinatesUsed == false and .coordinateValuesRetained == false and .rawVersionIdRetained == false' "$POST_3D_QA_OUTPUT" >/dev/null
+jq -e '.evidenceClass == "WEB_DESKTOP_AUTOMATION_ONLY" and .a22Visible3d == "PENDING_HUMAN" and .a22Performance == "PENDING_HUMAN" and .nativePhysical == "PENDING_HUMAN"' "$POST_3D_QA_OUTPUT" >/dev/null
+jq -e '.gates.PUBLIC_RUNTIME_EXACT_HEAD == "PASS" and .gates.WEB_3D_DENSE_CITY == "PASS" and [.gates[] | select(. != "PASS")] | length == 0' "$POST_3D_QA_OUTPUT" >/dev/null
+echo 'PUBLIC_POST_PROMOTION_SANTA_FE_3D_QA=PASS'
+echo 'POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS'
+''',
+    'POST_PROMOTION_3D_AFTER_BASE_QA',
+)
 
 replace_once(
     ' "$AFFINITY_QA_OUTPUT" <<\'PY\'',
@@ -142,6 +155,7 @@ required = [
     'santa-fe-zero-percent-preflight.ts',
     'santa-fe-affinity-canary-qa.ts',
     'santa-fe-post-promotion-browser-qa.ts',
+    'POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS',
     '${CANDIDATE_VERSION}@0%',
     '${CANDIDATE_VERSION}@1%',
     '${CANDIDATE_VERSION}@100%',
@@ -159,11 +173,14 @@ if source.index('${CANDIDATE_VERSION}@1%') > source.index('${CANDIDATE_VERSION}@
     raise SystemExit('MATERIALIZED_CANARY_AFTER_PROMOTION')
 if source.index("out.write_text(json.dumps(evidence") > source.rindex('rollback_required=0'):
     raise SystemExit('ROLLBACK_DISARMED_BEFORE_RELEASE_EVIDENCE')
+if source.index("PUBLIC_POST_PROMOTION_QA=PASS") > source.index("POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS"):
+    raise SystemExit('POST_3D_MUST_RUN_AFTER_BASE_POST_PROMOTION_QA')
 Path(sys.argv[2]).write_text(source)
 print('RELEASE_RUNTIME_PATCH_EXACT_ONCE=PASS')
 print('ZERO_PERCENT_OVERRIDE_PREFLIGHT_RESTORED=PASS')
 print('POST_PROMOTION_QA_FAIL_FAST=PASS')
 print('POST_PROMOTION_SANTA_FE_3D_QA_FAIL_FAST=PASS')
+print('POST_PROMOTION_3D_RETRY_LOOP_ISOLATION=PASS')
 print('ROLLBACK_ARMED_THROUGH_RELEASE_EVIDENCE=PASS')
 print('RELEASE_ARTIFACT_VERSION_ID_SANITIZATION=PASS')
 PY
