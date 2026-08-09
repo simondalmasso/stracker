@@ -1,0 +1,49 @@
+name: STRACKER lock refresh once
+
+on:
+  push:
+    branches:
+      - feat/stracker-controlled-physical-pilot-v1
+    paths:
+      - package.json
+      - .github/workflows/stracker-lock-refresh-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: REGENERATE_AND_AUDIT_LOCK
+        run: |
+          set -euo pipefail
+          bun install --lockfile-only
+          bun install --frozen-lockfile
+          bun audit --audit-level high
+          echo 'LOCK_REFRESH_AND_AUDIT=PASS'
+
+      - name: COMMIT_LOCK_AND_REMOVE_ONE_SHOT_WORKFLOW
+        run: |
+          set -euo pipefail
+          rm .github/workflows/stracker-lock-refresh-once.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bun.lock .github/workflows/stracker-lock-refresh-once.yml
+          if git diff --cached --quiet; then
+            echo '::error::LOCK_REFRESH_NO_DIFF'
+            exit 1
+          fi
+          git commit -m 'chore(deps): refresh bun lock for nanoid advisory'
+          git push origin HEAD:feat/stracker-controlled-physical-pilot-v1
