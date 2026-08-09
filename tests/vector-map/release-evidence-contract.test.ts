@@ -3,12 +3,15 @@ import { describe, expect, test } from 'bun:test'
 const wrapperPath = 'scripts/release/cloudflare-controlled-physical-pilot-release.sh'
 
 describe('release evidence and rollback contract', () => {
-  test('materialized post-promotion QA is fail-fast', async () => {
+  test('materialized post-promotion QA is fail-fast and isolates bounded 3d proof', async () => {
     const wrapper = await Bun.file(wrapperPath).text()
     expect(wrapper).toContain('API_QA_FAIL_FAST')
     expect(wrapper).toContain('BASE_BROWSER_QA_FAIL_FAST')
     expect(wrapper).toContain('PILOT_BROWSER_QA_FAIL_FAST')
-    expect(wrapper).toContain('OFFLINE_STOP_AND_POST_3D_QA_FAIL_FAST')
+    expect(wrapper).toContain('OFFLINE_STOP_QA_FAIL_FAST')
+    expect(wrapper).toContain('POST_PROMOTION_SANTA_FE_3D_QA_FAIL_FAST')
+    expect(wrapper).toContain('POST_PROMOTION_3D_RETRY_LOOP_ISOLATION=PASS')
+    expect(wrapper).toContain('POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS')
     expect(wrapper.match(/\|\| return 1/g)?.length).toBeGreaterThanOrEqual(4)
   })
 
