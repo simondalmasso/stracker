@@ -1,3 +1,4 @@
+import '../cookie-session/cookie-session.test'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { handlePublicRuntimeRequest } from '../../native-sharing-cloudflare/src/public-worker'
 import { handleNativeSharingRequest } from '../../native-sharing-cloudflare/src/worker'
