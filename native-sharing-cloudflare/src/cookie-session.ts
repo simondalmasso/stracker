@@ -1,7 +1,7 @@
 import { capabilityVerifier } from '../../native-sharing/src/security.js'
 import type { RpcResult, RuntimeErrorCode } from './runtime-contracts.js'
 
-export const COOKIE_POLICY_VERSION = 'google-maps-cookie-minimum-v1'
+export const COOKIE_POLICY_VERSION = 'google-maps-cookie-minimum-v2'
 export const MAX_COOKIE_INPUT_BYTES = 64 * 1024
 export const DEFAULT_COOKIE_SESSION_DURATION_MS = 60 * 60 * 1000
 export const MIN_COOKIE_SESSION_DURATION_MS = 5 * 60 * 1000
