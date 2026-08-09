@@ -153,10 +153,6 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
   try {
     browser = await runSantaFePublicBrowserQa({
       targetUrl: target.toString(),
-      requestHeaders: {
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache',
-      },
       screenshotDir,
       screenshotPrefix: `santa-fe-post-promotion-3d-${attempt}`,
       coldBudgetMs: 20_000,
@@ -178,18 +174,19 @@ const gates = browser.gates as Record<string, string>
 gates.POST_PROMOTION_100_PERCENT_EXACT_HEAD = 'PASS'
 gates.POST_PROMOTION_PUBLIC_SANTA_FE_3D_RENDER = 'PASS'
 gates.POST_PROMOTION_PRODUCT_SHELL_CANVAS = 'PASS'
-gates.POST_PROMOTION_BROWSER_CACHE_BYPASS = 'PASS'
+gates.POST_PROMOTION_IDENTITY_CACHE_BYPASS = 'PASS'
+gates.POST_PROMOTION_HASHED_CHUNK_CACHE_PRESERVED = 'PASS'
 gates.POST_PROMOTION_BROWSER_RETRY_BOUNDED = 'PASS'
 gates.SWIFTSHADER_NOT_SOLE_EVIDENCE = 'PASS'
 gates.OWNER_PHYSICAL_ACCEPTANCE_REMAINS_REQUIRED = 'PASS'
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v3',
+  schema: 'stracker.santa-fe-post-promotion-3d.v4',
   sourceSha: expectedSha,
   expectedVersionIdHash: hash(expectedVersionId),
   browserAttempts,
   firstFailure,
-  rootCause: browserAttempts > 1 ? 'PUBLIC_STATIC_ASSET_OR_DYNAMIC_CHUNK_PROPAGATION_RACE' : 'NONE',
+  rootCause: browserAttempts > 1 ? 'PUBLIC_ASSET_PROPAGATION_RACE_WITH_CONTENT_ADDRESSABLE_CACHE_PRESERVED' : 'NONE',
   privateDataUsed: false,
   realUserCoordinatesUsed: false,
   coordinateValuesRetained: false,

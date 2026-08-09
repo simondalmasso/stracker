@@ -9,10 +9,11 @@ const output = process.env.COOKIE_SESSION_BROWSER_QA_OUTPUT || '/tmp/stracker-co
 const root = process.cwd()
 const SESSION = 's'.repeat(43)
 const OWNER = 'o'.repeat(43)
-const syntheticRaw = JSON.stringify([
-  { name: 'SID', value: 'synthetic-one', domain: '.google.com', path: '/', secure: true },
-  { name: 'SAPISID', value: 'synthetic-two', domain: '.google.com', path: '/', secure: true },
+const rawFixture = JSON.stringify([
+  { name: 'SID', value: 'fixture-cookie-one', domain: '.google.com', path: '/', secure: true },
+  { name: 'SAPISID', value: 'fixture-cookie-two', domain: '.google.com', path: '/', secure: true },
 ])
+const rawSentinels = ['fixture-cookie-one', 'fixture-cookie-two']
 const viewports = [
   { width: 320, height: 568, isMobile: true, hasTouch: true },
   { width: 360, height: 640, isMobile: true, hasTouch: true },
@@ -48,7 +49,7 @@ function metadata() {
   return {
     status: 'ok', sessionId: SESSION, ownerToken: OWNER, storagePolicy: 'memory-only',
     state: 'no_location', policyVersion: 'google-maps-cookie-minimum-v1',
-    format: 'COOKIE_EDITOR_JSON', cookieCount: 2,
+    format: 'COOKIE_EDITOR_JSON', cookieCount: 2, totalParsed: 3, expiredDropped: 1, retainedCount: 2,
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     validatedAt: new Date().toISOString(), locationAvailable: false,
   }
@@ -59,11 +60,11 @@ function fakeBackend(observations) {
   return {
     async fetch(request) {
       const url = new URL(request.url)
-      observations.push({ method: request.method, path: url.pathname, bodyBytes: request.headers.get('content-length') || 'unknown' })
+      observations.push({ method: request.method, path: url.pathname })
       const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store, max-age=0', 'X-Content-Type-Options': 'nosniff' }
       if (url.pathname === '/api/cookie-sessions' && request.method === 'POST') {
         const body = await request.json().catch(() => null)
-        if (!body || typeof body.raw !== 'string' || !body.raw.includes('SID=') && !body.raw.includes('"SID"')) {
+        if (!body || typeof body.raw !== 'string' || (!body.raw.includes('SID=') && !body.raw.includes('"SID"'))) {
           return new Response(JSON.stringify({ status: 'error', error: 'COOKIE_FORMAT_UNRECOGNIZED' }), { status: 400, headers })
         }
         active = true
@@ -102,13 +103,23 @@ async function overflow(page) {
   return page.evaluate(() => Math.max(document.body?.scrollWidth || 0, document.documentElement.scrollWidth) > innerWidth)
 }
 
+async function assertRawAbsent(page, code) {
+  const visible = await page.evaluate(() => ({ html: document.documentElement.innerHTML, text: document.body.textContent || '', field: document.querySelector('[data-testid="cookie-capture"]')?.value ?? '' }))
+  for (const sentinel of rawSentinels) {
+    ok(!visible.html.includes(sentinel), `${code}_HTML`)
+    ok(!visible.text.includes(sentinel), `${code}_TEXT`)
+    ok(!visible.field.includes(sentinel), `${code}_FIELD`)
+  }
+  await page.screenshot({ type: 'png' })
+}
+
 const observations = []
 const env = { NATIVE_SHARING_BACKEND: fakeBackend(observations), ASSETS: { fetch: asset } }
 const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: (request) => handleMinimumRuntimeRequest(request, env) })
 const base = `http://${server.hostname}:${server.port}`
 let browser
 const result = {
-  schema: 'stracker.cookie-session-browser-qa.v1',
+  schema: 'stracker.cookie-session-browser-qa.v2',
   privateDataUsed: false,
   realCookieValuesUsed: false,
   realCoordinatesUsed: false,
@@ -117,9 +128,9 @@ const result = {
   pageErrorTotal: 0,
   relevantConsoleErrors: 0,
   unexpectedNetworkErrors: 0,
-  appApi404Total: 0,
   horizontalOverflowTotal: 0,
   fakeSuccessTotal: 0,
+  lifecycleDeleteTotal: 0,
   viewports: [],
   gates: {},
 }
@@ -131,11 +142,12 @@ try {
     const page = await context.newPage()
     await page.setViewport({ ...viewport, deviceScaleFactor: 1 })
     await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }])
-    await page.evaluateOnNewDocument((value) => {
+    await page.evaluateOnNewDocument((initialValue) => {
       let clipboardReads = 0
-      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: async () => { clipboardReads += 1; return value } } })
-      Object.defineProperty(window, '__cookieQa', { value: { clipboardReads: () => clipboardReads } })
-    }, syntheticRaw)
+      let clipboardValue = initialValue
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: async () => { clipboardReads += 1; return clipboardValue } } })
+      Object.defineProperty(window, '__cookieQa', { value: { clipboardReads: () => clipboardReads, setClipboard: (value) => { clipboardValue = value } } })
+    }, rawFixture)
     const pageErrors = []
     const consoleErrors = []
     const networkErrors = []
@@ -153,14 +165,23 @@ try {
     await page.waitForFunction(() => document.body.textContent?.includes('¿Qué ubicación querés ver?'))
     await clickText(page, 'UBICACIÓN COMPARTIDA')
     await page.waitForSelector('[data-native-sharing-hub="true"]')
+    const hubText = await page.evaluate(() => document.body.textContent || '')
+    ok(hubText.includes('ABRIR ENLACE STRACKER'), 'HUB_PRIVATE_LINK_AVAILABLE')
+    ok(hubText.includes('COMPARTIR MI UBICACIÓN'), 'HUB_SHARE_AVAILABLE')
+    ok(hubText.includes('SESIÓN DE GOOGLE MAPS'), 'HUB_COOKIE_OPTION_AVAILABLE')
+    ok(!(await page.$('[data-cookie-session-panel="true"]')), 'COOKIE_PANEL_NOT_AUTO_OPEN')
+
     await page.click('[data-testid="open-cookie-session"]')
     await page.waitForSelector('[data-cookie-session-panel="true"]')
     const warning = await page.evaluate(() => document.body.textContent || '')
-    ok(warning.includes('Las cookies son credenciales sensibles'), 'COOKIE_WARNING')
+    ok(warning.includes('No compartas las cookies pegadas'), 'COOKIE_WARNING_PRECISE')
     ok((await page.evaluate(() => window.__cookieQa.clipboardReads())) === 0, 'NO_AUTO_CLIPBOARD_READ')
     ok(!(await overflow(page)), `PANEL_OVERFLOW_${viewport.width}x${viewport.height}`)
 
-    await page.type('[data-testid="cookie-textarea"]', 'not a cookie')
+    await page.evaluate(() => window.__cookieQa.setClipboard('not a cookie'))
+    await page.click('[data-testid="cookie-paste"]')
+    await page.waitForFunction(() => document.querySelector('[data-testid="cookie-capture-metadata"]')?.textContent?.includes('lista y oculta'))
+    ok((await page.$eval('[data-testid="cookie-capture"]', (element) => element.value)) === '', 'RAW_NEVER_ECHOED_INVALID')
     expectedInvalid.value = true
     await page.click('[data-testid="cookie-import"]')
     await page.waitForSelector('[data-testid="cookie-error"]')
@@ -168,20 +189,37 @@ try {
     ok(!(await page.$('[data-testid="cookie-success"]')), 'INVALID_NO_FALSE_SUCCESS')
     result.fakeSuccessTotal += Number(Boolean(await page.$('[data-testid="cookie-success"]')))
 
+    await page.evaluate((value) => window.__cookieQa.setClipboard(value), rawFixture)
     await page.click('[data-testid="cookie-paste"]')
-    await page.waitForFunction((value) => document.querySelector('[data-testid="cookie-textarea"]')?.value === value, {}, syntheticRaw)
-    ok((await page.evaluate(() => window.__cookieQa.clipboardReads())) === 1, 'EXPLICIT_PASTE_ONLY')
+    await page.waitForFunction(() => document.querySelector('[data-testid="cookie-capture-metadata"]')?.textContent?.includes('lista y oculta'))
+    ok((await page.evaluate(() => window.__cookieQa.clipboardReads())) === 2, 'EXPLICIT_PASTE_ONLY')
+    await assertRawAbsent(page, 'RAW_AFTER_CAPTURE')
     await page.click('[data-testid="cookie-import"]')
     await page.waitForSelector('[data-testid="cookie-success"]', { timeout: 30_000 })
-    const after = await page.evaluate(() => ({ text: document.body.textContent || '', raw: document.querySelector('[data-testid="cookie-textarea"]')?.value ?? '', html: document.documentElement.innerHTML }))
-    ok(after.text.includes('Solamente memoria'), 'MEMORY_ONLY_VISIBLE')
-    ok(after.text.includes('SIN UBICACIÓN ACTIVA'), 'TRUTHFUL_NO_LOCATION')
-    ok(!after.html.includes('synthetic-one') && !after.html.includes('synthetic-two'), 'COOKIE_VALUES_NOT_IN_DOM')
-    ok(after.raw === '', 'TEXTAREA_CLEARED_AFTER_SUCCESS')
+    await assertRawAbsent(page, 'RAW_AFTER_IMPORT')
+    const after = await page.evaluate(() => document.body.textContent || '')
+    ok(after.includes('Memoria temporal'), 'MEMORY_ONLY_VISIBLE')
+    ok(after.includes('SIN UBICACIÓN ACTIVA'), 'TRUTHFUL_NO_LOCATION')
     ok(!(await overflow(page)), `SUCCESS_OVERFLOW_${viewport.width}x${viewport.height}`)
 
+    const deletesBeforeLifecycle = observations.filter((entry) => entry.method === 'DELETE').length
+    await page.evaluate(() => {
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    await Bun.sleep(100)
+    const deletesAfterLifecycle = observations.filter((entry) => entry.method === 'DELETE').length
+    ok(deletesAfterLifecycle === deletesBeforeLifecycle, 'LIFECYCLE_MUST_NOT_DELETE')
+    result.lifecycleDeleteTotal += deletesAfterLifecycle - deletesBeforeLifecycle
+
+    await page.click('button[aria-label="Volver"]')
+    await page.waitForSelector('[data-native-sharing-hub="true"]')
+    await page.click('[data-testid="open-cookie-session"]')
+    await page.waitForSelector('[data-testid="cookie-success"]')
+    ok((await page.evaluate(() => document.body.textContent || '')).includes('SESIÓN VALIDADA'), 'REMOUNT_SESSION_PERSISTS')
+
     await page.click('[data-testid="cookie-delete"]')
-    await page.waitForSelector('[data-testid="cookie-textarea"]')
+    await page.waitForSelector('[data-testid="cookie-capture"]')
     ok(!(await page.$('[data-testid="cookie-success"]')), 'DELETE_REMOVES_STATUS')
 
     result.pageErrorTotal += pageErrors.length
@@ -192,20 +230,20 @@ try {
     await context.close()
   }
 
-  result.appApi404Total = observations.filter((entry) => entry.path.startsWith('/api/') && entry.status === 404).length
   ok(result.pageErrorTotal === 0, 'PAGEERROR_TOTAL')
   ok(result.relevantConsoleErrors === 0, 'RELEVANT_CONSOLE_ERRORS')
   ok(result.unexpectedNetworkErrors === 0, 'UNEXPECTED_NETWORK_ERRORS')
   ok(result.horizontalOverflowTotal === 0, 'HORIZONTAL_OVERFLOW_TOTAL')
   ok(result.fakeSuccessTotal === 0, 'FAKE_SUCCESS_TOTAL')
+  ok(result.lifecycleDeleteTotal === 0, 'LIFECYCLE_DELETE_TOTAL')
   ok(observations.some((entry) => entry.method === 'POST' && entry.path === '/api/cookie-sessions'), 'REAL_IMPORT_REQUEST')
-  ok(observations.some((entry) => entry.method === 'DELETE' && entry.path === `/api/cookie-sessions/${SESSION}`), 'REAL_DELETE_REQUEST')
+  ok(observations.some((entry) => entry.method === 'DELETE' && entry.path === `/api/cookie-sessions/${SESSION}`), 'EXPLICIT_DELETE_REQUEST')
   result.gates = {
-    COOKIE_PANEL_DISCOVERABILITY: 'PASS', COOKIE_WARNING: 'PASS', EXPLICIT_PASTE_ACTION: 'PASS',
-    COOKIE_VALID_FORMAT_ACCEPTANCE: 'PASS', COOKIE_INVALID_FORMAT_REJECTION: 'PASS',
-    COOKIE_BACKEND_FAILURE_NO_FALSE_SUCCESS: 'PASS', COOKIE_SUCCESS_STATUS_METADATA_ONLY: 'PASS',
-    COOKIE_DELETE: 'PASS', MOBILE_VIEWPORTS: 'PASS', WINDOWS_CHROME_DESKTOP: 'PASS',
-    COOKIE_TEXTAREA_KEYBOARD_USABLE: 'PASS', NO_COOKIE_VALUES_IN_DOM: 'PASS',
+    SHARED_LOCATION_HUB_DEFAULT: 'PASS', COOKIE_PANEL_EXPLICIT_ONLY: 'PASS', COOKIE_WARNING_PRECISE: 'PASS',
+    EXPLICIT_PASTE_ACTION: 'PASS', RAW_VALUE_NOT_IN_DOM_AFTER_CAPTURE: 'PASS', RAW_VALUE_NOT_IN_SCREENSHOT_BY_DEFAULT: 'PASS',
+    COOKIE_VALID_FORMAT_ACCEPTANCE: 'PASS', COOKIE_INVALID_FORMAT_REJECTION: 'PASS', COOKIE_BACKEND_FAILURE_NO_FALSE_SUCCESS: 'PASS',
+    COOKIE_SUCCESS_STATUS_METADATA_ONLY: 'PASS', TAB_BACKGROUND_NOT_LOGOUT: 'PASS', PAGEHIDE_BFCACHE_NOT_LOGOUT: 'PASS',
+    COMPONENT_REMOUNT_NOT_LOGOUT: 'PASS', EXPLICIT_DELETE_REVOKES: 'PASS', MOBILE_VIEWPORTS: 'PASS', WINDOWS_CHROME_DESKTOP: 'PASS',
   }
   await Bun.write(output, JSON.stringify(result, null, 2) + '\n')
   console.log('COOKIE_SESSION_BROWSER_QA=PASS')

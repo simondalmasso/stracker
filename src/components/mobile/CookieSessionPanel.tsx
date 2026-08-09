@@ -19,9 +19,16 @@ import {
 
 const MobileMapShell = dynamic(() => import('./MobileMapShell'), { ssr: false })
 const REFRESH_INTERVAL_MS = 20_000
+const TRANSIENT_CODES = new Set(['COOKIE_PROVIDER_UNAVAILABLE', 'OPERATION_TIMEOUT', 'REQUEST_FAILED', 'FREQUENCY_LIMIT'])
+let activeCookieHandle: CookieSessionHandle | null = null
 
 interface CookieSessionPanelProps {
   onBack: () => void
+}
+
+interface CapturedCookieInput {
+  format: string
+  bytes: number
 }
 
 const ERROR_COPY: Record<string, string> = {
@@ -29,9 +36,9 @@ const ERROR_COPY: Record<string, string> = {
   COOKIE_INVALID: 'La exportación contiene una cookie inválida. Volvé a exportarla sin editarla.',
   COOKIE_DOMAIN_REJECTED: 'La exportación contiene dominios ajenos a Google. Importá únicamente cookies de google.com.',
   COOKIE_SET_INCOMPLETE: 'La exportación no contiene el mínimo de autenticación necesario. Exportá nuevamente la sesión completa.',
-  COOKIE_EXPIRED: 'La exportación contiene cookies vencidas. Generá una exportación reciente.',
-  COOKIE_AUTH_EXPIRED: 'Google rechazó la sesión. Exportá cookies nuevas desde una cuenta autorizada.',
-  COOKIE_PROVIDER_UNAVAILABLE: 'Google no está disponible temporalmente. Reintentá sin compartir el contenido pegado.',
+  COOKIE_EXPIRED: 'La sesión importada ya no contiene autenticación vigente. Exportá cookies nuevas.',
+  COOKIE_AUTH_EXPIRED: 'No queda una cookie de autenticación vigente o Google rechazó la sesión. Exportá cookies nuevas.',
+  COOKIE_PROVIDER_UNAVAILABLE: 'Google no está disponible temporalmente. Reintentá sin volver a pegar las cookies.',
   COOKIE_SESSION_EXPIRED: 'La sesión temporal de STRACKER venció. Importala nuevamente.',
   BODY_TOO_LARGE: 'El archivo supera el límite permitido de 64 KiB.',
   FREQUENCY_LIMIT: 'La actualización fue demasiado rápida. Esperá unos segundos.',
@@ -72,44 +79,47 @@ function statusLabel(status: CookieSessionStatus): string {
 }
 
 export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) {
-  const [raw, setRaw] = useState('')
-  const [handle, setHandle] = useState<CookieSessionHandle | null>(null)
-  const [status, setStatus] = useState<CookieSessionStatus | null>(null)
+  const [captured, setCaptured] = useState<CapturedCookieInput | null>(null)
+  const [handle, setHandle] = useState<CookieSessionHandle | null>(() => activeCookieHandle)
+  const [status, setStatus] = useState<CookieSessionStatus | null>(() => activeCookieHandle)
   const [point, setPoint] = useState<CookieSessionPoint | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const rawRef = useRef('')
   const controllerRef = useRef<AbortController | null>(null)
-  const handleRef = useRef<CookieSessionHandle | null>(null)
+  const handleRef = useRef<CookieSessionHandle | null>(activeCookieHandle)
 
   useEffect(() => { handleRef.current = handle }, [handle])
 
-  const clearServerSession = useCallback(async (keepalive = false) => {
+  const clearCaptured = useCallback(() => {
+    rawRef.current = ''
+    setCaptured(null)
+  }, [])
+
+  const capture = useCallback((value: string) => {
+    const bytes = new TextEncoder().encode(value).byteLength
+    rawRef.current = value
+    setCaptured(value.trim() ? { format: detectedCookieFormat(value), bytes } : null)
+    setError(null)
+  }, [])
+
+  const clearServerSession = useCallback(async () => {
     const current = handleRef.current
     controllerRef.current?.abort()
     controllerRef.current = null
     handleRef.current = null
+    activeCookieHandle = null
     setHandle(null)
     setStatus(null)
     setPoint(null)
-    setRaw('')
+    clearCaptured()
     setError(null)
-    if (current) await deleteCookieSession(current, keepalive).catch(() => undefined)
-  }, [])
+    if (current) await deleteCookieSession(current).catch(() => undefined)
+  }, [clearCaptured])
 
-  useEffect(() => {
-    const release = () => {
-      controllerRef.current?.abort()
-      const current = handleRef.current
-      handleRef.current = null
-      if (current) void deleteCookieSession(current, true).catch(() => undefined)
-    }
-    window.addEventListener('pagehide', release)
-    window.addEventListener('beforeunload', release)
-    return () => {
-      window.removeEventListener('pagehide', release)
-      window.removeEventListener('beforeunload', release)
-      release()
-    }
+  useEffect(() => () => {
+    controllerRef.current?.abort()
+    controllerRef.current = null
   }, [])
 
   const doRefresh = useCallback(async () => {
@@ -129,6 +139,7 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
       if (copy) setError(copy)
       if (caught instanceof CookieSessionApiError && ['COOKIE_AUTH_EXPIRED', 'COOKIE_SESSION_EXPIRED', 'NOT_FOUND'].includes(caught.code)) {
         handleRef.current = null
+        activeCookieHandle = null
         setHandle(null)
         setStatus(null)
         setPoint(null)
@@ -162,23 +173,25 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
   }, [doRefresh, handle])
 
   const submit = async () => {
-    if (!raw.trim() || busy) return
+    if (!rawRef.current.trim() || busy) return
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
     setBusy(true)
     setError(null)
     try {
-      const imported = await importCookieSession(raw, controller.signal)
+      const imported = await importCookieSession(rawRef.current, controller.signal)
+      clearCaptured()
+      activeCookieHandle = imported
       handleRef.current = imported
       setHandle(imported)
       const location = imported.locationAvailable ? await readCookieSessionPoint(imported, controller.signal) : null
       setStatus(imported)
       setPoint(location?.point ?? null)
-      setRaw('')
     } catch (caught) {
       const copy = message(caught)
       if (copy) setError(copy)
+      if (caught instanceof CookieSessionApiError && !TRANSIENT_CODES.has(caught.code)) clearCaptured()
     } finally {
       setBusy(false)
     }
@@ -187,29 +200,30 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
   const paste = async () => {
     setError(null)
     if (!navigator.clipboard?.readText) {
-      setError('El navegador no permite pegar automáticamente. Mantené presionado el campo y elegí Pegar.')
+      setError('El navegador no permite leer el portapapeles. Pegá directamente dentro del campo seguro.')
       return
     }
     try {
-      setRaw(await navigator.clipboard.readText())
+      capture(await navigator.clipboard.readText())
     } catch {
-      setError('Chrome bloqueó el portapapeles. Pegá manualmente dentro del campo.')
+      setError('Chrome bloqueó el portapapeles. Pegá directamente dentro del campo seguro.')
     }
   }
 
-  const leave = async () => {
-    await clearServerSession()
+  const leave = () => {
+    controllerRef.current?.abort()
+    controllerRef.current = null
     onBack()
   }
 
   const mapSnapshot = useMemo(() => status ? snapshot(status, point) : null, [point, status])
   if (mapSnapshot && handle) {
-    return <MobileMapShell source="shared-location" snapshot={mapSnapshot} ghostrail={[]} onChangeSource={() => { void leave() }} onStop={() => { void clearServerSession() }} />
+    return <MobileMapShell source="shared-location" snapshot={mapSnapshot} ghostrail={[]} onChangeSource={leave} onStop={() => { void clearServerSession() }} />
   }
 
   return (
     <main data-cookie-session-panel="true" className="relative min-h-[100dvh] w-full overflow-x-hidden bg-black px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(72px,env(safe-area-inset-top))] text-white">
-      <button type="button" onClick={() => { void leave() }} aria-label="Volver" className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04]"><ChevronLeft size={22} /></button>
+      <button type="button" onClick={leave} aria-label="Volver" className="absolute left-3 top-[max(12px,env(safe-area-inset-top))] grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04]"><ChevronLeft size={22} /></button>
       <section className="mx-auto w-full max-w-2xl" aria-labelledby="cookie-session-title">
         <header className="mb-6 text-center">
           <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl border border-white/15"><Cookie size={23} /></div>
@@ -218,7 +232,7 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
         </header>
 
         <div role="note" className="rounded-[20px] border border-amber-300/20 bg-amber-300/[0.07] p-4 text-sm leading-6 text-amber-100">
-          <div className="flex gap-3"><ShieldAlert className="mt-0.5 shrink-0" size={20} /><p><strong>Las cookies son credenciales sensibles.</strong> Usá preferentemente una cuenta dedicada. No compartas este texto ni lo incluyas en capturas o reportes.</p></div>
+          <div className="flex gap-3"><ShieldAlert className="mt-0.5 shrink-0" size={20} /><p><strong>Las cookies son credenciales sensibles.</strong> Usá preferentemente una cuenta dedicada. No compartas las cookies pegadas ni incluyas sus valores en capturas, chats, logs o reportes.</p></div>
         </div>
 
         {!handle ? (
@@ -229,37 +243,42 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
             </div>
             <textarea
               id="cookie-session-source"
-              data-testid="cookie-textarea"
-              value={raw}
-              onChange={(event) => { setRaw(event.target.value); setError(null) }}
+              data-testid="cookie-capture"
+              value=""
+              onChange={() => undefined}
+              onPaste={(event) => {
+                event.preventDefault()
+                capture(event.clipboardData.getData('text'))
+              }}
               autoComplete="off"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              maxLength={64 * 1024}
-              placeholder="Cookie Editor JSON, Cookie Header o Netscape cookies.txt"
-              className="mt-3 min-h-[220px] max-h-[48dvh] w-full resize-y rounded-[20px] border border-white/12 bg-white/[0.035] p-4 font-mono text-sm leading-6 outline-none focus:border-white/35"
+              placeholder="Pegá acá. STRACKER captura el contenido sin volver a mostrar sus valores."
+              className="mt-3 min-h-[132px] max-h-[30dvh] w-full resize-y rounded-[20px] border border-white/12 bg-white/[0.035] p-4 text-sm leading-6 outline-none focus:border-white/35"
             />
-            <div className="mt-3 rounded-2xl border border-white/8 bg-white/[0.025] p-3 text-xs leading-5 text-white/55">
-              <p><strong className="text-white/75">Formato detectado:</strong> {detectedCookieFormat(raw)}</p>
-              <p className="mt-1">Acepta JSON de Cookie Editor, JSON nombre/valor, encabezado Cookie y Netscape. Máximo: 64 KiB.</p>
-              <p className="mt-1">La sesión se conserva sólo en memoria. Al salir, recargar o vencer, deberás importarla nuevamente.</p>
+            <div data-testid="cookie-capture-metadata" className="mt-3 rounded-2xl border border-white/8 bg-white/[0.025] p-3 text-xs leading-5 text-white/55">
+              <p><strong className="text-white/75">Captura:</strong> {captured ? 'lista y oculta' : 'sin datos'}</p>
+              <p className="mt-1"><strong className="text-white/75">Formato detectado:</strong> {captured?.format ?? 'Sin detectar'}</p>
+              <p className="mt-1"><strong className="text-white/75">Tamaño:</strong> {captured ? `${captured.bytes} bytes` : '—'}</p>
+              <p className="mt-1">Los valores crudos no se reflejan en pantalla ni se guardan en almacenamiento del navegador.</p>
             </div>
             {error ? <p data-testid="cookie-error" role="alert" className="mt-3 rounded-2xl border border-red-300/20 bg-red-300/[0.07] p-3 text-sm leading-5 text-red-100">{error}</p> : null}
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <button type="button" onClick={() => { setRaw(''); setError(null) }} className="min-h-12 rounded-2xl border border-white/12 text-sm font-semibold">LIMPIAR</button>
-              <button type="button" onClick={() => { void submit() }} disabled={!raw.trim() || busy} data-testid="cookie-import" className="min-h-12 rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-40">{busy ? 'VALIDANDO EN EL SERVIDOR…' : 'IMPORTAR Y VALIDAR'}</button>
+              <button type="button" onClick={() => { clearCaptured(); setError(null) }} data-testid="cookie-clear" className="min-h-12 rounded-2xl border border-white/12 text-sm font-semibold">LIMPIAR</button>
+              <button type="button" onClick={() => { void submit() }} disabled={!captured || busy} data-testid="cookie-import" className="min-h-12 rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-40">{busy ? 'VALIDANDO EN EL SERVIDOR…' : 'IMPORTAR Y VALIDAR'}</button>
             </div>
           </div>
         ) : (
           <div data-testid="cookie-success" className="mt-5 rounded-[22px] border border-emerald-300/20 bg-emerald-300/[0.06] p-4">
             <p className="text-sm font-semibold text-emerald-100">{status ? statusLabel(status) : 'SESIÓN VALIDADA'}</p>
             <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
-              <div><dt className="text-white/45">Persistencia</dt><dd>Solamente memoria</dd></div>
+              <div><dt className="text-white/45">Persistencia</dt><dd>Memoria temporal</dd></div>
               <div><dt className="text-white/45">Formato</dt><dd>{status?.format ?? '—'}</dd></div>
-              <div><dt className="text-white/45">Cantidad validada</dt><dd>{status?.cookieCount ?? 0}</dd></div>
+              <div><dt className="text-white/45">Cantidad retenida</dt><dd>{status?.cookieCount ?? 0}</dd></div>
               <div><dt className="text-white/45">Vence</dt><dd>{status ? new Date(status.expiresAt).toLocaleString('es-AR') : '—'}</dd></div>
             </dl>
+            <p className="mt-4 text-xs leading-5 text-white/50">Cambiar de pestaña, volver al hub, cambiar el mapa o remontar la vista no cierra esta sesión. BORRAR SESIÓN o DETENER sí la revocan.</p>
             {status?.state === 'no_location' ? <p role="status" className="mt-4 rounded-xl border border-white/10 p-3 text-sm text-white/65">La autenticación fue aceptada, pero Google no devuelve una ubicación compartida activa.</p> : null}
             {error ? <p role="alert" className="mt-3 rounded-xl border border-red-300/20 p-3 text-sm text-red-100">{error}</p> : null}
             <div className="mt-4 grid gap-3 sm:grid-cols-2">

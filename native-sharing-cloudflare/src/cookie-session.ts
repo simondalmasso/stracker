@@ -38,6 +38,9 @@ export interface ParsedCookieSession {
   cookies: NormalizedCookie[]
   format: CookieFormat
   expiresAt: number | null
+  totalParsed: number
+  expiredDropped: number
+  retainedCount: number
 }
 
 export interface CookieSessionImportInput {
@@ -52,6 +55,9 @@ export interface CookieSessionPublicStatus {
   policyVersion: string
   format: CookieFormat
   cookieCount: number
+  totalParsed: number
+  expiredDropped: number
+  retainedCount: number
   expiresAt: string
   validatedAt: string
   locationAvailable: boolean
@@ -92,9 +98,7 @@ function normalizedExpiry(value: unknown): number | null {
   if (value === undefined || value === null || value === '' || value === 0 || value === '0' || value === -1 || value === '-1') return null
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) throw new CookieContractError(400, 'COOKIE_INVALID')
-  const epochMs = numeric > 10_000_000_000 ? numeric : numeric * 1000
-  if (epochMs <= Date.now()) throw new CookieContractError(401, 'COOKIE_EXPIRED')
-  return epochMs
+  return numeric > 10_000_000_000 ? numeric : numeric * 1000
 }
 
 function normalizeCookie(value: unknown): NormalizedCookie {
@@ -164,6 +168,19 @@ function parseHeader(text: string): unknown[] {
   return rows
 }
 
+function expired(cookie: NormalizedCookie, now: number): boolean {
+  return cookie.expiresAt !== null && cookie.expiresAt <= now
+}
+
+function preferCookie(current: NormalizedCookie | undefined, candidate: NormalizedCookie, now: number): NormalizedCookie {
+  if (!current) return candidate
+  const currentExpired = expired(current, now)
+  const candidateExpired = expired(candidate, now)
+  if (currentExpired && !candidateExpired) return candidate
+  if (!currentExpired && candidateExpired) return current
+  return candidate
+}
+
 export function parseCookieSession(raw: string): ParsedCookieSession {
   const bytes = new TextEncoder().encode(raw).byteLength
   if (!raw.trim()) throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED')
@@ -185,17 +202,28 @@ export function parseCookieSession(raw: string): ParsedCookieSession {
     format = 'COOKIE_HEADER_STRING'
   }
 
+  const now = Date.now()
+  const normalized = rows.map(normalizeCookie)
+  const authSeen = normalized.some((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
   const deduplicated = new Map<string, NormalizedCookie>()
-  for (const row of rows) {
-    const cookie = normalizeCookie(row)
-    deduplicated.set(`${cookie.name}\n${cookie.domain}\n${cookie.path}`, cookie)
+  for (const cookie of normalized) {
+    const key = `${cookie.name}\n${cookie.domain}\n${cookie.path}`
+    deduplicated.set(key, preferCookie(deduplicated.get(key), cookie, now))
   }
-  const cookies = [...deduplicated.values()]
-  if (!cookies.some((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))) {
-    throw new CookieContractError(400, 'COOKIE_SET_INCOMPLETE')
+  const cookies = [...deduplicated.values()].filter((cookie) => !expired(cookie, now))
+  const validAuthRemains = cookies.some((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
+  if (!validAuthRemains) {
+    throw new CookieContractError(authSeen ? 401 : 400, authSeen ? 'COOKIE_AUTH_EXPIRED' : 'COOKIE_SET_INCOMPLETE')
   }
   const expirations = cookies.map((cookie) => cookie.expiresAt).filter((value): value is number => value !== null)
-  return { cookies, format, expiresAt: expirations.length ? Math.min(...expirations) : null }
+  return {
+    cookies,
+    format,
+    expiresAt: expirations.length ? Math.min(...expirations) : null,
+    totalParsed: normalized.length,
+    expiredDropped: normalized.filter((cookie) => expired(cookie, now)).length,
+    retainedCount: cookies.length,
+  }
 }
 
 function cookieHeader(cookies: readonly NormalizedCookie[]): string {
@@ -260,6 +288,9 @@ interface MemorySession {
   ownerVerifier: string
   cookies: NormalizedCookie[]
   format: CookieFormat
+  totalParsed: number
+  expiredDropped: number
+  retainedCount: number
   expiresAtMs: number
   validatedAt: string
   state: CookieProviderState
@@ -273,6 +304,9 @@ function metadata(session: MemorySession): CookieSessionPublicStatus {
     policyVersion: COOKIE_POLICY_VERSION,
     format: session.format,
     cookieCount: session.cookies.length,
+    totalParsed: session.totalParsed,
+    expiredDropped: session.expiredDropped,
+    retainedCount: session.retainedCount,
     expiresAt: new Date(session.expiresAtMs).toISOString(),
     validatedAt: session.validatedAt,
     locationAvailable: session.point !== null,
@@ -308,12 +342,15 @@ export class CookieSessionMemoryRuntime {
       const now = Date.now()
       const duration = Math.max(MIN_COOKIE_SESSION_DURATION_MS, Math.min(MAX_COOKIE_SESSION_DURATION_MS, Math.floor(input.durationMs || DEFAULT_COOKIE_SESSION_DURATION_MS)))
       const expiresAtMs = Math.min(now + duration, parsed.expiresAt ?? Number.POSITIVE_INFINITY)
-      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) return { ok: false, status: 401, code: 'COOKIE_EXPIRED' }
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) return { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' }
       this.session = {
         sessionId: input.sessionId,
         ownerVerifier: input.ownerVerifier,
         cookies: parsed.cookies,
         format: parsed.format,
+        totalParsed: parsed.totalParsed,
+        expiredDropped: parsed.expiredDropped,
+        retainedCount: parsed.retainedCount,
         expiresAtMs,
         validatedAt: new Date(now).toISOString(),
         state: probe.state,

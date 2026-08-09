@@ -10,6 +10,7 @@ import {
 const SESSION_ID = 's'.repeat(43)
 const OWNER_TOKEN = 'o'.repeat(43)
 const NOW_S = Math.floor(Date.now() / 1000) + 3600
+const PAST_S = Math.floor(Date.now() / 1000) - 3600
 const jsonFixture = JSON.stringify([
   { name: 'SID', value: 'synthetic-sid', domain: '.google.com', path: '/', secure: true, httpOnly: true, expirationDate: NOW_S },
   { name: 'SAPISID', value: 'synthetic-sapisid', domain: 'www.google.com', path: '/', secure: true, expirationDate: NOW_S },
@@ -27,6 +28,9 @@ describe('cookie parser', () => {
     expect(parsed.format).toBe('COOKIE_EDITOR_JSON')
     expect(parsed.cookies.length).toBe(2)
     expect(parsed.cookies[0]?.httpOnly).toBe(true)
+    expect(parsed.totalParsed).toBe(2)
+    expect(parsed.expiredDropped).toBe(0)
+    expect(parsed.retainedCount).toBe(2)
   })
 
   test('accepts wrapped JSON, map, header and Netscape formats', () => {
@@ -47,6 +51,63 @@ describe('cookie parser', () => {
     expect(() => parseCookieSession('foo=bar')).toThrow('COOKIE_SET_INCOMPLETE')
     expect(() => parseCookieSession(JSON.stringify([{ name: 'SID', value: 'x', domain: '.example.com' }]))).toThrow('COOKIE_DOMAIN_REJECTED')
   })
+
+  test('drops an expired ancillary cookie and keeps valid authentication', () => {
+    const parsed = parseCookieSession(JSON.stringify([
+      { name: 'SID', value: 'current-auth', domain: '.google.com', expirationDate: NOW_S },
+      { name: 'NID', value: 'stale-ancillary', domain: '.google.com', expirationDate: PAST_S },
+    ]))
+    expect(parsed.totalParsed).toBe(2)
+    expect(parsed.expiredDropped).toBe(1)
+    expect(parsed.retainedCount).toBe(1)
+    expect(parsed.cookies.map((cookie) => cookie.name)).toEqual(['SID'])
+  })
+
+  test('drops expired auth when another current auth cookie remains', () => {
+    const parsed = parseCookieSession(JSON.stringify([
+      { name: 'SID', value: 'stale-auth', domain: '.google.com', expirationDate: PAST_S },
+      { name: 'SAPISID', value: 'current-auth', domain: '.google.com', expirationDate: NOW_S },
+    ]))
+    expect(parsed.expiredDropped).toBe(1)
+    expect(parsed.cookies.map((cookie) => cookie.name)).toEqual(['SAPISID'])
+  })
+
+  test('rejects only-expired auth distinctly from a missing auth set', () => {
+    expect(() => parseCookieSession(JSON.stringify([
+      { name: 'SID', value: 'stale-auth', domain: '.google.com', expirationDate: PAST_S },
+    ]))).toThrow('COOKIE_AUTH_EXPIRED')
+    expect(() => parseCookieSession(JSON.stringify([
+      { name: 'NID', value: 'current-ancillary', domain: '.google.com', expirationDate: NOW_S },
+    ]))).toThrow('COOKIE_SET_INCOMPLETE')
+  })
+
+  test('duplicate expired and current cookie prefers the current row regardless of order', () => {
+    for (const rows of [
+      [
+        { name: 'SID', value: 'current-auth', domain: '.google.com', path: '/', expirationDate: NOW_S },
+        { name: 'SID', value: 'stale-auth', domain: '.google.com', path: '/', expirationDate: PAST_S },
+      ],
+      [
+        { name: 'SID', value: 'stale-auth', domain: '.google.com', path: '/', expirationDate: PAST_S },
+        { name: 'SID', value: 'current-auth', domain: '.google.com', path: '/', expirationDate: NOW_S },
+      ],
+    ]) {
+      const parsed = parseCookieSession(JSON.stringify(rows))
+      expect(parsed.cookies.length).toBe(1)
+      expect(parsed.cookies[0]?.value).toBe('current-auth')
+      expect(parsed.expiredDropped).toBe(1)
+    }
+  })
+
+  test('never includes a raw cookie value in parser errors', () => {
+    const secretFixtureValue = 'fixture-value-that-must-not-escape'
+    try {
+      parseCookieSession(JSON.stringify([{ name: 'SID', value: secretFixtureValue, domain: '.example.com' }]))
+      throw new Error('EXPECTED_REJECTION')
+    } catch (error) {
+      expect(String(error)).not.toContain(secretFixtureValue)
+    }
+  })
 })
 
 describe('memory-only cookie session runtime', () => {
@@ -58,6 +119,9 @@ describe('memory-only cookie session runtime', () => {
     if (!imported.ok) return
     expect(imported.value.policyVersion).toBe(COOKIE_POLICY_VERSION)
     expect(imported.value.cookieCount).toBe(2)
+    expect(imported.value.totalParsed).toBe(2)
+    expect(imported.value.expiredDropped).toBe(0)
+    expect(imported.value.retainedCount).toBe(2)
     expect(JSON.stringify(imported.value)).not.toContain('synthetic-sid')
     expect(JSON.stringify(imported.value)).not.toContain('point')
     const status = await runtime.status(SESSION_ID, OWNER_TOKEN)
@@ -68,6 +132,22 @@ describe('memory-only cookie session runtime', () => {
     if (point.ok) expect(point.value.point?.lat).toBe(-31.64)
     const wrongOwner = await runtime.status(SESSION_ID, 'x'.repeat(43))
     expect(wrongOwner).toEqual({ ok: false, status: 404, code: 'NOT_FOUND' })
+  })
+
+  test('passes valid auth with stale ancillary rows to the provider probe only after filtering', async () => {
+    let observedNames: string[] = []
+    const probe: CookieProbe = async (cookies) => {
+      observedNames = cookies.map((cookie) => cookie.name)
+      return { ok: true, state: 'no_location', point: null }
+    }
+    const runtime = new CookieSessionMemoryRuntime(probe)
+    const raw = JSON.stringify([
+      { name: 'SID', value: 'current-auth', domain: '.google.com', expirationDate: NOW_S },
+      { name: 'NID', value: 'stale-ancillary', domain: '.google.com', expirationDate: PAST_S },
+    ])
+    const imported = await runtime.importSession({ sessionId: SESSION_ID, ownerVerifier: await capabilityVerifier(OWNER_TOKEN), raw, durationMs: 60_000 * 30 })
+    expect(imported.ok).toBe(true)
+    expect(observedNames).toEqual(['SID'])
   })
 
   test('does not retain credentials after deletion or runtime replacement', async () => {
