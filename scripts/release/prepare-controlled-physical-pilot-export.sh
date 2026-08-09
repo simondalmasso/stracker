@@ -109,8 +109,9 @@ echo 'SANTA_FE_DENSE_CITY_AUTOMATED=PASS'
 COOKIE_SESSION_BROWSER_QA_OUTPUT="${COOKIE_SESSION_BROWSER_QA_OUTPUT:-${RUNNER_TEMP:-/tmp}/stracker-cookie-session-browser.json}"
 export COOKIE_SESSION_BROWSER_QA_OUTPUT
 bun tests/native-sharing-cloudflare/cookie-session-browser-qa.ts
+jq -e '.schema == "stracker.cookie-session-browser-qa.v2"' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
 jq -e '.privateDataUsed == false and .realCookieValuesUsed == false and .realCoordinatesUsed == false and .cookieValuesRetained == false' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
-jq -e '.pageErrorTotal == 0 and .relevantConsoleErrors == 0 and .unexpectedNetworkErrors == 0 and .appApi404Total == 0 and .horizontalOverflowTotal == 0 and .fakeSuccessTotal == 0' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
+jq -e '.pageErrorTotal == 0 and .relevantConsoleErrors == 0 and .unexpectedNetworkErrors == 0 and .horizontalOverflowTotal == 0 and .fakeSuccessTotal == 0 and .lifecycleDeleteTotal == 0' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
 jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$COOKIE_SESSION_BROWSER_QA_OUTPUT" >/dev/null
 
 VIEWER_SESSION_LIFECYCLE_QA_OUTPUT="${VIEWER_SESSION_LIFECYCLE_QA_OUTPUT:-${RUNNER_TEMP:-/tmp}/stracker-viewer-session-lifecycle.json}"
