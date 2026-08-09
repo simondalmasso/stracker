@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 const wrapperPath = 'scripts/release/cloudflare-controlled-physical-pilot-release.sh'
+const apiEntrypointPath = 'scripts/release/live-native-sharing-api-qa.ts'
+const public3dQaPath = 'scripts/release/santa-fe-public-browser-qa.ts'
 
 describe('release evidence and rollback contract', () => {
   test('materialized post-promotion QA is fail-fast and isolates bounded 3d proof', async () => {
@@ -13,6 +15,19 @@ describe('release evidence and rollback contract', () => {
     expect(wrapper).toContain('POST_PROMOTION_3D_RETRY_LOOP_ISOLATION=PASS')
     expect(wrapper).toContain('POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS')
     expect(wrapper.match(/\|\| return 1/g)?.length).toBeGreaterThanOrEqual(4)
+  })
+
+  test('generated controlled-pilot API QA defers only the redundant public 3d browser proof', async () => {
+    const entrypoint = await Bun.file(apiEntrypointPath).text()
+    const public3dQa = await Bun.file(public3dQaPath).text()
+    const wrapper = await Bun.file(wrapperPath).text()
+    expect(entrypoint).toContain("endsWith('/pilot-api-qa.ts')")
+    expect(entrypoint).toContain("process.env.STRACKER_DEFER_PUBLIC_3D_QA = '1'")
+    expect(public3dQa).toContain("process.env.STRACKER_DEFER_PUBLIC_3D_QA === '1'")
+    expect(public3dQa).toContain('PUBLIC_3D_QA_DEFERRED_TO_POST_PROMOTION')
+    expect(public3dQa).toContain('runStrictSantaFePublicBrowserQa(options)')
+    expect(wrapper).toContain('bun scripts/release/santa-fe-post-promotion-browser-qa.ts')
+    expect(wrapper).toContain('.gates.WEB_3D_DENSE_CITY == "PASS"')
   })
 
   test('keeps rollback armed until release evidence exists', async () => {
