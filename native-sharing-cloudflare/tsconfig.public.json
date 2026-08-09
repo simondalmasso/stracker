@@ -2,6 +2,7 @@
   "extends": "./tsconfig.json",
   "include": [
     "src/minimal-worker.ts",
+    "src/public-worker.ts",
     "worker-public-configuration.d.ts"
   ]
 }

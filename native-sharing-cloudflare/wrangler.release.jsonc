@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "stracker",
-  "main": "src/minimal-worker.ts",
+  "main": "src/public-worker.ts",
   "compatibility_date": "2026-06-22",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
