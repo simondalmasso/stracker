@@ -23,7 +23,12 @@ jobs:
         run: |
           bun run typecheck
           bunx tsc -p native-sharing/tsconfig.json
+          generated_types='native-sharing-cloudflare/worker-backend-configuration.d.ts'
+          trap 'rm -f "$generated_types"' EXIT
+          bunx wrangler@4.111.0 types "$generated_types" --config native-sharing-cloudflare/wrangler.backend.jsonc
           bunx tsc -p native-sharing-cloudflare/tsconfig.backend.json
+          rm -f "$generated_types"
+          trap - EXIT
       - name: LINT
         run: |
           bun run lint
