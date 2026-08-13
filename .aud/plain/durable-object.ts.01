@@ -1,0 +1,61 @@
+re.storageCounts()
+    const verified = alarm === null
+      && counts.sessions === 0
+      && counts.points === 0
+      && counts.viewers === 0
+      && counts.sequenceStates === 0
+    return this.testCleanupVerificationOverride === false ? false : verified
+  }
+
+  async createSession(input: CreateSessionInput): Promise<RpcResult<NativeSharingSession>> {
+    this.ensureSchema()
+    const result = await this.runtime.createSession(input)
+    if (!result.ok) return result
+    const deadline = Date.parse(result.value.expiresAt) + DELETE_AFTER_EXPIRATION_MS
+    try {
+      if (this.testSetAlarmFailure) throw new Error('SYNTHETIC_SET_ALARM_FAILURE')
+      await this.ctx.storage.setAlarm(deadline)
+      return result
+    } catch {
+      try {
+        const clean = await this.deleteAllAndVerify()
+        if (!clean) return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
+      } catch {
+        return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
+      }
+      return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
+    }
+  }
+
+  appendPoint(sessionId: string, emitterToken: string, point: NativeSharedLocationPoint): Promise<RpcResult<AcceptedNativePoint>> {
+    return this.runtime.appendPoint(sessionId, emitterToken, point)
+  }
+
+  exchangeViewerCapability(viewerCapability: string): Promise<RpcResult<ViewerExchangeResponse>> {
+    return this.runtime.exchangeViewerCapability(viewerCapability)
+  }
+
+  getStatus(sessionId: string, viewerSessionToken: string): Promise<RpcResult<ViewerStatusResponse>> {
+    return this.runtime.getStatus(sessionId, viewerSessionToken)
+  }
+
+  getPoints(sessionId: string, viewerSessionToken: string): Promise<RpcResult<ViewerPointsResponse>> {
+    return this.runtime.getPoints(sessionId, viewerSessionToken)
+  }
+
+  logoutViewer(sessionId: string, viewerSessionToken: string): Promise<RpcResult<null>> {
+    return this.runtime.logoutViewer(sessionId, viewerSessionToken)
+  }
+
+  rotateViewer(sessionId: string, emitterToken: string): Promise<RpcResult<{ viewerCapability: string; viewerGeneration: number }>> {
+    return this.runtime.rotateViewer(sessionId, emitterToken)
+  }
+
+  revoke(sessionId: string, emitterToken: string): Promise<RpcResult<null>> {
+    return this.runtime.revoke(sessionId, emitterToken)
+  }
+
+  async importCookieSession(input: CookieSessionImportInput): Promise<RpcResult<CookieSessionPublicStatus>> {
+    const result = await this.cookieRuntime.importSession(input)
+    if (!result.ok) return result
+    try 
