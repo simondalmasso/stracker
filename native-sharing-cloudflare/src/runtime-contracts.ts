@@ -1,3 +1,5 @@
+/// <reference path="./webcrypto-buffer-compat.d.ts" />
+
 import type {
   AcceptedNativePoint,
   CreateSessionInput,
