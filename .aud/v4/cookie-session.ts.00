@@ -1,0 +1,149 @@
+import { capabilityVerifier } from '../../native-sharing/src/security.js'
+import type { RpcResult, RuntimeErrorCode } from './runtime-contracts.js'
+
+export const COOKIE_POLICY_VERSION = 'google-maps-cookie-encrypted-do-v3'
+export const MAX_COOKIE_INPUT_BYTES = 64 * 1024
+export const DEFAULT_COOKIE_SESSION_DURATION_MS = 60 * 60 * 1000
+export const MIN_COOKIE_SESSION_DURATION_MS = 5 * 60 * 1000
+export const MAX_COOKIE_SESSION_DURATION_MS = 4 * 60 * 60 * 1000
+export const COOKIE_REFRESH_MIN_INTERVAL_MS = 10_000
+export const COOKIE_SESSION_STORAGE_KEY = 'stracker:cookie-session:v3'
+const PROVIDER_TIMEOUT_MS = 8_000
+const PROVIDER_URL = 'https://www.google.com/maps/rpc/locationsharing/read?authuser=0&hl=es&gl=ar&pb='
+const AUTH_COOKIE_NAMES = new Set(['SID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID'])
+const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+const GOOGLE_DOMAIN = /^(?:[a-z0-9-]+\.)*google\.com$/i
+const TOKEN = /^[A-Za-z0-9_-]{43}$/
+const ENCRYPTION_CONTEXT = 'stracker-cookie-session-v3'
+
+export type CookieFormat = 'COOKIE_EDITOR_JSON' | 'WRAPPED_JSON' | 'COOKIE_HEADER_STRING' | 'NETSCAPE' | 'JSON_NAME_VALUE_MAP'
+export type CookieProviderState = 'ready' | 'no_location'
+
+export interface CookiePoint {
+  lat: number
+  lng: number
+  accuracyM: number | null
+  capturedAt: string
+}
+
+interface NormalizedCookie {
+  name: string
+  value: string
+  domain: string
+  path: string
+  secure: boolean
+  httpOnly: boolean
+  expiresAt: number | null
+}
+
+export interface ParsedCookieSession {
+  cookies: NormalizedCookie[]
+  format: CookieFormat
+  expiresAt: number | null
+  totalParsed: number
+  expiredDropped: number
+  retainedCount: number
+}
+
+export interface CookieSessionImportInput {
+  sessionId: string
+  ownerToken: string
+  raw: string
+  durationMs: number
+}
+
+export interface CookieSessionPublicStatus {
+  state: CookieProviderState
+  policyVersion: string
+  format: CookieFormat
+  cookieCount: number
+  totalParsed: number
+  expiredDropped: number
+  retainedCount: number
+  expiresAt: string
+  validatedAt: string
+  locationAvailable: boolean
+}
+
+export interface CookieSessionPointResponse {
+  state: CookieProviderState
+  point: CookiePoint | null
+  validatedAt: string
+}
+
+export interface CookieSessionCreateResponse extends CookieSessionPublicStatus {
+  status: 'ok'
+  sessionId: string
+  ownerToken: string
+  storagePolicy: 'encrypted-durable-object'
+}
+
+export type CookieProbeResult =
+  | { ok: true; state: CookieProviderState; point: CookiePoint | null }
+  | { ok: false; status: number; code: RuntimeErrorCode }
+
+export type CookieProbe = (cookies: readonly NormalizedCookie[]) => Promise<CookieProbeResult>
+
+export interface CookieSessionStorage {
+  get<T = unknown>(key: string): Promise<T | undefined>
+  put<T = unknown>(key: string, value: T): Promise<void>
+  delete(key: string): Promise<boolean>
+}
+
+interface EncryptedCookiePayload {
+  cookies: NormalizedCookie[]
+  point: CookiePoint | null
+}
+
+interface PersistedCookieSession {
+  version: 3
+  sessionId: string
+  ownerVerifier: string
+  format: CookieFormat
+  cookieCount: number
+  totalParsed: number
+  expiredDropped: number
+  retainedCount: number
+  expiresAtMs: number
+  validatedAt: string
+  state: CookieProviderState
+  locationAvailable: boolean
+  lastProbeAtMs: number
+  iv: ArrayBuffer
+  ciphertext: ArrayBuffer
+}
+
+class CookieContractError extends Error {
+  constructor(readonly status: number, readonly code: RuntimeErrorCode) {
+    super(code)
+  }
+}
+
+function normalizedDomain(value: unknown): string {
+  const domain = String(value ?? 'google.com').trim().toLowerCase().replace(/^\./, '')
+  if (!GOOGLE_DOMAIN.test(domain)) throw new CookieContractError(400, 'COOKIE_DOMAIN_REJECTED')
+  return `.${domain}`
+}
+
+function normalizedExpiry(value: unknown): number | null {
+  if (value === undefined || value === null || value === '' || value === 0 || value === '0' || value === -1 || value === '-1') return null
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) throw new CookieContractError(400, 'COOKIE_INVALID')
+  return numeric > 10_000_000_000 ? numeric : numeric * 1000
+}
+
+function normalizeCookie(value: unknown): NormalizedCookie {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new CookieContractError(400, 'COOKIE_INVALID')
+  const row = value as Record<string, unknown>
+  const name = String(row.name ?? '').trim()
+  if (!name || !COOKIE_NAME.test(name)) throw new CookieContractError(400, 'COOKIE_INVALID')
+  const rawValue = row.value
+  if (rawValue === undefined || rawValue === null || typeof rawValue === 'object') throw new CookieContractError(400, 'COOKIE_INVALID')
+  return {
+    name,
+    value: String(rawValue),
+    domain: normalizedDomain(row.domain),
+    path: typeof row.path === 'string' && row.path.startsWith('/') ? row.path : '/',
+    secure: row.secure === undefined ? true : Boolean(row.secure),
+    httpOnly: Boolean(row.httpOnly ?? row.http_only),
+    expiresAt: normalizedExpiry(row.expirationDate ?? row.expires ?? row.e
