@@ -1,0 +1,121 @@
+ readonly NormalizedCookie[]): string {
+  return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
+}
+
+function coordinatesFromProvider(body: string): CookiePoint | null {
+  const patterns = [
+    /\[null,(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)\]/g,
+    /\[null,\[(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)\]\]/g,
+  ]
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(body))) {
+      const lng = Number(match[1])
+      const lat = Number(match[2])
+      if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+        return { lat, lng, accuracyM: null, capturedAt: new Date().toISOString() }
+      }
+    }
+  }
+  return null
+}
+
+export async function probeGoogleCookieSession(cookies: readonly NormalizedCookie[]): Promise<CookieProbeResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort('PROVIDER_TIMEOUT'), PROVIDER_TIMEOUT_MS)
+  try {
+    const response = await fetch(PROVIDER_URL, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json,text/plain,*/*',
+        Cookie: cookieHeader(cookies),
+        Referer: 'https://www.google.com/maps',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36',
+        'X-Goog-AuthUser': '0',
+      },
+    })
+    const location = response.headers.get('Location') ?? ''
+    if (response.status === 401 || response.status === 403 || location.includes('accounts.google.com')) {
+      return { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' }
+    }
+    if (response.status >= 500 || response.status === 429) return { ok: false, status: 503, code: 'COOKIE_PROVIDER_UNAVAILABLE' }
+    const body = (await response.text()).slice(0, 1_000_000)
+    if (body.includes('accounts.google.com/ServiceLogin') || body.includes('signin/v2')) {
+      return { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' }
+    }
+    if (!response.ok) return { ok: false, status: 503, code: 'COOKIE_PROVIDER_UNAVAILABLE' }
+    const point = coordinatesFromProvider(body)
+    return point ? { ok: true, state: 'ready', point } : { ok: true, state: 'no_location', point: null }
+  } catch {
+    return { ok: false, status: 503, code: 'COOKIE_PROVIDER_UNAVAILABLE' }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function metadata(session: PersistedCookieSession): CookieSessionPublicStatus {
+  return {
+    state: session.state,
+    policyVersion: COOKIE_POLICY_VERSION,
+    format: session.format,
+    cookieCount: session.cookieCount,
+    totalParsed: session.totalParsed,
+    expiredDropped: session.expiredDropped,
+    retainedCount: session.retainedCount,
+    expiresAt: new Date(session.expiresAtMs).toISOString(),
+    validatedAt: session.validatedAt,
+    locationAvailable: session.locationAvailable,
+  }
+}
+
+function bytes(value: ArrayBuffer): Uint8Array {
+  return new Uint8Array(value)
+}
+
+function ownedArrayBuffer(value: Uint8Array): ArrayBuffer {
+  return value.slice().buffer
+}
+
+function encryptionMaterial(sessionId: string, ownerToken: string): Uint8Array {
+  return new TextEncoder().encode(`${ENCRYPTION_CONTEXT}\u0000${sessionId}\u0000${ownerToken}`)
+}
+
+function additionalData(sessionId: string): Uint8Array {
+  return new TextEncoder().encode(`${COOKIE_POLICY_VERSION}\u0000${sessionId}`)
+}
+
+async function encryptionKey(sessionId: string, ownerToken: string): Promise<CryptoKey> {
+  const digest = await crypto.subtle.digest('SHA-256', encryptionMaterial(sessionId, ownerToken))
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+async function sealPayload(sessionId: string, ownerToken: string, payload: EncryptedCookiePayload): Promise<{ iv: ArrayBuffer; ciphertext: ArrayBuffer }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const plaintext = new TextEncoder().encode(JSON.stringify(payload))
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: additionalData(sessionId), tagLength: 128 },
+    await encryptionKey(sessionId, ownerToken),
+    plaintext,
+  )
+  plaintext.fill(0)
+  return { iv: ownedArrayBuffer(iv), ciphertext }
+}
+
+async function openPayload(session: PersistedCookieSession, ownerToken: string): Promise<EncryptedCookiePayload> {
+  try {
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: bytes(session.iv), additionalData: additionalData(session.sessionId), tagLength: 128 },
+      await encryptionKey(session.sessionId, ownerToken),
+      session.ciphertext,
+    )
+    const decoded = JSON.parse(new TextDecoder().decode(plaintext)) as EncryptedCookiePayload
+    if (!decoded || !Array.isArray(decoded.cookies) || !('point' in decoded)) throw new Error('INVALID_PAYLOAD')
+    return decoded
+  } catch {
+    throw new CookieContractError(503, 'STORAGE_UNAVAILABLE')
+  }
+}
+
+export class CookieSessionDurableRuntime {
