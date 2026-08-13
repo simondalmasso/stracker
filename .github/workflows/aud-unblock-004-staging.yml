@@ -1,0 +1,39 @@
+name: STRACKER AUD Unblock 004 Staging
+
+on:
+  push:
+    branches:
+      - aud-unblock-004-staging
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - name: FROZEN_INSTALL
+        run: bun install --frozen-lockfile
+      - name: TYPECHECK
+        run: |
+          bun run typecheck
+          bunx tsc -p native-sharing/tsconfig.json
+          bunx tsc -p native-sharing-cloudflare/tsconfig.backend.json
+      - name: LINT
+        run: |
+          bun run lint
+          bunx eslint native-sharing/src native-sharing-cloudflare/src
+      - name: COOKIE_AND_PIPELINE_TESTS
+        run: |
+          bun test tests/cookie-session/cookie-session.test.ts tests/vector-map/ghostrail-camera.test.ts tests/native-sharing/native-sharing.test.ts
+      - name: WORKERD_COOKIE_EVICTION
+        run: bunx vitest run --config native-sharing-cloudflare/vitest.cookie-eviction.config.mts
+      - name: EXISTING_WORKERD_REGRESSION
+        run: bunx vitest run --config native-sharing-cloudflare/vitest.e2e.config.mts
+      - name: DIFF_CHECK
+        run: git diff --check 8883fa84eb4e49c46197b302109737634cf37138...HEAD
