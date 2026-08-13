@@ -1,20 +1,21 @@
-# STRACKER cookie-session recovery v1
+# STRACKER cookie-session recovery v3
 
 ## Scope
 
 The Google Maps cookie-session path is an explicit owner-only recovery surface inside **UBICACIÓN COMPARTIDA**. It does not replace STRACKER native sharing and does not create a public viewer capability.
 
-## Security contract
+## Persistence and security contract
 
 - Cookie values are accepted only by `POST /api/cookie-sessions` over the same STRACKER origin.
-- Accepted input formats: Cookie Editor JSON, wrapped JSON, name/value JSON, Cookie Header and Netscape.
-- Only `google.com` cookie domains are accepted.
-- A successful import requires an upstream Google Location Sharing probe. Parsing alone never produces success.
-- Raw cookies exist only in the memory of one Durable Object instance. They are not written to SQLite, browser storage, URLs, logs or artifacts.
-- The browser keeps only a random session ID and owner token in React memory.
-- `/status` exposes metadata only. Coordinates are available only from the separate owner-authorized `/point` endpoint.
-- Delete, source change, page exit, expiry, auth expiry or runtime eviction revoke the usable session. Eviction/restart requires re-import.
-- Import is body-bounded, same-origin, method/path allowlisted, time-bounded and best-effort rate-limited by the public Worker.
+- Accepted input includes real Cookie Editor JSON (including nullable auxiliary fields), wrapped JSON, name/value JSON, Cookie Header and Netscape.
+- Only `google.com` cookie domains are accepted and a successful import requires an upstream Google Location Sharing probe.
+- Raw cookie values are never written to browser storage, URLs, DOM, logs or artifacts.
+- The browser may keep only the random STRACKER `sessionId`, `ownerToken` and TTL in same-tab `sessionStorage` so a reload can recover the same session. Coordinates are not stored there.
+- The Durable Object stores only an owner verifier plus an AES-256-GCM encrypted payload containing the temporary cookie set and latest provider point. The owner token is not persisted server-side and is required to derive the decryption key.
+- Durable Object eviction/hibernation therefore destroys only in-memory state; encrypted durable storage can reconstruct the same authorized session.
+- Session TTL is STRACKER-controlled. An ancillary cookie expiring earlier does not shorten the session. The provider probe remains authoritative for real authentication failure.
+- Transient provider/network/storage errors do not revoke the session. Real authentication rejection, TTL expiry, `BORRAR SESIÓN` or `DETENER` delete the encrypted record.
+- The session is not revoked by tab background/foreground, pagehide/pageshow, map remount, 3D/Satélite/Híbrido switches or WebGL recovery.
 
 ## Public API
 
@@ -28,6 +29,21 @@ DELETE /api/cookie-sessions/:sessionId
 
 All owner operations require `X-Stracker-Cookie-Owner`. Error bodies are sanitized `{status:"error",error:"CODE"}` responses with `Cache-Control: no-store`.
 
+## GhostRail
+
+Cookie-provided points use the same location pipeline as other shared locations:
+
+```text
+COOKIE_LOCATION_POINT
+→ LocationSample(shared-location)
+→ processLocationSample
+→ accuracy filter
+→ GhostRail
+→ MobileMapShell
+```
+
+Only accepted real points enter the rail; STRACKER does not interpolate synthetic intermediate positions.
+
 ## Automation boundary
 
-Automation uses synthetic cookie-shaped values and injected provider outcomes only. It verifies parsing, rejection, no fake success, memory-only replacement, gateway allowlists, metadata-only status, explicit deletion, mobile/desktop layout and absence of values in the DOM. Real cookie validation remains a human gate and must never be pasted into issues, PRs, logs, screenshots or artifacts.
+Automation uses synthetic cookie-shaped values and injected provider outcomes only. It verifies parsing, encryption-at-rest, eviction recovery, transient/error lifecycle, GhostRail continuity, same-tab recovery and absence of credential values in DOM/log/artifacts. Real cookie validation remains a human gate and real cookie values must never be pasted into issues, PRs, logs, screenshots or artifacts.
