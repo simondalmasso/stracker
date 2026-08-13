@@ -1,0 +1,90 @@
+name: STRACKER AUD Unblock 004 Repair
+
+on:
+  push:
+    branches:
+      - aud-unblock-004-staging
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: contains(github.event.head_commit.message, 'ci(aud): webcrypto repair')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: APPLY_EXACT_REPAIR
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('native-sharing-cloudflare/src/cookie-session.ts')
+          s = p.read_text()
+          start = s.index('function bytes(value: ArrayBuffer): Uint8Array {')
+          end = s.index('export class CookieSessionDurableRuntime {')
+          replacement = '''function ownedArrayBuffer(value: Uint8Array): ArrayBuffer {
+            return value.slice().buffer
+          }
+
+          function encryptionMaterial(sessionId: string, ownerToken: string): ArrayBuffer {
+            return ownedArrayBuffer(new TextEncoder().encode(`${ENCRYPTION_CONTEXT}\\u0000${sessionId}\\u0000${ownerToken}`))
+          }
+
+          function additionalData(sessionId: string): ArrayBuffer {
+            return ownedArrayBuffer(new TextEncoder().encode(`${COOKIE_POLICY_VERSION}\\u0000${sessionId}`))
+          }
+
+          async function encryptionKey(sessionId: string, ownerToken: string): Promise<CryptoKey> {
+            const digest = await crypto.subtle.digest('SHA-256', encryptionMaterial(sessionId, ownerToken))
+            return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+          }
+
+          async function sealPayload(sessionId: string, ownerToken: string, payload: EncryptedCookiePayload): Promise<{ iv: ArrayBuffer; ciphertext: ArrayBuffer }> {
+            const iv = ownedArrayBuffer(crypto.getRandomValues(new Uint8Array(12)))
+            const plaintextBytes = new TextEncoder().encode(JSON.stringify(payload))
+            const plaintext = ownedArrayBuffer(plaintextBytes)
+            const ciphertext = await crypto.subtle.encrypt(
+              { name: 'AES-GCM', iv, additionalData: additionalData(sessionId), tagLength: 128 },
+              await encryptionKey(sessionId, ownerToken),
+              plaintext,
+            )
+            plaintextBytes.fill(0)
+            return { iv, ciphertext }
+          }
+
+          async function openPayload(session: PersistedCookieSession, ownerToken: string): Promise<EncryptedCookiePayload> {
+            try {
+              const plaintext = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: session.iv, additionalData: additionalData(session.sessionId), tagLength: 128 },
+                await encryptionKey(session.sessionId, ownerToken),
+                session.ciphertext,
+              )
+              const decoded = JSON.parse(new TextDecoder().decode(plaintext)) as EncryptedCookiePayload
+              if (!decoded || !Array.isArray(decoded.cookies) || !('point' in decoded)) throw new Error('INVALID_PAYLOAD')
+              return decoded
+            } catch {
+              throw new CookieContractError(503, 'STORAGE_UNAVAILABLE')
+            }
+          }
+
+          '''
+          p.write_text(s[:start] + replacement + s[end:])
+
+          client = Path('src/lib/location-source/cookie-session-api.ts')
+          c = client.read_text()
+          old = "storagePolicy: 'memory-only'"
+          assert c.count(old) == 1
+          client.write_text(c.replace(old, "storagePolicy: 'encrypted-durable-object'"))
+          PY
+          rm -rf .aud
+          git diff --check
+      - name: COMMIT_REPAIR
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add native-sharing-cloudflare/src/cookie-session.ts src/lib/location-source/cookie-session-api.ts .aud
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix(aud): webcrypto buffers and clean staging transport'
+          git push origin HEAD:aud-unblock-004-staging
