@@ -1,0 +1,113 @@
+xpiry),
+  }
+}
+
+function parseJsonValue(value: unknown, wrapped = false): { rows: unknown[]; format: CookieFormat } {
+  if (Array.isArray(value)) return { rows: value, format: wrapped ? 'WRAPPED_JSON' : 'COOKIE_EDITOR_JSON' }
+  if (!value || typeof value !== 'object') throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED')
+  const object = value as Record<string, unknown>
+  if ('data' in object || 'cookies' in object) {
+    let inner = object.data ?? object.cookies
+    if (typeof inner === 'string') {
+      try { inner = JSON.parse(inner) } catch { throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED') }
+    }
+    return parseJsonValue(inner, true)
+  }
+  const entries = Object.entries(object)
+  if (!entries.length || entries.some(([, item]) => typeof item === 'object' || item === null)) {
+    throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED')
+  }
+  return {
+    rows: entries.map(([name, item]) => ({ name, value: item, domain: '.google.com', path: '/' })),
+    format: 'JSON_NAME_VALUE_MAP',
+  }
+}
+
+function parseNetscape(text: string): unknown[] {
+  const rows: unknown[] = []
+  for (const original of text.split(/\r?\n/)) {
+    const line = original.trim()
+    if (!line || line.startsWith('#')) continue
+    const parts = original.split('\t')
+    if (parts.length < 7) throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED')
+    const [domain, , path, secure, expires, name, ...value] = parts
+    rows.push({ domain, path, secure: secure.toUpperCase() === 'TRUE', expires, name, value: value.join('\t') })
+  }
+  if (!rows.length) throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED')
+  return rows
+}
+
+function parseHeader(text: string): unknown[] {
+  const source = text.toLowerCase().startsWith('cookie:') ? text.slice(text.indexOf(':') + 1) : text
+  const rows: unknown[] = []
+  for (const part of source.split(';')) {
+    const segment = part.trim()
+    if (!segment) continue
+    const index = segment.indexOf('=')
+    if (index <= 0) throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED')
+    rows.push({ name: segment.slice(0, index).trim(), value: segment.slice(index + 1), domain: '.google.com', path: '/' })
+  }
+  if (!rows.length) throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED')
+  return rows
+}
+
+function expired(cookie: NormalizedCookie, now: number): boolean {
+  return cookie.expiresAt !== null && cookie.expiresAt <= now
+}
+
+function preferCookie(current: NormalizedCookie | undefined, candidate: NormalizedCookie, now: number): NormalizedCookie {
+  if (!current) return candidate
+  const currentExpired = expired(current, now)
+  const candidateExpired = expired(candidate, now)
+  if (currentExpired && !candidateExpired) return candidate
+  if (!currentExpired && candidateExpired) return current
+  return candidate
+}
+
+export function parseCookieSession(raw: string): ParsedCookieSession {
+  const bytes = new TextEncoder().encode(raw).byteLength
+  if (!raw.trim()) throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED')
+  if (bytes > MAX_COOKIE_INPUT_BYTES) throw new CookieContractError(413, 'BODY_TOO_LARGE')
+  const text = raw.trim()
+  let rows: unknown[]
+  let format: CookieFormat
+  if (text.startsWith('[') || text.startsWith('{')) {
+    let decoded: unknown
+    try { decoded = JSON.parse(text) } catch { throw new CookieContractError(400, 'COOKIE_FORMAT_UNRECOGNIZED') }
+    const parsed = parseJsonValue(decoded)
+    rows = parsed.rows
+    format = parsed.format
+  } else if (text.includes('\t') && (text.includes('# Netscape HTTP Cookie File') || text.split('\t').length >= 7)) {
+    rows = parseNetscape(text)
+    format = 'NETSCAPE'
+  } else {
+    rows = parseHeader(text)
+    format = 'COOKIE_HEADER_STRING'
+  }
+
+  const now = Date.now()
+  const normalized = rows.map(normalizeCookie)
+  const authSeen = normalized.some((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
+  const deduplicated = new Map<string, NormalizedCookie>()
+  for (const cookie of normalized) {
+    const key = `${cookie.name}\n${cookie.domain}\n${cookie.path}`
+    deduplicated.set(key, preferCookie(deduplicated.get(key), cookie, now))
+  }
+  const cookies = [...deduplicated.values()].filter((cookie) => !expired(cookie, now))
+  const authCookies = cookies.filter((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
+  if (!authCookies.length) {
+    throw new CookieContractError(authSeen ? 401 : 400, authSeen ? 'COOKIE_AUTH_EXPIRED' : 'COOKIE_SET_INCOMPLETE')
+  }
+  const authExpirations = authCookies.map((cookie) => cookie.expiresAt).filter((value): value is number => value !== null)
+  const authHasSessionCookie = authCookies.some((cookie) => cookie.expiresAt === null)
+  return {
+    cookies,
+    format,
+    expiresAt: authHasSessionCookie || !authExpirations.length ? null : Math.max(...authExpirations),
+    totalParsed: normalized.length,
+    expiredDropped: normalized.filter((cookie) => expired(cookie, now)).length,
+    retainedCount: cookies.length,
+  }
+}
+
+function cookieHeader(cookies:
