@@ -1,18 +1,20 @@
 import { capabilityVerifier } from '../../native-sharing/src/security.js'
 import type { RpcResult, RuntimeErrorCode } from './runtime-contracts.js'
 
-export const COOKIE_POLICY_VERSION = 'google-maps-cookie-minimum-v2'
+export const COOKIE_POLICY_VERSION = 'google-maps-cookie-encrypted-do-v3'
 export const MAX_COOKIE_INPUT_BYTES = 64 * 1024
 export const DEFAULT_COOKIE_SESSION_DURATION_MS = 60 * 60 * 1000
 export const MIN_COOKIE_SESSION_DURATION_MS = 5 * 60 * 1000
 export const MAX_COOKIE_SESSION_DURATION_MS = 4 * 60 * 60 * 1000
 export const COOKIE_REFRESH_MIN_INTERVAL_MS = 10_000
+export const COOKIE_SESSION_STORAGE_KEY = 'stracker:cookie-session:v3'
 const PROVIDER_TIMEOUT_MS = 8_000
 const PROVIDER_URL = 'https://www.google.com/maps/rpc/locationsharing/read?authuser=0&hl=es&gl=ar&pb='
 const AUTH_COOKIE_NAMES = new Set(['SID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID'])
 const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const GOOGLE_DOMAIN = /^(?:[a-z0-9-]+\.)*google\.com$/i
 const TOKEN = /^[A-Za-z0-9_-]{43}$/
+const ENCRYPTION_CONTEXT = 'stracker-cookie-session-v3'
 
 export type CookieFormat = 'COOKIE_EDITOR_JSON' | 'WRAPPED_JSON' | 'COOKIE_HEADER_STRING' | 'NETSCAPE' | 'JSON_NAME_VALUE_MAP'
 export type CookieProviderState = 'ready' | 'no_location'
@@ -45,7 +47,7 @@ export interface ParsedCookieSession {
 
 export interface CookieSessionImportInput {
   sessionId: string
-  ownerVerifier: string
+  ownerToken: string
   raw: string
   durationMs: number
 }
@@ -73,7 +75,7 @@ export interface CookieSessionCreateResponse extends CookieSessionPublicStatus {
   status: 'ok'
   sessionId: string
   ownerToken: string
-  storagePolicy: 'memory-only'
+  storagePolicy: 'encrypted-durable-object'
 }
 
 export type CookieProbeResult =
@@ -81,6 +83,35 @@ export type CookieProbeResult =
   | { ok: false; status: number; code: RuntimeErrorCode }
 
 export type CookieProbe = (cookies: readonly NormalizedCookie[]) => Promise<CookieProbeResult>
+
+export interface CookieSessionStorage {
+  get<T = unknown>(key: string): Promise<T | undefined>
+  put<T = unknown>(key: string, value: T): Promise<void>
+  delete(key: string): Promise<boolean>
+}
+
+interface EncryptedCookiePayload {
+  cookies: NormalizedCookie[]
+  point: CookiePoint | null
+}
+
+interface PersistedCookieSession {
+  version: 3
+  sessionId: string
+  ownerVerifier: string
+  format: CookieFormat
+  cookieCount: number
+  totalParsed: number
+  expiredDropped: number
+  retainedCount: number
+  expiresAtMs: number
+  validatedAt: string
+  state: CookieProviderState
+  locationAvailable: boolean
+  lastProbeAtMs: number
+  iv: ArrayBuffer
+  ciphertext: ArrayBuffer
+}
 
 class CookieContractError extends Error {
   constructor(readonly status: number, readonly code: RuntimeErrorCode) {
@@ -211,15 +242,16 @@ export function parseCookieSession(raw: string): ParsedCookieSession {
     deduplicated.set(key, preferCookie(deduplicated.get(key), cookie, now))
   }
   const cookies = [...deduplicated.values()].filter((cookie) => !expired(cookie, now))
-  const validAuthRemains = cookies.some((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
-  if (!validAuthRemains) {
+  const authCookies = cookies.filter((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
+  if (!authCookies.length) {
     throw new CookieContractError(authSeen ? 401 : 400, authSeen ? 'COOKIE_AUTH_EXPIRED' : 'COOKIE_SET_INCOMPLETE')
   }
-  const expirations = cookies.map((cookie) => cookie.expiresAt).filter((value): value is number => value !== null)
+  const authExpirations = authCookies.map((cookie) => cookie.expiresAt).filter((value): value is number => value !== null)
+  const authHasSessionCookie = authCookies.some((cookie) => cookie.expiresAt === null)
   return {
     cookies,
     format,
-    expiresAt: expirations.length ? Math.min(...expirations) : null,
+    expiresAt: authHasSessionCookie || !authExpirations.length ? null : Math.max(...authExpirations),
     totalParsed: normalized.length,
     expiredDropped: normalized.filter((cookie) => expired(cookie, now)).length,
     retainedCount: cookies.length,
@@ -283,81 +315,117 @@ export async function probeGoogleCookieSession(cookies: readonly NormalizedCooki
   }
 }
 
-interface MemorySession {
-  sessionId: string
-  ownerVerifier: string
-  cookies: NormalizedCookie[]
-  format: CookieFormat
-  totalParsed: number
-  expiredDropped: number
-  retainedCount: number
-  expiresAtMs: number
-  validatedAt: string
-  state: CookieProviderState
-  point: CookiePoint | null
-  lastProbeAtMs: number
-}
-
-function metadata(session: MemorySession): CookieSessionPublicStatus {
+function metadata(session: PersistedCookieSession): CookieSessionPublicStatus {
   return {
     state: session.state,
     policyVersion: COOKIE_POLICY_VERSION,
     format: session.format,
-    cookieCount: session.cookies.length,
+    cookieCount: session.cookieCount,
     totalParsed: session.totalParsed,
     expiredDropped: session.expiredDropped,
     retainedCount: session.retainedCount,
     expiresAt: new Date(session.expiresAtMs).toISOString(),
     validatedAt: session.validatedAt,
-    locationAvailable: session.point !== null,
+    locationAvailable: session.locationAvailable,
   }
 }
 
-export class CookieSessionMemoryRuntime {
-  private session: MemorySession | null = null
+function bytes(value: ArrayBuffer): Uint8Array {
+  return new Uint8Array(value)
+}
 
-  constructor(private readonly probe: CookieProbe = probeGoogleCookieSession) {}
+function ownedArrayBuffer(value: Uint8Array): ArrayBuffer {
+  return value.slice().buffer
+}
 
-  private async authorized(sessionId: string, ownerToken: string): Promise<RpcResult<MemorySession>> {
-    if (!this.session || this.session.sessionId !== sessionId || !TOKEN.test(ownerToken)) {
-      return { ok: false, status: 404, code: 'NOT_FOUND' }
-    }
-    if (this.session.expiresAtMs <= Date.now()) {
-      this.session = null
+function encryptionMaterial(sessionId: string, ownerToken: string): Uint8Array {
+  return new TextEncoder().encode(`${ENCRYPTION_CONTEXT}\u0000${sessionId}\u0000${ownerToken}`)
+}
+
+function additionalData(sessionId: string): Uint8Array {
+  return new TextEncoder().encode(`${COOKIE_POLICY_VERSION}\u0000${sessionId}`)
+}
+
+async function encryptionKey(sessionId: string, ownerToken: string): Promise<CryptoKey> {
+  const digest = await crypto.subtle.digest('SHA-256', encryptionMaterial(sessionId, ownerToken))
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+async function sealPayload(sessionId: string, ownerToken: string, payload: EncryptedCookiePayload): Promise<{ iv: ArrayBuffer; ciphertext: ArrayBuffer }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const plaintext = new TextEncoder().encode(JSON.stringify(payload))
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: additionalData(sessionId), tagLength: 128 },
+    await encryptionKey(sessionId, ownerToken),
+    plaintext,
+  )
+  plaintext.fill(0)
+  return { iv: ownedArrayBuffer(iv), ciphertext }
+}
+
+async function openPayload(session: PersistedCookieSession, ownerToken: string): Promise<EncryptedCookiePayload> {
+  try {
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: bytes(session.iv), additionalData: additionalData(session.sessionId), tagLength: 128 },
+      await encryptionKey(session.sessionId, ownerToken),
+      session.ciphertext,
+    )
+    const decoded = JSON.parse(new TextDecoder().decode(plaintext)) as EncryptedCookiePayload
+    if (!decoded || !Array.isArray(decoded.cookies) || !('point' in decoded)) throw new Error('INVALID_PAYLOAD')
+    return decoded
+  } catch {
+    throw new CookieContractError(503, 'STORAGE_UNAVAILABLE')
+  }
+}
+
+export class CookieSessionDurableRuntime {
+  constructor(
+    private readonly storage: CookieSessionStorage,
+    private readonly probe: CookieProbe = probeGoogleCookieSession,
+    private readonly clock: () => number = Date.now,
+  ) {}
+
+  private async authorized(sessionId: string, ownerToken: string): Promise<RpcResult<PersistedCookieSession>> {
+    if (!TOKEN.test(sessionId) || !TOKEN.test(ownerToken)) return { ok: false, status: 404, code: 'NOT_FOUND' }
+    const session = await this.storage.get<PersistedCookieSession>(COOKIE_SESSION_STORAGE_KEY)
+    if (!session || session.version !== 3 || session.sessionId !== sessionId) return { ok: false, status: 404, code: 'NOT_FOUND' }
+    if (session.expiresAtMs <= this.clock()) {
+      await this.storage.delete(COOKIE_SESSION_STORAGE_KEY)
       return { ok: false, status: 410, code: 'COOKIE_SESSION_EXPIRED' }
     }
     const verifier = await capabilityVerifier(ownerToken)
-    if (verifier !== this.session.ownerVerifier) return { ok: false, status: 404, code: 'NOT_FOUND' }
-    return { ok: true, value: this.session }
+    if (verifier !== session.ownerVerifier) return { ok: false, status: 404, code: 'NOT_FOUND' }
+    return { ok: true, value: session }
   }
 
   async importSession(input: CookieSessionImportInput): Promise<RpcResult<CookieSessionPublicStatus>> {
     try {
-      if (!TOKEN.test(input.sessionId) || !TOKEN.test(input.ownerVerifier)) {
-        return { ok: false, status: 400, code: 'REQUEST_INVALID' }
-      }
+      if (!TOKEN.test(input.sessionId) || !TOKEN.test(input.ownerToken)) return { ok: false, status: 400, code: 'REQUEST_INVALID' }
       const parsed = parseCookieSession(input.raw)
       const probe = await this.probe(parsed.cookies)
-      if (!probe.ok) return probe
-      const now = Date.now()
+      if (probe.ok === false) return probe
+      const now = this.clock()
       const duration = Math.max(MIN_COOKIE_SESSION_DURATION_MS, Math.min(MAX_COOKIE_SESSION_DURATION_MS, Math.floor(input.durationMs || DEFAULT_COOKIE_SESSION_DURATION_MS)))
-      const expiresAtMs = Math.min(now + duration, parsed.expiresAt ?? Number.POSITIVE_INFINITY)
-      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) return { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' }
-      this.session = {
+      const expiresAtMs = now + duration
+      const encrypted = await sealPayload(input.sessionId, input.ownerToken, { cookies: parsed.cookies, point: probe.point })
+      const session: PersistedCookieSession = {
+        version: 3,
         sessionId: input.sessionId,
-        ownerVerifier: input.ownerVerifier,
-        cookies: parsed.cookies,
+        ownerVerifier: await capabilityVerifier(input.ownerToken),
         format: parsed.format,
+        cookieCount: parsed.cookies.length,
         totalParsed: parsed.totalParsed,
         expiredDropped: parsed.expiredDropped,
         retainedCount: parsed.retainedCount,
         expiresAtMs,
         validatedAt: new Date(now).toISOString(),
         state: probe.state,
-        point: probe.point,
+        locationAvailable: probe.point !== null,
         lastProbeAtMs: now,
+        ...encrypted,
       }
-      return { ok: true, value: metadata(this.session) }
+      await this.storage.put(COOKIE_SESSION_STORAGE_KEY, session)
+      return { ok: true, value: metadata(session) }
     } catch (error) {
       if (error instanceof CookieContractError) return { ok: false, status: error.status, code: error.code }
       return { ok: false, status: 400, code: 'REQUEST_INVALID' }
@@ -372,13 +440,20 @@ export class CookieSessionMemoryRuntime {
   async point(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPointResponse>> {
     const authorized = await this.authorized(sessionId, ownerToken)
     if (!authorized.ok) return authorized
-    return {
-      ok: true,
-      value: {
-        state: authorized.value.state,
-        point: authorized.value.point,
-        validatedAt: authorized.value.validatedAt,
-      },
+    try {
+      const payload = await openPayload(authorized.value, ownerToken)
+      return {
+        ok: true,
+        value: {
+          state: authorized.value.state,
+          point: payload.point,
+          validatedAt: authorized.value.validatedAt,
+        },
+      }
+    } catch (error) {
+      return error instanceof CookieContractError
+        ? { ok: false, status: error.status, code: error.code }
+        : { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
     }
   }
 
@@ -386,25 +461,60 @@ export class CookieSessionMemoryRuntime {
     const authorized = await this.authorized(sessionId, ownerToken)
     if (!authorized.ok) return authorized
     const session = authorized.value
-    if (Date.now() - session.lastProbeAtMs < COOKIE_REFRESH_MIN_INTERVAL_MS) {
-      return { ok: false, status: 429, code: 'FREQUENCY_LIMIT' }
+    const now = this.clock()
+    if (now - session.lastProbeAtMs < COOKIE_REFRESH_MIN_INTERVAL_MS) return { ok: false, status: 429, code: 'FREQUENCY_LIMIT' }
+    try {
+      const payload = await openPayload(session, ownerToken)
+      const probe = await this.probe(payload.cookies)
+      session.lastProbeAtMs = now
+      if (probe.ok === false) {
+        if (probe.code === 'COOKIE_AUTH_EXPIRED') await this.storage.delete(COOKIE_SESSION_STORAGE_KEY)
+        else await this.storage.put(COOKIE_SESSION_STORAGE_KEY, session)
+        return probe
+      }
+      const encrypted = await sealPayload(session.sessionId, ownerToken, { cookies: payload.cookies, point: probe.point })
+      session.state = probe.state
+      session.locationAvailable = probe.point !== null
+      session.validatedAt = new Date(now).toISOString()
+      session.iv = encrypted.iv
+      session.ciphertext = encrypted.ciphertext
+      await this.storage.put(COOKIE_SESSION_STORAGE_KEY, session)
+      return { ok: true, value: metadata(session) }
+    } catch (error) {
+      return error instanceof CookieContractError
+        ? { ok: false, status: error.status, code: error.code }
+        : { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
     }
-    const probe = await this.probe(session.cookies)
-    session.lastProbeAtMs = Date.now()
-    if (!probe.ok) {
-      if (probe.code === 'COOKIE_AUTH_EXPIRED') this.session = null
-      return probe
-    }
-    session.state = probe.state
-    session.point = probe.point
-    session.validatedAt = new Date().toISOString()
-    return { ok: true, value: metadata(session) }
   }
 
   async delete(sessionId: string, ownerToken: string): Promise<RpcResult<null>> {
     const authorized = await this.authorized(sessionId, ownerToken)
     if (!authorized.ok) return authorized
-    this.session = null
+    await this.storage.delete(COOKIE_SESSION_STORAGE_KEY)
     return { ok: true, value: null }
+  }
+}
+
+class InMemoryCookieStorage implements CookieSessionStorage {
+  private value: PersistedCookieSession | undefined
+
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    return key === COOKIE_SESSION_STORAGE_KEY ? this.value as T | undefined : undefined
+  }
+
+  async put<T = unknown>(key: string, value: T): Promise<void> {
+    if (key === COOKIE_SESSION_STORAGE_KEY) this.value = value as PersistedCookieSession
+  }
+
+  async delete(key: string): Promise<boolean> {
+    if (key !== COOKIE_SESSION_STORAGE_KEY || !this.value) return false
+    this.value = undefined
+    return true
+  }
+}
+
+export class CookieSessionMemoryRuntime extends CookieSessionDurableRuntime {
+  constructor(probe: CookieProbe = probeGoogleCookieSession, clock: () => number = Date.now) {
+    super(new InMemoryCookieStorage(), probe, clock)
   }
 }
