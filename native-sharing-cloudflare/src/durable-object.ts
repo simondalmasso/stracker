@@ -8,7 +8,7 @@ import type {
   ViewerPointsResponse,
   ViewerStatusResponse,
 } from '../../native-sharing/src/contracts.js'
-import { CookieSessionMemoryRuntime, type CookieSessionImportInput, type CookieSessionPointResponse, type CookieSessionPublicStatus } from './cookie-session.js'
+import { CookieSessionDurableRuntime, type CookieSessionImportInput, type CookieSessionPointResponse, type CookieSessionPublicStatus } from './cookie-session.js'
 import type { RpcResult } from './runtime-contracts.js'
 import { DELETE_AFTER_EXPIRATION_MS } from './runtime-limits.js'
 import { NativeSharingSessionRuntime } from './session-runtime.js'
@@ -35,7 +35,7 @@ function sqlExecutor(storage: DurableObjectStorage): RuntimeSqlExecutor {
 export class NativeSharingDurableObject extends DurableObject<Env> {
   private readonly store: SqliteNativeSharingStore
   private readonly runtime: NativeSharingSessionRuntime
-  private readonly cookieRuntime: CookieSessionMemoryRuntime
+  private readonly cookieRuntime: CookieSessionDurableRuntime
   private schemaDeleted = false
   private testCleanupVerificationOverride: false | null = null
   private testSetAlarmFailure = false
@@ -44,7 +44,7 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
     super(ctx, env)
     this.store = new SqliteNativeSharingStore(sqlExecutor(this.ctx.storage))
     this.runtime = new NativeSharingSessionRuntime(this.store)
-    this.cookieRuntime = new CookieSessionMemoryRuntime()
+    this.cookieRuntime = new CookieSessionDurableRuntime(this.ctx.storage)
     this.ctx.blockConcurrencyWhile(async () => {
       this.store.initializeSchema()
     })
@@ -118,8 +118,22 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
     return this.runtime.revoke(sessionId, emitterToken)
   }
 
-  importCookieSession(input: CookieSessionImportInput): Promise<RpcResult<CookieSessionPublicStatus>> {
-    return this.cookieRuntime.importSession(input)
+  async importCookieSession(input: CookieSessionImportInput): Promise<RpcResult<CookieSessionPublicStatus>> {
+    const result = await this.cookieRuntime.importSession(input)
+    if (!result.ok) return result
+    try {
+      if (this.testSetAlarmFailure) throw new Error('SYNTHETIC_SET_ALARM_FAILURE')
+      await this.ctx.storage.setAlarm(Date.parse(result.value.expiresAt))
+      return result
+    } catch {
+      try {
+        const clean = await this.deleteAllAndVerify()
+        if (!clean) return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
+      } catch {
+        return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
+      }
+      return { ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }
+    }
   }
 
   getCookieSessionStatus(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>> {
