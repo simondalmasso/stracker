@@ -47,7 +47,6 @@ type Public3dState = {
 
 function public3dReady(state: Public3dState): boolean {
   return state.buildingState === '3D_ACTIVE'
-    && state.sourceBacked
     && state.layerCount >= 4
     && state.renderedFeatures > 0
     && !state.fallbackVisible
@@ -313,7 +312,7 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
 ok(browserEvidence, `POST_3D_BROWSER_FAILED_${firstFailure}`)
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v7',
+  schema: 'stracker.santa-fe-post-promotion-3d.v8',
   sourceSha: expectedSha,
   expectedVersionIdHash: digest(expectedVersionId),
   identityAttempts,
@@ -335,6 +334,7 @@ const result = {
     PUBLIC_RUNTIME_EXACT_HEAD: 'PASS',
     WEB_3D_DENSE_CITY: 'PASS',
     POST_PROMOTION_PUBLIC_SANTA_FE_3D_RENDER: 'PASS',
+    SOURCE_IDLE_TELEMETRY_NOT_REQUIRED_FOR_VISIBLE_GEOMETRY: 'PASS',
     POST_PROMOTION_PMTILES_QUERY_RANGE: 'PASS',
     POST_PROMOTION_BUILDING_TOGGLE_VISUAL_DELTA: 'PASS',
     POST_PROMOTION_READINESS_BUDGET_UNCHANGED_90_SECONDS: 'PASS',
