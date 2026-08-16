@@ -10,6 +10,8 @@ const expectedVersionId = process.env.STRACKER_EXPECTED_VERSION_ID || ''
 const output = process.env.STRACKER_POST_3D_QA_OUTPUT || '/tmp/stracker-santa-fe-post-promotion-3d.json'
 const screenshotDir = process.env.STRACKER_POST_3D_SCREENSHOT_DIR || '/tmp'
 const POST_3D_READINESS_BUDGET_MS = 90_000
+const CUSTOM_PRIMARY_GRACE_MS = 30_000
+const MIN_VISUAL_CHANGED_PIXELS = 8_000
 
 class QaFailure extends Error {
   constructor(readonly code: string) { super(code) }
@@ -236,10 +238,13 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
     const canvas = await page.waitForSelector('canvas.maplibregl-canvas', { timeout: 45_000 })
     ok(canvas, 'MAP_CANVAS_MISSING')
 
-    const readinessDeadline = Date.now() + POST_3D_READINESS_BUDGET_MS
+    const readinessStartedAt = Date.now()
+    const readinessDeadline = readinessStartedAt + POST_3D_READINESS_BUDGET_MS
     let state: Public3dState | null = null
+    let fallbackObserved = false
     while (Date.now() < readinessDeadline) {
       state = await readPublic3dState(page)
+      fallbackObserved ||= state.markerPresent && fallback3dReady(state)
       if (public3dReady(state)) break
       await Bun.sleep(500)
     }
@@ -248,6 +253,16 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       console.log(`SANTA_FE_POST_PROMOTION_READINESS_TIMEOUT ATTEMPT=${attempt} STATE=${diagnostic}`)
       throw new QaFailure(`PUBLIC_3D_READINESS_TIMEOUT_${diagnostic}`)
     }
+
+    const primaryGraceDeadline = Math.min(readinessDeadline, Date.now() + CUSTOM_PRIMARY_GRACE_MS)
+    while (!custom3dReady(state) && Date.now() < primaryGraceDeadline) {
+      await Bun.sleep(500)
+      state = await readPublic3dState(page)
+      fallbackObserved ||= state.markerPresent && fallback3dReady(state)
+    }
+    ok(public3dReady(state), `PUBLIC_3D_REPRESENTATION_LOST_${public3dStateCode(state, { pmtiles206, contentRange, queryTransport })}`)
+    const customPrimaryReached = custom3dReady(state)
+    const convergenceElapsedMs = Date.now() - readinessStartedAt
 
     await Bun.sleep(700)
     const clip = await canvas.boundingBox()
@@ -266,7 +281,7 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
     const changedPixels = await pixelDelta(onImage, offImage)
 
     ok(pmtiles206 > 0 && contentRange > 0 && queryTransport > 0, 'PMTILES_RANGE_CONTRACT')
-    ok(changedPixels >= 8_000, `VISUAL_DELTA_TOO_LOW_${changedPixels}`)
+    ok(changedPixels >= MIN_VISUAL_CHANGED_PIXELS, `VISUAL_DELTA_TOO_LOW_${changedPixels}`)
     ok(pageErrors.length === 0, `PAGE_ERROR_${pageErrors[0] || 'UNKNOWN'}`)
     ok(consoleErrors.length === 0, `CONSOLE_ERROR_${consoleErrors[0] || 'UNKNOWN'}`)
 
@@ -281,6 +296,8 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       viewport: '390x844_SYNTHETIC_WEB',
       publicFixture: 'dense-central',
       representation: representation(state),
+      customPrimaryReached,
+      fallbackObservedDuringConvergence: fallbackObserved,
       customSourceCount: state.sourceCount,
       customSourceLoadedCount: state.sourceLoadedCount,
       customSourceBacked: state.sourceBacked,
@@ -292,10 +309,13 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       postToggleFallbackVisible: postToggleState.fallbackVisible,
       toggleControlOffConfirmed: true,
       visualChangedPixels: changedPixels,
+      minVisualChangedPixels: MIN_VISUAL_CHANGED_PIXELS,
       pmtiles206,
       contentRange,
       queryTransport,
       readinessBudgetMs: POST_3D_READINESS_BUDGET_MS,
+      customPrimaryGraceMs: CUSTOM_PRIMARY_GRACE_MS,
+      convergenceElapsedMs,
       pageErrorTotal: pageErrors.length,
       consoleErrorTotal: consoleErrors.length,
       screenshots: [
@@ -335,7 +355,7 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
 ok(browserEvidence, `POST_3D_BROWSER_FAILED_${firstFailure}`)
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v10',
+  schema: 'stracker.santa-fe-post-promotion-3d.v11',
   sourceSha: expectedSha,
   expectedVersionIdHash: digest(expectedVersionId),
   identityAttempts,
@@ -359,11 +379,13 @@ const result = {
     POST_PROMOTION_VALID_3D_REPRESENTATION: 'PASS',
     GENERIC_FALLBACK_WHEN_CUSTOM_NOT_HEALTHY: 'PASS',
     NO_FALLBACK_SUPPRESSION_BY_BOUNDARY_ONLY: 'PASS',
+    CUSTOM_PRIMARY_GRACE_WITHIN_READINESS_BUDGET: 'PASS',
     SOURCE_IDLE_TELEMETRY_NOT_REQUIRED_FOR_VISIBLE_GEOMETRY: 'PASS',
     POST_PROMOTION_PMTILES_QUERY_RANGE: 'PASS',
     POST_PROMOTION_BUILDING_TOGGLE_CONTROL_OFF: 'PASS',
     POST_PROMOTION_BUILDING_TOGGLE_VISUAL_DELTA: 'PASS',
     POST_PROMOTION_READINESS_BUDGET_UNCHANGED_90_SECONDS: 'PASS',
+    POST_PROMOTION_VISUAL_DELTA_THRESHOLD_UNCHANGED_8000: 'PASS',
     POST_PROMOTION_BROWSER_RETRY_BOUNDED: 'PASS',
     SWIFTSHADER_NOT_SOLE_EVIDENCE: 'PASS',
     A22_VISIBLE_3D_PENDING_HUMAN: 'PASS',
