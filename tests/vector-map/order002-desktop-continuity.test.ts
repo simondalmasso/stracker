@@ -29,7 +29,7 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain("map.getLayoutProperty(layerId, 'visibility') !== 'visible'")
     expect(source).toContain("map.getPaintProperty(layerId, 'fill-extrusion-opacity')")
     expect(source).toContain('const renderedFeatureCount = presentationChanged ? 0 : safeRenderedFeatureCount')
-    expect(source).toContain("memory.latestStatus?.providerState !== '3D_ACTIVE'")
+    expect(source).toContain("memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE'")
     expect(source).not.toContain("map.on('render'")
   })
 
