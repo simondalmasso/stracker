@@ -1,4 +1,5 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
+import { SANTA_FE_3D_LAYER_IDS } from './santa-fe-city-config'
 
 export const OPENFREEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 export const OPENFREEMAP_ATTRIBUTION = 'OpenFreeMap © OpenMapTiles Data from OpenStreetMap'
@@ -14,6 +15,8 @@ interface BuildingSourceCandidate {
   source: string
   sourceLayer: string
 }
+
+const CONTROLLED_BUILDING_LAYER_IDS = new Set<string>([STRACKER_GENERIC_BUILDING_LAYER_ID, ...SANTA_FE_3D_LAYER_IDS])
 
 function vectorSourceId(map: MapLibreMap): string | null {
   const sources = map.getStyle().sources ?? {}
@@ -46,7 +49,7 @@ function styleLayerVisibility(layer: { layout?: unknown } | undefined): 'visible
 
 function hideUncontrolledBuildingExtrusions(map: MapLibreMap): void {
   for (const layer of map.getStyle().layers ?? []) {
-    if (layer.id === STRACKER_GENERIC_BUILDING_LAYER_ID || layer.type !== 'fill-extrusion') continue
+    if (CONTROLLED_BUILDING_LAYER_IDS.has(layer.id) || layer.type !== 'fill-extrusion') continue
     const candidate = layer as typeof layer & { 'source-layer'?: string }
     const sourceLayer = candidate['source-layer']?.toLowerCase() ?? ''
     const identity = `${layer.id} ${sourceLayer}`.toLowerCase()
