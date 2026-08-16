@@ -210,9 +210,7 @@ function setDatasetValue(element: HTMLElement, key: string, value: string): void
 }
 
 function applyStatusDataset(element: HTMLElement, status: SantaFe3dRuntimeStatus): void {
-  if (element.getAttribute('data-buildings-3d-state') !== status.providerState) {
-    element.setAttribute('data-buildings-3d-state', status.providerState)
-  }
+  if (element.getAttribute('data-buildings-3d-state') !== status.providerState) element.setAttribute('data-buildings-3d-state', status.providerState)
   element.removeAttribute('data-buildings3d-state')
   setDatasetValue(element, 'customSourceCount', String(status.customSourceCount))
   setDatasetValue(element, 'customSourceLoadedCount', String(status.customSourceLoadedCount))
@@ -318,7 +316,6 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   const existingLayerIds = SANTA_FE_3D_LAYER_IDS.filter((layerId) => Boolean(map.getLayer(layerId)))
   const existingSourceIds = SANTA_FE_3D_SOURCE_IDS.filter((sourceId) => Boolean(map.getSource(sourceId)))
   const desiredOpacity = density === 'reduced' ? 0.82 : 0.94
-
   for (const layerId of existingLayerIds) {
     map.setLayoutProperty(layerId, 'visibility', 'visible')
     map.setPaintProperty(layerId, 'fill-extrusion-opacity', desiredOpacity)
@@ -329,14 +326,13 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   })
   const renderedFeatureCount = safeRenderedFeatureCount(map, existingLayerIds)
   const sourceFeatureCount = safeSourceFeatureCount(map, existingSourceIds)
-  const sourceBackedNow = loadedSourceIds.length > 0
-    && existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length
+  const sourceBackedNow = loadedSourceIds.length > 0 && existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length
   if (sourceBackedNow) {
     memory.sourceBacked = true
     memory.maxSourceLoadedCount = Math.max(memory.maxSourceLoadedCount, loadedSourceIds.length)
   }
   const sourceBacked = memory.sourceBacked
-  const healthyEvidence = sourceBackedNow && renderedFeatureCount > 0
+  const healthyEvidence = sourceBacked && renderedFeatureCount > 0
 
   if (healthyEvidence) {
     memory.consecutiveHealthy += 1
@@ -346,12 +342,12 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.consecutiveHealthy = 0
   }
   memory.healthy = healthyEvidence
-  if (!memory.healthy && (sourceBackedNow || sourceFeatureCount > 0) && memory.consecutiveEmpty <= 120) {
+  if (!memory.healthy && (sourceBacked || sourceFeatureCount > 0) && memory.consecutiveEmpty <= 120) {
     map.triggerRepaint()
     queueHealthProbe(map, memory)
   }
 
-  const sourceLoaded = loadedSourceIds.length > 0
+  const sourceLoaded = sourceBacked || loadedSourceIds.length > 0
   const providerState: SantaFe3dProviderState = memory.healthy
     ? '3D_ACTIVE'
     : sourceLoaded || sourceFeatureCount > 0
