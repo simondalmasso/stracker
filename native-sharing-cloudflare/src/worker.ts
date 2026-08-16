@@ -142,6 +142,12 @@ function cookieOwner(request: Request): string {
   return value
 }
 
+function cookieScope(request: Request, sessionId: string): string {
+  const value = request.headers.get('X-Stracker-Mobility-Scope') || sessionId
+  if (!TOKEN_PATTERN.test(value)) throw new HttpBoundaryError(404, 'NOT_FOUND')
+  return value
+}
+
 function namespace(env: NativeSharingRuntimeBindings) {
   if (!env.NATIVE_SHARING || typeof env.NATIVE_SHARING.getByName !== 'function') {
     throw new HttpBoundaryError(503, 'BINDING_UNAVAILABLE')
@@ -149,9 +155,9 @@ function namespace(env: NativeSharingRuntimeBindings) {
   return env.NATIVE_SHARING
 }
 
-function stubFor(env: NativeSharingRuntimeBindings, sessionId: string): NativeSharingRpcStub {
-  if (!SESSION_PATTERN.test(sessionId)) throw new HttpBoundaryError(404, 'NOT_FOUND')
-  return namespace(env).getByName(sessionId)
+function stubFor(env: NativeSharingRuntimeBindings, objectName: string): NativeSharingRpcStub {
+  if (!SESSION_PATTERN.test(objectName)) throw new HttpBoundaryError(404, 'NOT_FOUND')
+  return namespace(env).getByName(objectName)
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs = RPC_TIMEOUT_MS): Promise<T> {
@@ -205,11 +211,13 @@ async function createSession(request: Request, env: NativeSharingRuntimeBindings
 }
 
 async function createCookieSession(request: Request, env: NativeSharingRuntimeBindings): Promise<Response> {
-  const body = await readBoundedJsonBody<RuntimeCookieSessionRequest>(request, MAX_COOKIE_INPUT_BYTES + 2048)
+  const body = await readBoundedJsonBody<RuntimeCookieSessionRequest>(request, MAX_COOKIE_INPUT_BYTES + 4096)
   if (typeof body.raw !== 'string') throw new HttpBoundaryError(400, 'REQUEST_INVALID')
+  if (body.mobilityScope !== undefined && !TOKEN_PATTERN.test(body.mobilityScope)) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
   const sessionId = generateCapability()
   const ownerToken = generateCapability()
-  const result = await withTimeout(stubFor(env, sessionId).importCookieSession({
+  const mobilityScope = body.mobilityScope || sessionId
+  const result = await withTimeout(stubFor(env, mobilityScope).importCookieSession({
     sessionId,
     ownerVerifier: await capabilityVerifier(ownerToken),
     raw: body.raw,
@@ -220,28 +228,42 @@ async function createCookieSession(request: Request, env: NativeSharingRuntimeBi
     status: 'ok',
     sessionId,
     ownerToken,
-    storagePolicy: 'memory-only',
+    mobilityScope,
+    storagePolicy: 'encrypted-durable',
     ...result.value,
   }
   return success(payload, 201)
 }
 
+function historySince(url: URL): string {
+  if (url.searchParams.size !== 1 || url.searchParams.getAll('since').length !== 1) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
+  const since = url.searchParams.get('since') || ''
+  if (!Number.isFinite(Date.parse(since))) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
+  return since
+}
+
 async function routeCookieApi(request: Request, env: NativeSharingRuntimeBindings, url: URL): Promise<Response> {
-  if (url.search) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
   ensureSameOrigin(request, url)
   if (url.pathname === '/api/cookie-sessions') {
+    if (url.search) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
     if (request.method !== 'POST') throw new HttpBoundaryError(405, 'METHOD_NOT_ALLOWED')
     return createCookieSession(request, env)
   }
-  const match = /^\/api\/cookie-sessions\/([A-Za-z0-9_-]{43})(?:\/(status|point|refresh))?$/.exec(url.pathname)
+  const match = /^\/api\/cookie-sessions\/([A-Za-z0-9_-]{43})(?:\/(status|point|history|refresh|mobility-memory))?$/.exec(url.pathname)
   if (!match) throw new HttpBoundaryError(404, 'NOT_FOUND')
   const sessionId = match[1]
   const operation = match[2] ?? 'session'
+  if (operation !== 'history' && url.search) throw new HttpBoundaryError(400, 'REQUEST_INVALID')
   const ownerToken = cookieOwner(request)
-  const stub = stubFor(env, sessionId)
+  const stub = stubFor(env, cookieScope(request, sessionId))
   if (operation === 'status' && request.method === 'GET') return unwrap(await withTimeout(stub.getCookieSessionStatus(sessionId, ownerToken)))
   if (operation === 'point' && request.method === 'GET') return unwrap(await withTimeout(stub.getCookieSessionPoint(sessionId, ownerToken)))
+  if (operation === 'history' && request.method === 'GET') return unwrap(await withTimeout(stub.getCookieSessionHistory(sessionId, ownerToken, historySince(url)), 12_000))
   if (operation === 'refresh' && request.method === 'POST') return unwrap(await withTimeout(stub.refreshCookieSession(sessionId, ownerToken), 12_000))
+  if (operation === 'mobility-memory' && request.method === 'DELETE') {
+    const result = await withTimeout(stub.clearCookieMobility(sessionId, ownerToken))
+    return result.ok ? success({ status: 'ok', state: 'cleared' }) : errorResponse(result.status, result.code)
+  }
   if (operation === 'session' && request.method === 'DELETE') {
     const result = await withTimeout(stub.deleteCookieSession(sessionId, ownerToken))
     return result.ok ? success({ status: 'ok', state: 'revoked' }) : errorResponse(result.status, result.code)

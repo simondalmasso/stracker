@@ -1,6 +1,8 @@
 import type { CreateSessionInput, NativeSharingSession } from '../../native-sharing/src/contracts.js'
 import { buildViewerCapability, capabilityVerifier, generateCapability } from '../../native-sharing/src/security.js'
-import { CookieSessionMemoryRuntime, type CookieProbe } from '../../native-sharing-cloudflare/src/cookie-session.js'
+import { DurableCookieSessionRuntime } from '../../native-sharing-cloudflare/src/cookie-session-durable.js'
+import { SqliteCookieSessionStore } from '../../native-sharing-cloudflare/src/cookie-session-store.js'
+import type { CookieProbe } from '../../native-sharing-cloudflare/src/cookie-session.js'
 import type {
   NativeSharingNamespaceBinding,
   NativeSharingRpcStub,
@@ -15,18 +17,22 @@ export interface TestSessionObject {
   sql: BunSqlExecutor
   store: SqliteNativeSharingStore
   runtime: NativeSharingSessionRuntime
-  cookieRuntime: CookieSessionMemoryRuntime
+  cookieStore: SqliteCookieSessionStore
+  cookieRuntime: DurableCookieSessionRuntime
   stub: NativeSharingRpcStub
 }
 
-const noLocationProbe: CookieProbe = async () => ({ ok: true, state: 'no_location', point: null })
+const TEST_COOKIE_KEY = 'synthetic-cookie-encryption-key-for-tests-only-0001'
+const noLocationProbe: CookieProbe = async () => ({ ok: true, state: 'no_location', point: null, points: [] })
 
 export function createTestSessionObject(now: () => Date = () => new Date()): TestSessionObject {
   const sql = new BunSqlExecutor()
   const store = new SqliteNativeSharingStore(sql)
   store.initializeSchema()
   const runtime = new NativeSharingSessionRuntime(store, now)
-  const cookieRuntime = new CookieSessionMemoryRuntime(noLocationProbe)
+  const cookieStore = new SqliteCookieSessionStore(sql)
+  cookieStore.initializeSchema()
+  const cookieRuntime = new DurableCookieSessionRuntime(cookieStore, TEST_COOKIE_KEY, noLocationProbe, now)
   const stub: NativeSharingRpcStub = {
     createSession: (input) => runtime.createSession(input),
     appendPoint: (sessionId, emitterToken, point) => runtime.appendPoint(sessionId, emitterToken, point),
@@ -39,10 +45,12 @@ export function createTestSessionObject(now: () => Date = () => new Date()): Tes
     importCookieSession: (input) => cookieRuntime.importSession(input),
     getCookieSessionStatus: (sessionId, token) => cookieRuntime.status(sessionId, token),
     getCookieSessionPoint: (sessionId, token) => cookieRuntime.point(sessionId, token),
+    getCookieSessionHistory: (sessionId, token, sinceIso) => cookieRuntime.history(sessionId, token, sinceIso),
     refreshCookieSession: (sessionId, token) => cookieRuntime.refresh(sessionId, token),
+    clearCookieMobility: (sessionId, token) => cookieRuntime.clearMobility(sessionId, token),
     deleteCookieSession: (sessionId, token) => cookieRuntime.delete(sessionId, token),
   }
-  return { sql, store, runtime, cookieRuntime, stub }
+  return { sql, store, runtime, cookieStore, cookieRuntime, stub }
 }
 
 export class TestNativeSharingNamespace implements NativeSharingNamespaceBinding {

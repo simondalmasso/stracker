@@ -8,6 +8,7 @@ import type {
   ViewerPointsResponse,
   ViewerStatusResponse,
 } from '../../native-sharing/src/contracts.js'
+import type { CookieHistoryResponse } from './cookie-session-durable.js'
 import type { CookieSessionImportInput, CookieSessionPointResponse, CookieSessionPublicStatus } from './cookie-session.js'
 
 export type RuntimeErrorCode =
@@ -70,7 +71,9 @@ export interface NativeSharingRpcStub {
   importCookieSession(input: CookieSessionImportInput): Promise<RpcResult<CookieSessionPublicStatus>>
   getCookieSessionStatus(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>>
   getCookieSessionPoint(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPointResponse>>
+  getCookieSessionHistory(sessionId: string, ownerToken: string, sinceIso: string): Promise<RpcResult<CookieHistoryResponse>>
   refreshCookieSession(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>>
+  clearCookieMobility(sessionId: string, ownerToken: string): Promise<RpcResult<null>>
   deleteCookieSession(sessionId: string, ownerToken: string): Promise<RpcResult<null>>
 }
 
@@ -102,6 +105,7 @@ export interface RuntimeViewerLogoutRequest {
 export interface RuntimeCookieSessionRequest {
   raw: string
   durationMs?: number
+  mobilityScope?: string
 }
 
 export type { CreateSessionResponse }

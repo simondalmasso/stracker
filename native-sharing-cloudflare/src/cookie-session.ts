@@ -1,30 +1,37 @@
 import { capabilityVerifier } from '../../native-sharing/src/security.js'
 import type { RpcResult, RuntimeErrorCode } from './runtime-contracts.js'
 
-export const COOKIE_POLICY_VERSION = 'google-maps-cookie-minimum-v2'
+export const COOKIE_POLICY_VERSION = 'google-maps-cookie-durable-v1'
 export const MAX_COOKIE_INPUT_BYTES = 64 * 1024
-export const DEFAULT_COOKIE_SESSION_DURATION_MS = 60 * 60 * 1000
+export const DEFAULT_COOKIE_SESSION_DURATION_MS = 24 * 60 * 60 * 1000
 export const MIN_COOKIE_SESSION_DURATION_MS = 5 * 60 * 1000
-export const MAX_COOKIE_SESSION_DURATION_MS = 4 * 60 * 60 * 1000
+export const MAX_COOKIE_SESSION_DURATION_MS = 24 * 60 * 60 * 1000
 export const COOKIE_REFRESH_MIN_INTERVAL_MS = 10_000
+export const COOKIE_SAMPLE_INTERVAL_MS = 60_000
+export const COOKIE_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000
+export const COOKIE_MOBILITY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const PROVIDER_TIMEOUT_MS = 8_000
 const PROVIDER_URL = 'https://www.google.com/maps/rpc/locationsharing/read?authuser=0&hl=es&gl=ar&pb='
-const AUTH_COOKIE_NAMES = new Set(['SID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID'])
+const AUTH_COOKIE_NAMES = new Set(['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID'])
 const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const GOOGLE_DOMAIN = /^(?:[a-z0-9-]+\.)*google\.com$/i
 const TOKEN = /^[A-Za-z0-9_-]{43}$/
 
 export type CookieFormat = 'COOKIE_EDITOR_JSON' | 'WRAPPED_JSON' | 'COOKIE_HEADER_STRING' | 'NETSCAPE' | 'JSON_NAME_VALUE_MAP'
 export type CookieProviderState = 'ready' | 'no_location'
+export type CookieSessionState = CookieProviderState | 'auth_expired'
+export type CookieSourceQuality = 'provider_timestamp' | 'stracker_observed_at'
 
 export interface CookiePoint {
   lat: number
   lng: number
   accuracyM: number | null
   capturedAt: string
+  observedAt?: string
+  sourceQuality?: CookieSourceQuality
 }
 
-interface NormalizedCookie {
+export interface NormalizedCookie {
   name: string
   value: string
   domain: string
@@ -38,8 +45,10 @@ export interface ParsedCookieSession {
   cookies: NormalizedCookie[]
   format: CookieFormat
   expiresAt: number | null
+  authExpiresAt: number | null
   totalParsed: number
   expiredDropped: number
+  invalidDropped: number
   retainedCount: number
 }
 
@@ -51,12 +60,13 @@ export interface CookieSessionImportInput {
 }
 
 export interface CookieSessionPublicStatus {
-  state: CookieProviderState
+  state: CookieSessionState
   policyVersion: string
   format: CookieFormat
   cookieCount: number
   totalParsed: number
   expiredDropped: number
+  invalidDropped: number
   retainedCount: number
   expiresAt: string
   validatedAt: string
@@ -64,7 +74,7 @@ export interface CookieSessionPublicStatus {
 }
 
 export interface CookieSessionPointResponse {
-  state: CookieProviderState
+  state: CookieSessionState
   point: CookiePoint | null
   validatedAt: string
 }
@@ -73,18 +83,20 @@ export interface CookieSessionCreateResponse extends CookieSessionPublicStatus {
   status: 'ok'
   sessionId: string
   ownerToken: string
-  storagePolicy: 'memory-only'
+  mobilityScope: string
+  storagePolicy: 'encrypted-durable'
 }
 
 export type CookieProbeResult =
-  | { ok: true; state: CookieProviderState; point: CookiePoint | null }
+  | { ok: true; state: CookieProviderState; point: CookiePoint | null; points?: readonly CookiePoint[] }
   | { ok: false; status: number; code: RuntimeErrorCode }
 
 export type CookieProbe = (cookies: readonly NormalizedCookie[]) => Promise<CookieProbeResult>
 
-class CookieContractError extends Error {
+export class CookieContractError extends Error {
   constructor(readonly status: number, readonly code: RuntimeErrorCode) {
     super(code)
+    this.name = 'CookieContractError'
   }
 }
 
@@ -168,6 +180,12 @@ function parseHeader(text: string): unknown[] {
   return rows
 }
 
+function rawCookieName(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const name = String((value as Record<string, unknown>).name ?? '').trim()
+  return COOKIE_NAME.test(name) ? name : null
+}
+
 function expired(cookie: NormalizedCookie, now: number): boolean {
   return cookie.expiresAt !== null && cookie.expiresAt <= now
 }
@@ -203,25 +221,45 @@ export function parseCookieSession(raw: string): ParsedCookieSession {
   }
 
   const now = Date.now()
-  const normalized = rows.map(normalizeCookie)
-  const authSeen = normalized.some((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
+  const normalized: NormalizedCookie[] = []
+  let invalidDropped = 0
+  let authSeen = false
+  for (const row of rows) {
+    const rawName = rawCookieName(row)
+    if (rawName && AUTH_COOKIE_NAMES.has(rawName)) authSeen = true
+    try {
+      normalized.push(normalizeCookie(row))
+    } catch (error) {
+      if (error instanceof CookieContractError && rawName && !AUTH_COOKIE_NAMES.has(rawName)) {
+        invalidDropped += 1
+        continue
+      }
+      throw error
+    }
+  }
+  if (normalized.some((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))) authSeen = true
+
   const deduplicated = new Map<string, NormalizedCookie>()
   for (const cookie of normalized) {
     const key = `${cookie.name}\n${cookie.domain}\n${cookie.path}`
     deduplicated.set(key, preferCookie(deduplicated.get(key), cookie, now))
   }
   const cookies = [...deduplicated.values()].filter((cookie) => !expired(cookie, now))
-  const validAuthRemains = cookies.some((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
-  if (!validAuthRemains) {
+  const authCookies = cookies.filter((cookie) => AUTH_COOKIE_NAMES.has(cookie.name))
+  if (!authCookies.length) {
     throw new CookieContractError(authSeen ? 401 : 400, authSeen ? 'COOKIE_AUTH_EXPIRED' : 'COOKIE_SET_INCOMPLETE')
   }
-  const expirations = cookies.map((cookie) => cookie.expiresAt).filter((value): value is number => value !== null)
+  const authExpiresAt = authCookies.some((cookie) => cookie.expiresAt === null)
+    ? null
+    : Math.max(...authCookies.map((cookie) => cookie.expiresAt as number))
   return {
     cookies,
     format,
-    expiresAt: expirations.length ? Math.min(...expirations) : null,
-    totalParsed: normalized.length,
+    expiresAt: authExpiresAt,
+    authExpiresAt,
+    totalParsed: rows.length,
     expiredDropped: normalized.filter((cookie) => expired(cookie, now)).length,
+    invalidDropped,
     retainedCount: cookies.length,
   }
 }
@@ -230,7 +268,7 @@ function cookieHeader(cookies: readonly NormalizedCookie[]): string {
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
 }
 
-function coordinatesFromProvider(body: string): CookiePoint | null {
+function coordinatesFromProvider(body: string, observedAt: string): CookiePoint | null {
   const patterns = [
     /\[null,(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)\]/g,
     /\[null,\[(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)\]\]/g,
@@ -241,7 +279,14 @@ function coordinatesFromProvider(body: string): CookiePoint | null {
       const lng = Number(match[1])
       const lat = Number(match[2])
       if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
-        return { lat, lng, accuracyM: null, capturedAt: new Date().toISOString() }
+        return {
+          lat,
+          lng,
+          accuracyM: null,
+          capturedAt: observedAt,
+          observedAt,
+          sourceQuality: 'stracker_observed_at',
+        }
       }
     }
   }
@@ -274,8 +319,9 @@ export async function probeGoogleCookieSession(cookies: readonly NormalizedCooki
       return { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' }
     }
     if (!response.ok) return { ok: false, status: 503, code: 'COOKIE_PROVIDER_UNAVAILABLE' }
-    const point = coordinatesFromProvider(body)
-    return point ? { ok: true, state: 'ready', point } : { ok: true, state: 'no_location', point: null }
+    const observedAt = new Date().toISOString()
+    const point = coordinatesFromProvider(body, observedAt)
+    return point ? { ok: true, state: 'ready', point, points: [point] } : { ok: true, state: 'no_location', point: null, points: [] }
   } catch {
     return { ok: false, status: 503, code: 'COOKIE_PROVIDER_UNAVAILABLE' }
   } finally {
@@ -290,6 +336,7 @@ interface MemorySession {
   format: CookieFormat
   totalParsed: number
   expiredDropped: number
+  invalidDropped: number
   retainedCount: number
   expiresAtMs: number
   validatedAt: string
@@ -306,6 +353,7 @@ function metadata(session: MemorySession): CookieSessionPublicStatus {
     cookieCount: session.cookies.length,
     totalParsed: session.totalParsed,
     expiredDropped: session.expiredDropped,
+    invalidDropped: session.invalidDropped,
     retainedCount: session.retainedCount,
     expiresAt: new Date(session.expiresAtMs).toISOString(),
     validatedAt: session.validatedAt,
@@ -341,7 +389,7 @@ export class CookieSessionMemoryRuntime {
       if (!probe.ok) return probe
       const now = Date.now()
       const duration = Math.max(MIN_COOKIE_SESSION_DURATION_MS, Math.min(MAX_COOKIE_SESSION_DURATION_MS, Math.floor(input.durationMs || DEFAULT_COOKIE_SESSION_DURATION_MS)))
-      const expiresAtMs = Math.min(now + duration, parsed.expiresAt ?? Number.POSITIVE_INFINITY)
+      const expiresAtMs = Math.min(now + duration, parsed.authExpiresAt ?? Number.POSITIVE_INFINITY)
       if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) return { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' }
       this.session = {
         sessionId: input.sessionId,
@@ -350,6 +398,7 @@ export class CookieSessionMemoryRuntime {
         format: parsed.format,
         totalParsed: parsed.totalParsed,
         expiredDropped: parsed.expiredDropped,
+        invalidDropped: parsed.invalidDropped,
         retainedCount: parsed.retainedCount,
         expiresAtMs,
         validatedAt: new Date(now).toISOString(),
@@ -372,14 +421,7 @@ export class CookieSessionMemoryRuntime {
   async point(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPointResponse>> {
     const authorized = await this.authorized(sessionId, ownerToken)
     if (!authorized.ok) return authorized
-    return {
-      ok: true,
-      value: {
-        state: authorized.value.state,
-        point: authorized.value.point,
-        validatedAt: authorized.value.validatedAt,
-      },
-    }
+    return { ok: true, value: { state: authorized.value.state, point: authorized.value.point, validatedAt: authorized.value.validatedAt } }
   }
 
   async refresh(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>> {
