@@ -19,12 +19,15 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).not.toContain('const online = () => { void forceRefresh() }')
   })
 
-  test('Santa Fe custom 3D owns eligible presentation while health requires visible rendered geometry', async () => {
+  test('Santa Fe custom 3D only owns presentation when visibly healthy and otherwise fails over', async () => {
     const source = await Bun.file(cityRuntimePath).text()
-    expect(source).toContain('const healthyEvidence = renderedFeatureCount > 0')
-    expect(source).toContain("const providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_LOADING'")
-    expect(source).toContain('genericFallbackVisible: false')
-    expect(source).toContain('return true')
+    expect(source).toContain('const healthyEvidence = sourceBacked && renderedFeatureCount > 0')
+    expect(source).toContain("const providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_FALLBACK'")
+    expect(source).toContain('genericFallbackVisible: !memory.healthy')
+    expect(source).toContain('return memory.healthy')
+    expect(source).toContain('loadedSourceIds.length > 0 || renderedFeatureCount > 0')
+    expect(source).not.toContain("providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_LOADING'")
+    expect(source).not.toContain('genericFallbackVisible: false,\n    styleGeneration: memory.styleGeneration,\n  })\n  return true')
     expect(source).toContain('function ensureCustomLayerPresentation')
     expect(source).toContain("map.getLayoutProperty(layerId, 'visibility') !== 'visible'")
     expect(source).toContain("map.getPaintProperty(layerId, 'fill-extrusion-opacity')")
@@ -33,28 +36,28 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).not.toContain("map.on('render'")
   })
 
-  test('generic fallback also avoids no-op layout/light mutations during custom 3D health probing', async () => {
+  test('generic fallback avoids no-op mutations and never treats Santa Fe custom layers as fallback candidates', async () => {
     const source = await Bun.file(openFreeMapStylePath).text()
+    expect(source).toContain('CONTROLLED_BUILDING_LAYER_IDS')
+    expect(source).toContain('...SANTA_FE_3D_LAYER_IDS')
+    expect(source).toContain('if (CONTROLLED_BUILDING_LAYER_IDS.has(layer.id)) continue')
     expect(source).toContain('function styleLayerVisibility')
     expect(source).toContain("styleLayerVisibility(layer) !== 'none'")
     expect(source).toContain("const desiredVisibility = options.enabled && options.density !== 'off' ? 'visible' : 'none'")
     expect(source).toContain('const currentVisibility = styleLayerVisibility(existingGenericLayer)')
     expect(source).toContain('if (currentVisibility !== desiredVisibility)')
-    expect(source).toContain("if (desiredVisibility === 'visible') configureSceneLight(map)")
   })
 
-  test('post-promotion 3D keeps the existing 90 second budget and treats rendered geometry as acceptance evidence', async () => {
+  test('post-promotion 3D keeps the 90 second budget and accepts only a real custom or generic 3D representation', async () => {
     const source = await Bun.file(post3dQaPath).text()
     expect(source).toContain('const POST_3D_READINESS_BUDGET_MS = 90_000')
     expect(source).toContain('PUBLIC_3D_READINESS_TIMEOUT_')
     expect(source).toContain('SANTA_FE_POST_PROMOTION_READINESS_TIMEOUT')
-    expect(source).toContain('state.renderedFeatures > 0')
-    expect(source).not.toContain('&& state.sourceBacked\n    && state.layerCount')
-    expect(source).toContain('SOURCE_IDLE_TELEMETRY_NOT_REQUIRED_FOR_VISIBLE_GEOMETRY')
-    expect(source).toContain('sourceLoadedCount')
-    expect(source).toContain('sourceBacked')
-    expect(source).toContain('querySourceFeatures')
-    expect(source).toContain('PM206-')
+    expect(source).toContain('3D_ACTIVE')
+    expect(source).toContain('3D_FALLBACK')
+    expect(source).toContain('fallbackVisible')
+    expect(source).toContain('VISUAL_DELTA_TOO_LOW_')
+    expect(source).toContain('PMTILES_RANGE_CONTRACT')
     expect(source).not.toContain('POST_3D_READINESS_BUDGET_MS = 120_000')
   })
 
@@ -75,6 +78,8 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(qa).toContain('GHOSTRAIL_SURVIVES_CAMERA_INTERACTION')
     expect(qa).toContain('CAMERA_INTERACTION_DOES_NOT_DELETE_SESSION')
     expect(qa).toContain('BACKGROUND_UI_POLL_DOES_NOT_FORCE_GOOGLE_PROBE')
+    expect(qa).toContain("buildingState === '3D_ACTIVE'")
+    expect(qa).toContain("buildingState === '3D_FALLBACK'")
     expect(qa).toContain('realCookiesUsed: false')
     expect(qa).toContain('privateDataUsed: false')
   })
