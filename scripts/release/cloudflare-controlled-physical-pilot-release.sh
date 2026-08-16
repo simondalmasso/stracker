@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 
 # Static release-contract markers inspected by CI:
-# PRIVATE_BACKEND_REUSED_UNCHANGED
+# ORDER001_PRIVATE_BACKEND_EXACT_HEAD
+# ORDER001_BACKEND_ENCRYPTION_SECRET_BINDING
+# ORDER001_BACKEND_ROLLBACK
 # ${CANDIDATE_VERSION}@0%
 # ${CANDIDATE_VERSION}@1%
 # ${CANDIDATE_VERSION}@100%
@@ -38,6 +40,10 @@ replace_once(
     'PMTILES_RUN_WORKER_FIRST_ASSERTION',
 )
 replace_once("print('PMTILES_RUN_WORKER_FIRST=NO')", "print('PMTILES_RUN_WORKER_FIRST=YES')", 'PMTILES_RUN_WORKER_FIRST_MARKER')
+replace_once("print('PRIVATE_BACKEND_REUSED_UNCHANGED=PASS')", "print('ORDER001_PRIVATE_BACKEND_EXACT_HEAD=PASS')", 'BACKEND_REUSED_MARKER')
+replace_once("print('BACKEND_REDEPLOYED=NO')", "print('BACKEND_REDEPLOYED=YES')", 'BACKEND_REDEPLOY_MARKER')
+replace_once("  'backendReusedUnchanged': True,", "  'backendReusedUnchanged': False,\n  'backendExactHead': True,", 'BACKEND_EVIDENCE_REUSED')
+replace_once("  'backendRedeployed': False,", "  'backendRedeployed': True,", 'BACKEND_EVIDENCE_REDEPLOYED')
 replace_once(
     'AFFINITY_QA_OUTPUT="$STATE_DIR/santa-fe-affinity-canary.json"',
     'AFFINITY_QA_OUTPUT="$STATE_DIR/santa-fe-affinity-canary.json"\nPOST_3D_QA_OUTPUT="$STATE_DIR/santa-fe-post-promotion-3d.json"',
@@ -115,7 +121,7 @@ replace_once(
 )
 replace_once(
     "  'stagedReleaseSequence': ['zero-percent-metadata', 'one-percent-version-affinity-static-and-render', 'one-hundred-percent-post-promotion'],",
-    "  'stagedReleaseSequence': ['zero-percent-metadata', 'one-percent-version-affinity-static', 'one-hundred-percent-post-promotion-render'],",
+    "  'stagedReleaseSequence': ['private-backend-exact-head', 'zero-percent-metadata', 'one-percent-version-affinity-static', 'one-hundred-percent-post-promotion-render'],",
     'RELEASE_EVIDENCE_STAGED_SEQUENCE',
 )
 replace_once(
@@ -136,7 +142,7 @@ replace_once(
 replace_once("  'apiGates': api['gates'],", "  'apiGates': api_gates,", 'RELEASE_EVIDENCE_API_GATE_VERSION')
 replace_once(
     "  'secretsExposed': False,",
-    "  'secretsExposed': False,\n  'rawVersionIdRetained': False,",
+    "  'secretsExposed': False,\n  'rawVersionIdRetained': False,\n  'backendEncryptionSecretPresent': True,\n  'backendEncryptionSecretRetainedInEvidence': False,",
     'RELEASE_EVIDENCE_RAW_VERSION_ATTESTATION',
 )
 replace_once(
@@ -151,6 +157,8 @@ replace_once(
 )
 
 required = [
+    'ORDER001_PRIVATE_BACKEND_EXACT_HEAD=PASS',
+    'BACKEND_REDEPLOYED=YES',
     'ZERO_PERCENT_OVERRIDE_QA=PASS',
     'santa-fe-zero-percent-preflight.ts',
     'santa-fe-affinity-canary-qa.ts',
@@ -177,6 +185,7 @@ if source.index("PUBLIC_POST_PROMOTION_QA=PASS") > source.index("POST_PROMOTION_
     raise SystemExit('POST_3D_MUST_RUN_AFTER_BASE_POST_PROMOTION_QA')
 Path(sys.argv[2]).write_text(source)
 print('RELEASE_RUNTIME_PATCH_EXACT_ONCE=PASS')
+print('ORDER001_BACKEND_RELEASE_PATCH=PASS')
 print('ZERO_PERCENT_OVERRIDE_PREFLIGHT_RESTORED=PASS')
 print('POST_PROMOTION_QA_FAIL_FAST=PASS')
 print('POST_PROMOTION_SANTA_FE_3D_QA_FAIL_FAST=PASS')
@@ -186,4 +195,18 @@ print('RELEASE_ARTIFACT_VERSION_ID_SANITIZATION=PASS')
 PY
 
 chmod 700 "$TEMP"
-exec bash "$TEMP"
+backend_committed=0
+backend_rollback() {
+  local code=$?
+  if [[ "$backend_committed" == '1' ]]; then
+    bash scripts/release/order001-backend-rollback.sh || true
+  fi
+  exit "$code"
+}
+trap backend_rollback ERR
+bash scripts/release/order001-backend-release.sh
+backend_committed=1
+bash "$TEMP"
+backend_committed=0
+trap - ERR
+echo 'ORDER001_BACKEND_ROLLBACK=NOT_REQUIRED'
