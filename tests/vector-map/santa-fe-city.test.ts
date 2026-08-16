@@ -35,12 +35,12 @@ describe('Santa Fe dense city 3D contract', () => {
     expect(isInsideSantaFe3dBounds({ lng: -58.38, lat: -34.60 })).toBe(false)
   })
 
-  test('creates light, height-varying extrusion layers below labels', () => {
+  test('creates light, height-varying extrusion layers below labels without a max-zoom disappearance boundary', () => {
     const layer = santaFe3dLayerDefinition('source', 'layer', 'full')
     expect(layer.type).toBe('fill-extrusion')
     expect(layer['source-layer']).toBe(SANTA_FE_3D_SOURCE_LAYER)
     expect(layer.layout?.visibility).toBe('none')
-    expect(layer.paint?.['fill-extrusion-vertical-gradient']).toBe(true)
+    expect(layer.maxzoom).toBeUndefined()
     expect(JSON.stringify(layer.paint?.['fill-extrusion-color'])).toContain('#e6e7e3')
     expect(JSON.stringify(layer.paint?.['fill-extrusion-height'])).toContain('height')
   })
