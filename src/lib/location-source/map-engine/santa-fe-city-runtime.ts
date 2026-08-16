@@ -11,6 +11,7 @@ import {
   santaFe3dSourceDefinition,
   type SantaFe3dDensity,
 } from './santa-fe-city-config'
+import { configureBuildings3d } from './openfreemap-style'
 import { SameOriginQueryRangeSource } from './pmtiles-query-source'
 
 let protocol: Protocol | null = null
@@ -170,6 +171,9 @@ function installHealthObservers(map: MapLibreMap, memory: RuntimeHealthMemory): 
     if (!isSantaFe3dSourceId(event.sourceId)) return
     queueHealthProbe(map, memory)
   })
+  map.on('render', () => {
+    if (memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE') queueHealthProbe(map, memory)
+  })
   map.on('idle', () => {
     if (memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE') queueHealthProbe(map, memory)
   })
@@ -294,6 +298,7 @@ function hideCustomLayers(map: MapLibreMap): number {
 export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRuntimeOptions): boolean {
   const inside = isInsideSantaFe3dBounds(options.center)
   const eligible = options.enabled && options.density !== 'off' && inside
+  const density: Exclude<SantaFe3dDensity, 'off'> = options.density === 'off' ? 'reduced' : options.density
   const memory = memoryFor(map)
   memory.lastOptions = { enabled: options.enabled, density: options.density, center: { ...options.center }, origin: options.origin }
   installHealthObservers(map, memory)
@@ -305,6 +310,8 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.healthy = false
     memory.sourceBacked = false
     memory.maxSourceLoadedCount = 0
+    const fallbackVisible = options.enabled && options.density !== 'off'
+    configureBuildings3d(map, { enabled: fallbackVisible, density })
     publishStatus(map, {
       eligible: false,
       configured: customLayerCount > 0,
@@ -312,19 +319,18 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
       sourceBacked: false,
       rendered: false,
       healthy: false,
-      providerState: options.enabled && options.density !== 'off' ? '3D_FALLBACK' : '3D_OFF',
+      providerState: fallbackVisible ? '3D_FALLBACK' : '3D_OFF',
       customSourceCount: SANTA_FE_3D_SOURCE_IDS.length,
       customSourceLoadedCount: 0,
       customLayerCount,
       customRenderedFeatureCount: 0,
       customQuerySourceFeatureCount: 0,
-      genericFallbackVisible: options.enabled && options.density !== 'off',
+      genericFallbackVisible: fallbackVisible,
       styleGeneration: memory.styleGeneration,
     })
     return false
   }
 
-  const density = options.density === 'off' ? 'reduced' : options.density
   ensureSantaFeCity(map, options.origin, density)
   const existingLayerIds = SANTA_FE_3D_LAYER_IDS.filter((layerId) => Boolean(map.getLayer(layerId)))
   const existingSourceIds = SANTA_FE_3D_SOURCE_IDS.filter((sourceId) => Boolean(map.getSource(sourceId)))
@@ -353,6 +359,8 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.consecutiveHealthy = 0
   }
   memory.healthy = healthyEvidence
+  configureBuildings3d(map, { enabled: !memory.healthy, density })
+
   if (!memory.healthy && (presentationChanged || sourceBacked || sourceFeatureCount > 0) && memory.consecutiveEmpty <= 120) {
     map.triggerRepaint()
     queueHealthProbe(map, memory)
