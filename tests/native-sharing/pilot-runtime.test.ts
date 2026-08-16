@@ -70,11 +70,11 @@ describe('controlled physical pilot runtime', () => {
     expect(stationaryReduced.animate).toBe(false)
   })
 
-  test('uses one controlled generic extrusion without hiding controlled Santa Fe 3D layers', () => {
+  test('uses one controlled generic extrusion without hiding or selecting controlled Santa Fe 3D layers', () => {
     const customSantaFeLayerId = SANTA_FE_3D_LAYER_IDS[0]
     const layers: Array<Record<string, unknown>> = [
-      { id: 'building-3d-native', type: 'fill-extrusion', source: 'openfreemap', 'source-layer': 'building' },
       { id: customSantaFeLayerId, type: 'fill-extrusion', source: 'santa-fe-custom', 'source-layer': 'santa_fe_buildings_3d', layout: { visibility: 'visible' } },
+      { id: 'building-3d-native', type: 'fill-extrusion', source: 'openfreemap', 'source-layer': 'building' },
       { id: 'place-label', type: 'symbol', source: 'openfreemap', 'source-layer': 'place' },
     ]
     const visibility = new Map<string, string>()
