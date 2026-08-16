@@ -9,6 +9,7 @@ const expectedSha = process.env.STRACKER_EXPECTED_SHA || ''
 const expectedVersionId = process.env.STRACKER_EXPECTED_VERSION_ID || ''
 const output = process.env.STRACKER_POST_3D_QA_OUTPUT || '/tmp/stracker-santa-fe-post-promotion-3d.json'
 const screenshotDir = process.env.STRACKER_POST_3D_SCREENSHOT_DIR || '/tmp'
+const POST_3D_READINESS_BUDGET_MS = 90_000
 
 class QaFailure extends Error {
   constructor(readonly code: string) { super(code) }
@@ -28,6 +29,71 @@ function safe(value: unknown): string {
     .replace(/[A-Za-z0-9_-]{43}(?:\.[A-Za-z0-9_-]{43})?/g, '[VALUE]')
     .replace(/[^A-Za-z0-9_[\]-]+/g, '_')
     .slice(0, 180)
+}
+
+type Public3dState = {
+  providerState: string
+  buildingState: string
+  sourceCount: number
+  sourceLoadedCount: number
+  sourceBacked: boolean
+  layerCount: number
+  renderedFeatures: number
+  querySourceFeatures: number
+  fallbackVisible: boolean
+  markerPresent: boolean
+  styleGeneration: number
+}
+
+function public3dReady(state: Public3dState): boolean {
+  return state.buildingState === '3D_ACTIVE'
+    && state.sourceBacked
+    && state.layerCount >= 4
+    && state.renderedFeatures > 0
+    && !state.fallbackVisible
+    && state.markerPresent
+}
+
+function public3dStateCode(state: Public3dState | null, transport: { pmtiles206: number; contentRange: number; queryTransport: number }): string {
+  if (!state) return `NO_STATE_PM206-${transport.pmtiles206}_CR-${transport.contentRange}_QT-${transport.queryTransport}`
+  return [
+    `PROVIDER-${state.providerState}`,
+    `BUILDING-${state.buildingState}`,
+    `SOURCES-${state.sourceCount}`,
+    `LOADED-${state.sourceLoadedCount}`,
+    `BACKED-${state.sourceBacked ? 'YES' : 'NO'}`,
+    `LAYERS-${state.layerCount}`,
+    `RENDERED-${state.renderedFeatures}`,
+    `QUERY-${state.querySourceFeatures}`,
+    `FALLBACK-${state.fallbackVisible ? 'YES' : 'NO'}`,
+    `MARKER-${state.markerPresent ? 'YES' : 'NO'}`,
+    `STYLEGEN-${state.styleGeneration}`,
+    `PM206-${transport.pmtiles206}`,
+    `CR-${transport.contentRange}`,
+    `QT-${transport.queryTransport}`,
+  ].map(safe).join('__')
+}
+
+async function readPublic3dState(page: Page): Promise<Public3dState> {
+  return page.$eval('main[data-map-engine="maplibre"]', (main) => {
+    const count = (name: string) => {
+      const value = Number(main.getAttribute(name) || '0')
+      return Number.isFinite(value) && value >= 0 ? value : 0
+    }
+    return {
+      providerState: main.getAttribute('data-map-provider') || 'missing',
+      buildingState: main.getAttribute('data-buildings-3d-state') || 'missing',
+      sourceCount: count('data-custom-source-count'),
+      sourceLoadedCount: count('data-custom-source-loaded-count'),
+      sourceBacked: main.getAttribute('data-custom-source-backed') === 'true',
+      layerCount: count('data-custom-layer-count'),
+      renderedFeatures: count('data-custom-rendered-features'),
+      querySourceFeatures: count('data-custom-query-source-features'),
+      fallbackVisible: main.getAttribute('data-generic-fallback-visible') === 'true',
+      markerPresent: main.getAttribute('data-marker-present') === 'true',
+      styleGeneration: count('data-map-style-generation'),
+    }
+  })
 }
 
 async function verifyExactHead(): Promise<void> {
@@ -159,22 +225,16 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
     await page.waitForSelector('main[data-map-engine="maplibre"][data-location-source="my-device"]', { timeout: 45_000 })
     const canvas = await page.waitForSelector('canvas.maplibregl-canvas', { timeout: 45_000 })
     ok(canvas, 'MAP_CANVAS_MISSING')
-    await page.waitForFunction(() => {
-      const main = document.querySelector('main[data-map-engine="maplibre"]')
-      return main?.getAttribute('data-buildings-3d-state') === '3D_ACTIVE'
-        && Number(main.getAttribute('data-custom-layer-count') || '0') >= 4
-        && Number(main.getAttribute('data-custom-rendered-features') || '0') > 0
-        && main.getAttribute('data-generic-fallback-visible') === 'false'
-        && main.getAttribute('data-marker-present') === 'true'
-    }, { timeout: 90_000 })
 
-    const state = await page.$eval('main[data-map-engine="maplibre"]', (main) => ({
-      layerCount: Number(main.getAttribute('data-custom-layer-count') || '0'),
-      renderedFeatures: Number(main.getAttribute('data-custom-rendered-features') || '0'),
-      buildingState: main.getAttribute('data-buildings-3d-state'),
-      fallback: main.getAttribute('data-generic-fallback-visible'),
-      marker: main.getAttribute('data-marker-present'),
-    }))
+    const readinessDeadline = Date.now() + POST_3D_READINESS_BUDGET_MS
+    let state: Public3dState | null = null
+    while (Date.now() < readinessDeadline) {
+      state = await readPublic3dState(page)
+      if (public3dReady(state)) break
+      await Bun.sleep(500)
+    }
+    ok(state && public3dReady(state), `PUBLIC_3D_READINESS_TIMEOUT_${public3dStateCode(state, { pmtiles206, contentRange, queryTransport })}`)
+
     const clip = await canvas.boundingBox()
     ok(clip, 'CANVAS_BOUNDS_MISSING')
     const onImage = await page.screenshot({ clip })
@@ -199,12 +259,17 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       evidenceClass: 'WEB_AUTOMATION_ONLY',
       viewport: '390x844_SYNTHETIC_WEB',
       publicFixture: 'dense-central',
+      customSourceCount: state.sourceCount,
+      customSourceLoadedCount: state.sourceLoadedCount,
+      customSourceBacked: state.sourceBacked,
       customLayerCount: state.layerCount,
       customRenderedFeatureCount: state.renderedFeatures,
+      customQuerySourceFeatureCount: state.querySourceFeatures,
       visualChangedPixels: changedPixels,
       pmtiles206,
       contentRange,
       queryTransport,
+      readinessBudgetMs: POST_3D_READINESS_BUDGET_MS,
       pageErrorTotal: pageErrors.length,
       consoleErrorTotal: consoleErrors.length,
       screenshots: [
@@ -244,7 +309,7 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
 ok(browserEvidence, `POST_3D_BROWSER_FAILED_${firstFailure}`)
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v5',
+  schema: 'stracker.santa-fe-post-promotion-3d.v6',
   sourceSha: expectedSha,
   expectedVersionIdHash: digest(expectedVersionId),
   identityAttempts,
@@ -268,6 +333,7 @@ const result = {
     POST_PROMOTION_PUBLIC_SANTA_FE_3D_RENDER: 'PASS',
     POST_PROMOTION_PMTILES_QUERY_RANGE: 'PASS',
     POST_PROMOTION_BUILDING_TOGGLE_VISUAL_DELTA: 'PASS',
+    POST_PROMOTION_READINESS_BUDGET_UNCHANGED_90_SECONDS: 'PASS',
     POST_PROMOTION_BROWSER_RETRY_BOUNDED: 'PASS',
     SWIFTSHADER_NOT_SOLE_EVIDENCE: 'PASS',
     A22_VISIBLE_3D_PENDING_HUMAN: 'PASS',
