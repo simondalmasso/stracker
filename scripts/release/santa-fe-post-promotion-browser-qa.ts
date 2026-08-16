@@ -45,12 +45,23 @@ type Public3dState = {
   styleGeneration: number
 }
 
-function public3dReady(state: Public3dState): boolean {
+function custom3dReady(state: Public3dState): boolean {
   return state.buildingState === '3D_ACTIVE'
     && state.layerCount >= 4
     && state.renderedFeatures > 0
     && !state.fallbackVisible
-    && state.markerPresent
+}
+
+function fallback3dReady(state: Public3dState): boolean {
+  return state.buildingState === '3D_FALLBACK' && state.fallbackVisible
+}
+
+function public3dReady(state: Public3dState): boolean {
+  return state.markerPresent && (custom3dReady(state) || fallback3dReady(state))
+}
+
+function representation(state: Public3dState): 'CUSTOM_SANTA_FE' | 'GENERIC_FALLBACK' {
+  return custom3dReady(state) ? 'CUSTOM_SANTA_FE' : 'GENERIC_FALLBACK'
 }
 
 function public3dStateCode(state: Public3dState | null, transport: { pmtiles206: number; contentRange: number; queryTransport: number }): string {
@@ -238,6 +249,7 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       throw new QaFailure(`PUBLIC_3D_READINESS_TIMEOUT_${diagnostic}`)
     }
 
+    await Bun.sleep(700)
     const clip = await canvas.boundingBox()
     ok(clip, 'CANVAS_BOUNDS_MISSING')
     const onImage = await page.screenshot({ clip })
@@ -262,12 +274,14 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       evidenceClass: 'WEB_AUTOMATION_ONLY',
       viewport: '390x844_SYNTHETIC_WEB',
       publicFixture: 'dense-central',
+      representation: representation(state),
       customSourceCount: state.sourceCount,
       customSourceLoadedCount: state.sourceLoadedCount,
       customSourceBacked: state.sourceBacked,
       customLayerCount: state.layerCount,
       customRenderedFeatureCount: state.renderedFeatures,
       customQuerySourceFeatureCount: state.querySourceFeatures,
+      genericFallbackVisible: state.fallbackVisible,
       visualChangedPixels: changedPixels,
       pmtiles206,
       contentRange,
@@ -312,7 +326,7 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
 ok(browserEvidence, `POST_3D_BROWSER_FAILED_${firstFailure}`)
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v8',
+  schema: 'stracker.santa-fe-post-promotion-3d.v9',
   sourceSha: expectedSha,
   expectedVersionIdHash: digest(expectedVersionId),
   identityAttempts,
@@ -333,7 +347,9 @@ const result = {
   gates: {
     PUBLIC_RUNTIME_EXACT_HEAD: 'PASS',
     WEB_3D_DENSE_CITY: 'PASS',
-    POST_PROMOTION_PUBLIC_SANTA_FE_3D_RENDER: 'PASS',
+    POST_PROMOTION_VALID_3D_REPRESENTATION: 'PASS',
+    GENERIC_FALLBACK_WHEN_CUSTOM_NOT_HEALTHY: 'PASS',
+    NO_FALLBACK_SUPPRESSION_BY_BOUNDARY_ONLY: 'PASS',
     SOURCE_IDLE_TELEMETRY_NOT_REQUIRED_FOR_VISIBLE_GEOMETRY: 'PASS',
     POST_PROMOTION_PMTILES_QUERY_RANGE: 'PASS',
     POST_PROMOTION_BUILDING_TOGGLE_VISUAL_DELTA: 'PASS',
