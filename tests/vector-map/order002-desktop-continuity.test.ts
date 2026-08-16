@@ -34,9 +34,10 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
 
   test('generic fallback also avoids no-op layout/light mutations during custom 3D health probing', async () => {
     const source = await Bun.file(openFreeMapStylePath).text()
-    expect(source).toContain("map.getLayoutProperty(layer.id, 'visibility') !== 'none'")
-    expect(source).toContain('const desiredVisibility = options.enabled && options.density !== \'off\' ? \'visible\' : \'none\'')
-    expect(source).toContain('const currentVisibility = map.getLayoutProperty(STRACKER_GENERIC_BUILDING_LAYER_ID, \'visibility\')')
+    expect(source).toContain('function styleLayerVisibility')
+    expect(source).toContain("styleLayerVisibility(layer) !== 'none'")
+    expect(source).toContain("const desiredVisibility = options.enabled && options.density !== 'off' ? 'visible' : 'none'")
+    expect(source).toContain('const currentVisibility = styleLayerVisibility(existingGenericLayer)')
     expect(source).toContain('if (currentVisibility !== desiredVisibility)')
     expect(source).toContain("if (desiredVisibility === 'visible') configureSceneLight(map)")
   })
