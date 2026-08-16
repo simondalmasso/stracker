@@ -2,6 +2,7 @@ import '../cookie-session/cookie-session.test'
 import { describe, expect, test } from 'bun:test'
 import { freshnessFromTimestamp } from '../../src/lib/location-source/contracts'
 import { initialCameraControllerState, MAP_PERSPECTIVE_PITCH_DEG, planCamera } from '../../src/lib/location-source/camera-controller'
+import { SANTA_FE_3D_LAYER_IDS } from '../../src/lib/location-source/map-engine/santa-fe-city-config'
 import { configureBuildings3d } from '../../src/lib/location-source/map-engine/openfreemap-style'
 import { parseAuthorizedViewerLink, STRACKER_PUBLIC_ORIGIN } from '../../src/lib/location-source/viewer-link-policy'
 import { runMap3dRuntimeQa } from '../native-sharing-cloudflare/map-3d-runtime-qa'
@@ -69,14 +70,16 @@ describe('controlled physical pilot runtime', () => {
     expect(stationaryReduced.animate).toBe(false)
   })
 
-  test('uses one controlled building extrusion and makes the toggle authoritative', () => {
+  test('uses one controlled generic extrusion without hiding controlled Santa Fe 3D layers', () => {
+    const customSantaFeLayerId = SANTA_FE_3D_LAYER_IDS[0]
     const layers: Array<Record<string, unknown>> = [
       { id: 'building-3d-native', type: 'fill-extrusion', source: 'openfreemap', 'source-layer': 'building' },
+      { id: customSantaFeLayerId, type: 'fill-extrusion', source: 'santa-fe-custom', 'source-layer': 'santa_fe_buildings_3d', layout: { visibility: 'visible' } },
       { id: 'place-label', type: 'symbol', source: 'openfreemap', 'source-layer': 'place' },
     ]
     const visibility = new Map<string, string>()
     const map = {
-      getStyle: () => ({ sources: { openfreemap: { type: 'vector' } }, layers }),
+      getStyle: () => ({ sources: { openfreemap: { type: 'vector' }, 'santa-fe-custom': { type: 'vector' } }, layers }),
       getLayer: (id: string) => layers.find((layer) => layer.id === id),
       setLayoutProperty: (id: string, _property: string, value: string) => visibility.set(id, value),
       addLayer: (layer: Record<string, unknown>) => layers.push(layer),
@@ -90,9 +93,11 @@ describe('controlled physical pilot runtime', () => {
     expect(controlled?.source).toBe('openfreemap')
     expect(controlled?.['source-layer']).toBe('building')
     expect(visibility.get('building-3d-native')).toBe('none')
+    expect(visibility.has(customSantaFeLayerId)).toBe(false)
 
     expect(configureBuildings3d(map as never, { enabled: false, density: 'full' })).toBe(true)
     expect(visibility.get('stracker-buildings-3d')).toBe('none')
+    expect(visibility.has(customSantaFeLayerId)).toBe(false)
   })
 
   test('accepts only strict URLs from the authorized STRACKER runtime', () => {
