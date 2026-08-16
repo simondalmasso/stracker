@@ -49,7 +49,7 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain('if (currentVisibility !== desiredVisibility)')
   })
 
-  test('post-promotion 3D keeps the 90 second budget and accepts only a visually proven custom or generic representation', async () => {
+  test('post-promotion 3D keeps the 90 second budget and proves toggle OFF by React control plus visual delta', async () => {
     const source = await Bun.file(post3dQaPath).text()
     expect(source).toContain('const POST_3D_READINESS_BUDGET_MS = 90_000')
     expect(source).toContain('PUBLIC_3D_READINESS_TIMEOUT_')
@@ -57,10 +57,15 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain("state.buildingState === '3D_ACTIVE'")
     expect(source).toContain("state.buildingState === '3D_FALLBACK'")
     expect(source).toContain('fallbackVisible')
+    expect(source).toContain("getAttribute('aria-pressed') === 'false'")
+    expect(source).toContain('toggleControlOffConfirmed: true')
     expect(source).toContain('VISUAL_DELTA_TOO_LOW_')
+    expect(source).toContain('POST_PROMOTION_BUILDING_TOGGLE_CONTROL_OFF')
+    expect(source).toContain('POST_PROMOTION_BUILDING_TOGGLE_VISUAL_DELTA')
     expect(source).toContain('PMTILES_RANGE_CONTRACT')
     expect(source).toContain('GENERIC_FALLBACK_WHEN_CUSTOM_NOT_HEALTHY')
     expect(source).toContain('NO_FALLBACK_SUPPRESSION_BY_BOUNDARY_ONLY')
+    expect(source).not.toContain("waitForFunction(() => document.querySelector('main[data-map-engine]')?.getAttribute('data-buildings-3d-state') === '3D_OFF'")
     expect(source).not.toContain('POST_3D_READINESS_BUDGET_MS = 120_000')
   })
 
