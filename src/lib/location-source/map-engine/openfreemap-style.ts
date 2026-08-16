@@ -28,6 +28,7 @@ function vectorSourceId(map: MapLibreMap): string | null {
 
 function buildingSourceCandidate(map: MapLibreMap): BuildingSourceCandidate | null {
   for (const layer of map.getStyle().layers ?? []) {
+    if (CONTROLLED_BUILDING_LAYER_IDS.has(layer.id)) continue
     const candidate = layer as typeof layer & { source?: string; 'source-layer'?: string }
     const source = candidate.source
     const sourceLayer = candidate['source-layer']
@@ -181,8 +182,7 @@ export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOpt
       ],
       'fill-extrusion-opacity': options.density === 'reduced' ? 0.78 : 0.92,
       'fill-extrusion-vertical-gradient': true,
-    },
-  }, before)
+    }, before)
   configureSceneLight(map)
   return true
 }
