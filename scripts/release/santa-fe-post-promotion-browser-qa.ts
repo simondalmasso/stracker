@@ -253,9 +253,15 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
     const clip = await canvas.boundingBox()
     ok(clip, 'CANVAS_BOUNDS_MISSING')
     const onImage = await page.screenshot({ clip })
-    await page.click('button[aria-label="Activar o desactivar edificios 3D"]')
-    await page.waitForFunction(() => document.querySelector('main[data-map-engine]')?.getAttribute('data-buildings-3d-state') === '3D_OFF', { timeout: 15_000 })
+    const toggleSelector = 'button[aria-label="Activar o desactivar edificios 3D"]'
+    await page.click(toggleSelector)
+    await page.waitForFunction(
+      (selector) => document.querySelector(selector)?.getAttribute('aria-pressed') === 'false',
+      { timeout: 15_000 },
+      toggleSelector,
+    )
     await Bun.sleep(700)
+    const postToggleState = await readPublic3dState(page)
     const offImage = await page.screenshot({ clip })
     const changedPixels = await pixelDelta(onImage, offImage)
 
@@ -282,6 +288,9 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       customRenderedFeatureCount: state.renderedFeatures,
       customQuerySourceFeatureCount: state.querySourceFeatures,
       genericFallbackVisible: state.fallbackVisible,
+      postToggleBuildingState: postToggleState.buildingState,
+      postToggleFallbackVisible: postToggleState.fallbackVisible,
+      toggleControlOffConfirmed: true,
       visualChangedPixels: changedPixels,
       pmtiles206,
       contentRange,
@@ -326,7 +335,7 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
 ok(browserEvidence, `POST_3D_BROWSER_FAILED_${firstFailure}`)
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v9',
+  schema: 'stracker.santa-fe-post-promotion-3d.v10',
   sourceSha: expectedSha,
   expectedVersionIdHash: digest(expectedVersionId),
   identityAttempts,
@@ -352,6 +361,7 @@ const result = {
     NO_FALLBACK_SUPPRESSION_BY_BOUNDARY_ONLY: 'PASS',
     SOURCE_IDLE_TELEMETRY_NOT_REQUIRED_FOR_VISIBLE_GEOMETRY: 'PASS',
     POST_PROMOTION_PMTILES_QUERY_RANGE: 'PASS',
+    POST_PROMOTION_BUILDING_TOGGLE_CONTROL_OFF: 'PASS',
     POST_PROMOTION_BUILDING_TOGGLE_VISUAL_DELTA: 'PASS',
     POST_PROMOTION_READINESS_BUDGET_UNCHANGED_90_SECONDS: 'PASS',
     POST_PROMOTION_BROWSER_RETRY_BOUNDED: 'PASS',
