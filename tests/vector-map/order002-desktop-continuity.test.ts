@@ -17,9 +17,10 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).not.toContain('const online = () => { void forceRefresh() }')
   })
 
-  test('3D ACTIVE requires rendered custom geometry and continues probing until rendered', async () => {
+  test('3D ACTIVE requires latched source backing plus rendered custom geometry and continues probing until rendered', async () => {
     const source = await Bun.file(cityRuntimePath).text()
-    expect(source).toContain('const healthyEvidence = sourceBackedNow && renderedFeatureCount > 0')
+    expect(source).toContain('const sourceBacked = memory.sourceBacked')
+    expect(source).toContain('const healthyEvidence = sourceBacked && renderedFeatureCount > 0')
     expect(source).toContain("memory.latestStatus.providerState !== '3D_ACTIVE'")
     expect(source).toContain("map.on('render'")
     expect(source).toContain('queueHealthProbe(map, memory)')
