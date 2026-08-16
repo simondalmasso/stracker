@@ -83,10 +83,7 @@ function ghostrail(history: CookieHistoryResponse | null): GhostRailSegment[] {
 
 function keyframes(history: CookieHistoryResponse | null): LocationKeyframe[] {
   if (!history) return []
-  return history.keyframes.map((event) => ({
-    id: event.id, type: event.type, at: event.at, lat: event.lat, lng: event.lng,
-    provenance: event.provenance, confidence: event.confidence,
-  }))
+  return history.keyframes.map((event) => ({ id: event.id, type: event.type, at: event.at, lat: event.lat, lng: event.lng, provenance: event.provenance, confidence: event.confidence }))
 }
 
 export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) {
@@ -102,7 +99,6 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
   const handleRef = useRef<CookieSessionHandle | null>(null)
 
   useEffect(() => { handleRef.current = handle }, [handle])
-
   const clearCaptured = useCallback(() => { rawRef.current = ''; setCaptured(null) }, [])
   const capture = useCallback((value: string) => {
     const bytes = new TextEncoder().encode(value).byteLength
@@ -110,15 +106,10 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
     setCaptured(value.trim() ? { format: detectedCookieFormat(value), bytes } : null)
     setError(null)
   }, [])
-
   const dropLocalHandle = useCallback(() => {
-    controllerRef.current?.abort()
-    controllerRef.current = null
-    handleRef.current = null
-    clearCookieSessionHandle()
+    controllerRef.current?.abort(); controllerRef.current = null; handleRef.current = null; clearCookieSessionHandle()
     setHandle(null); setStatus(null); setPoint(null); setHistory(null)
   }, [])
-
   const clearServerSession = useCallback(async () => {
     const current = handleRef.current
     dropLocalHandle(); clearCaptured(); setError(null)
@@ -135,9 +126,8 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
       let transientCopy = ''
       let nextStatus: CookieSessionStatus | null = null
       if (refreshProvider && navigator.onLine && document.visibilityState === 'visible') {
-        try {
-          nextStatus = await refreshCookieSession(current, controller.signal)
-        } catch (caught) {
+        try { nextStatus = await refreshCookieSession(current, controller.signal) }
+        catch (caught) {
           if (!(caught instanceof CookieSessionApiError) || !TRANSIENT_CODES.has(caught.code)) throw caught
           transientCopy = message(caught)
         }
@@ -165,7 +155,6 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
     const restored = loadCookieSessionHandle()
     if (!restored) return
     handleRef.current = restored
-    setHandle(restored); setStatus(restored)
     void hydrate(restored, false)
   }, [hydrate])
 
@@ -205,9 +194,7 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
     setBusy(true); setError(null)
     try {
       const imported = await importCookieSession(rawRef.current, controller.signal)
-      clearCaptured()
-      handleRef.current = imported
-      setHandle(imported); setStatus(imported)
+      clearCaptured(); handleRef.current = imported; setHandle(imported); setStatus(imported)
       await hydrate(imported, false)
     } catch (caught) {
       const copy = message(caught)
