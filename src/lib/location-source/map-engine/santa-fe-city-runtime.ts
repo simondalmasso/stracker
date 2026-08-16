@@ -336,13 +336,14 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   })
   const renderedFeatureCount = presentationChanged ? 0 : safeRenderedFeatureCount(map, existingLayerIds)
   const sourceFeatureCount = safeSourceFeatureCount(map, existingSourceIds)
-  const sourceBackedNow = loadedSourceIds.length > 0 && existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length
+  const allLayersPresent = existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length
+  const sourceBackedNow = allLayersPresent && (loadedSourceIds.length > 0 || renderedFeatureCount > 0)
   if (sourceBackedNow) {
     memory.sourceBacked = true
     memory.maxSourceLoadedCount = Math.max(memory.maxSourceLoadedCount, loadedSourceIds.length)
   }
   const sourceBacked = memory.sourceBacked
-  const healthyEvidence = renderedFeatureCount > 0
+  const healthyEvidence = sourceBacked && renderedFeatureCount > 0
 
   if (healthyEvidence) {
     memory.consecutiveHealthy += 1
@@ -358,10 +359,10 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   }
 
   const sourceLoaded = sourceBacked || loadedSourceIds.length > 0 || renderedFeatureCount > 0
-  const providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_LOADING'
+  const providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_FALLBACK'
   publishStatus(map, {
     eligible: true,
-    configured: existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length,
+    configured: allLayersPresent,
     sourceLoaded,
     sourceBacked,
     rendered: renderedFeatureCount > 0,
@@ -372,10 +373,10 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     customLayerCount: existingLayerIds.length,
     customRenderedFeatureCount: renderedFeatureCount,
     customQuerySourceFeatureCount: sourceFeatureCount,
-    genericFallbackVisible: false,
+    genericFallbackVisible: !memory.healthy,
     styleGeneration: memory.styleGeneration,
   })
-  return true
+  return memory.healthy
 }
 
 export function isSantaFe3dSourceId(sourceId: string | undefined): boolean {
