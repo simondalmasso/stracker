@@ -4,6 +4,7 @@ const cookiePanelPath = 'src/components/mobile/CookieSessionPanel.tsx'
 const cityRuntimePath = 'src/lib/location-source/map-engine/santa-fe-city-runtime.ts'
 const releaseWrapperPath = 'scripts/release/cloudflare-controlled-physical-pilot-release.sh'
 const publicQaPath = 'scripts/release/shared-cookie-camera-continuity-qa.ts'
+const post3dQaPath = 'scripts/release/santa-fe-post-promotion-browser-qa.ts'
 
 describe('ORDER-002 desktop shared-session continuity contract', () => {
   test('background UI polling reads durable server state instead of forcing Google probes', async () => {
@@ -24,6 +25,18 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain("memory.latestStatus.providerState !== '3D_ACTIVE'")
     expect(source).toContain("map.on('render'")
     expect(source).toContain('queueHealthProbe(map, memory)')
+  })
+
+  test('post-promotion 3D keeps the existing 90 second budget and emits bounded state diagnostics', async () => {
+    const source = await Bun.file(post3dQaPath).text()
+    expect(source).toContain('const POST_3D_READINESS_BUDGET_MS = 90_000')
+    expect(source).toContain('PUBLIC_3D_READINESS_TIMEOUT_')
+    expect(source).toContain('sourceLoadedCount')
+    expect(source).toContain('sourceBacked')
+    expect(source).toContain('renderedFeatures')
+    expect(source).toContain('querySourceFeatures')
+    expect(source).toContain('PM206-')
+    expect(source).not.toContain('POST_3D_READINESS_BUDGET_MS = 120_000')
   })
 
   test('public release keeps rollback armed through the desktop shared-camera smoke', async () => {
