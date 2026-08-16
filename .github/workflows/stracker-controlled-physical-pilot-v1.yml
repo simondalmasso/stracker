@@ -188,7 +188,7 @@ jobs:
 
       - name: BACKEND_AND_PUBLIC_WRANGLER_DRY_RUN
         run: |
-          bunx wrangler@4.111.0 deploy --dry-run --config native-sharing-cloudflare/wrangler.backend.jsonc --outdir "${RUNNER_TEMP}/backend-dist"
+          bunx wrangler@4.111.0 versions upload --dry-run --config native-sharing-cloudflare/wrangler.backend.jsonc --outdir "${RUNNER_TEMP}/backend-dist"
           bunx wrangler@4.111.0 versions upload --dry-run --config native-sharing-cloudflare/wrangler.release.jsonc --outdir "${RUNNER_TEMP}/public-dist"
           test -d "${RUNNER_TEMP}/backend-dist" && test -d "${RUNNER_TEMP}/public-dist"
           echo 'BACKEND_WRANGLER_DRY_RUN=PASS'
@@ -198,14 +198,19 @@ jobs:
       - name: RELEASE_AUTOMATION_CONTRACT
         run: |
           bash -n scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          bash -n scripts/release/order001-backend-release.sh
+          bash -n scripts/release/order001-backend-rollback.sh
           bunx tsc --target ES2022 --module ESNext --moduleResolution Bundler --lib ES2022,DOM --types bun-types --skipLibCheck --strict --noEmit scripts/release/live-controlled-physical-pilot-browser-qa.ts
-          grep -q 'PRIVATE_BACKEND_REUSED_UNCHANGED' scripts/release/cloudflare-controlled-physical-pilot-release.sh
-          ! grep -q 'wrangler.backend.jsonc.*deploy\|deploy.*wrangler.backend.jsonc' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'ORDER001_PRIVATE_BACKEND_EXACT_HEAD' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'order001-backend-release.sh' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'order001-backend-rollback.sh' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'COOKIE_SESSION_ENCRYPTION_KEY' scripts/release/order001-backend-release.sh
+          ! grep -q 'PRIVATE_BACKEND_REUSED_UNCHANGED=PASS' scripts/release/cloudflare-controlled-physical-pilot-release.sh
           grep -q 'CANDIDATE_VERSION}@0%' scripts/release/cloudflare-controlled-physical-pilot-release.sh
           grep -q 'CANDIDATE_VERSION}@100%' scripts/release/cloudflare-controlled-physical-pilot-release.sh
           grep -q 'Cloudflare-Workers-Version-Overrides' scripts/release/cloudflare-controlled-physical-pilot-release.sh
           grep -q 'offline-stop-browser-qa.ts' scripts/release/cloudflare-controlled-physical-pilot-release.sh
-          ! grep -Eq 'wrangler(@[^ ]+)?[[:space:]]+delete|deleteAll\(' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          ! grep -Eq 'wrangler(@[^ ]+)?[[:space:]]+delete|deleteAll\(' scripts/release/cloudflare-controlled-physical-pilot-release.sh scripts/release/order001-backend-release.sh scripts/release/order001-backend-rollback.sh
           echo 'RELEASE_AUTOMATION_CONTRACT=PASS'
 
       - name: ZERO_COST_MODEL
@@ -240,10 +245,12 @@ jobs:
           pilot = json.loads(Path(os.environ['PILOT_BROWSER_OUTPUT']).read_text())
           offline_stop = json.loads(Path(os.environ['OFFLINE_STOP_OUTPUT']).read_text())
           evidence = {
-            'schema': 'stracker.controlled-physical-pilot.validation.v1',
+            'schema': 'stracker.controlled-physical-pilot.validation.v2',
             'sourceSha': os.environ['SOURCE_SHA'], 'runId': os.environ['SOURCE_RUN_ID'],
             'baseSha': '745b229769594b7529859283e6e1a2eab7a8f291',
-            'cloudflareMutation': False, 'backendReusedUnchanged': True,
+            'cloudflareMutation': False,
+            'backendReleaseMode': 'exact-head-on-release',
+            'backendReusedUnchanged': False,
             'privateDataUsed': False, 'realCoordinatesUsed': False,
             'syntheticCoordinateValuesRetained': False, 'capabilityOrTokenRetained': False,
             'pageErrorTotal': pilot['pageErrorTotal'] + offline_stop['pageErrorTotal'],
@@ -258,6 +265,7 @@ jobs:
               'PRIOR_TWO_CONTEXT_BROWSER_E2E':'PASS','CONTROLLED_PILOT_BROWSER_E2E':'PASS','OFFLINE_STOP_BROWSER_E2E':'PASS',
               'SECURITY_SCANNER_TESTS':'PASS','SECURITY_RELEASE_SCAN':'PASS','BACKEND_WRANGLER_DRY_RUN':'PASS',
               'PUBLIC_WRANGLER_DRY_RUN':'PASS','RELEASE_AUTOMATION_CONTRACT':'PASS','ZERO_COST_MODEL':'PASS',
+              'ORDER001_BACKEND_EXACT_HEAD_RELEASE_CONTRACT':'PASS',
               **pilot['gates'], **offline_stop['gates'],
             },
           }
@@ -295,9 +303,9 @@ jobs:
         run: |
           test "$(sha256sum "${RUNNER_TEMP}/evidence/validation-evidence.json" | cut -d' ' -f1)" = "$EXPECTED_EVIDENCE_SHA256"
           test "$(cat "${RUNNER_TEMP}/evidence/validation-evidence.sha256")" = "$EXPECTED_EVIDENCE_SHA256"
-          jq -e --arg sha "$SOURCE_SHA" '.sourceSha == $sha and .cloudflareMutation == false and .physicalValidation == "PENDING_HUMAN"' "${RUNNER_TEMP}/evidence/validation-evidence.json" >/dev/null
+          jq -e --arg sha "$SOURCE_SHA" '.sourceSha == $sha and .cloudflareMutation == false and .backendReleaseMode == "exact-head-on-release" and .backendReusedUnchanged == false and .physicalValidation == "PENDING_HUMAN"' "${RUNNER_TEMP}/evidence/validation-evidence.json" >/dev/null
           jq -e '.privateDataUsed == false and .realCoordinatesUsed == false and .syntheticCoordinateValuesRetained == false and .capabilityOrTokenRetained == false' "${RUNNER_TEMP}/evidence/validation-evidence.json" >/dev/null
-          jq -e '.gates.OFFLINE_STOP_DOES_NOT_FALSELY_REPORT_REVOKED == "PASS" and .gates.STOP_REVOKE_CONFIRMED == "PASS"' "${RUNNER_TEMP}/evidence/validation-evidence.json" >/dev/null
+          jq -e '.gates.OFFLINE_STOP_DOES_NOT_FALSELY_REPORT_REVOKED == "PASS" and .gates.STOP_REVOKE_CONFIRMED == "PASS" and .gates.ORDER001_BACKEND_EXACT_HEAD_RELEASE_CONTRACT == "PASS"' "${RUNNER_TEMP}/evidence/validation-evidence.json" >/dev/null
           echo 'FINAL_INTEGRITY=PASS'
 
   release:
