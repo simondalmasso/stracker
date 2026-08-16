@@ -8,11 +8,12 @@ import type {
   ViewerPointsResponse,
   ViewerStatusResponse,
 } from '../../native-sharing/src/contracts.js'
+import { enrichCookieHistoryWithRoadNetwork } from './cookie-road-network.js'
+import { probeGoogleCookieSessionV2 } from './cookie-provider-probe.js'
 import { DurableCookieSessionRuntime, type CookieHistoryResponse } from './cookie-session-durable.js'
 import { SqliteCookieSessionStore } from './cookie-session-store.js'
 import type { CookieSessionImportInput, CookieSessionPointResponse, CookieSessionPublicStatus } from './cookie-session.js'
 import type { RpcResult } from './runtime-contracts.js'
-import { DELETE_AFTER_EXPIRATION_MS } from './runtime-limits.js'
 import { NativeSharingSessionRuntime } from './session-runtime.js'
 import type { RuntimeSqlExecutor, RuntimeSqlRow, RuntimeSqlValue } from './sqlite-store.js'
 import { SqliteNativeSharingStore } from './sqlite-store.js'
@@ -23,9 +24,7 @@ function sqlExecutor(storage: DurableObjectStorage): RuntimeSqlExecutor {
       return storage.sql.exec<T>(query, ...bindings)
     },
     logicalRowsWritten(): number {
-      const row = storage.sql.exec<{ logical_rows_written: number }>(
-        'SELECT changes() AS logical_rows_written',
-      ).toArray()[0]
+      const row = storage.sql.exec<{ logical_rows_written: number }>('SELECT changes() AS logical_rows_written').toArray()[0]
       return Number(row?.logical_rows_written ?? 0)
     },
     transactionSync<T>(callback: () => T): T {
@@ -50,7 +49,7 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
     this.runtime = new NativeSharingSessionRuntime(this.store)
     this.cookieStore = new SqliteCookieSessionStore(sql)
     const secret = (env as Env & { COOKIE_SESSION_ENCRYPTION_KEY?: string }).COOKIE_SESSION_ENCRYPTION_KEY ?? ''
-    this.cookieRuntime = new DurableCookieSessionRuntime(this.cookieStore, secret)
+    this.cookieRuntime = new DurableCookieSessionRuntime(this.cookieStore, secret, probeGoogleCookieSessionV2)
     this.ctx.blockConcurrencyWhile(async () => {
       this.store.initializeSchema()
       this.cookieStore.initializeSchema()
@@ -161,8 +160,10 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
     return this.cookieRuntime.point(sessionId, ownerToken)
   }
 
-  getCookieSessionHistory(sessionId: string, ownerToken: string, sinceIso: string): Promise<RpcResult<CookieHistoryResponse>> {
-    return this.cookieRuntime.history(sessionId, ownerToken, sinceIso)
+  async getCookieSessionHistory(sessionId: string, ownerToken: string, sinceIso: string): Promise<RpcResult<CookieHistoryResponse>> {
+    const result = await this.cookieRuntime.history(sessionId, ownerToken, sinceIso)
+    if (!result.ok) return result
+    return { ok: true, value: await enrichCookieHistoryWithRoadNetwork(result.value) }
   }
 
   async refreshCookieSession(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>> {
@@ -186,9 +187,7 @@ export class NativeSharingDurableObject extends DurableObject<Env> {
     const nativeDeadline = this.store.deletionDeadlineMs()
     await this.cookieRuntime.onAlarm()
     await this.store.deleteExpired(new Date().toISOString())
-    if (this.testCleanupVerificationOverride === false && nativeDeadline !== null && Date.now() >= nativeDeadline) {
-      throw new Error('STORAGE_CLEANUP_UNVERIFIED')
-    }
+    if (this.testCleanupVerificationOverride === false && nativeDeadline !== null && Date.now() >= nativeDeadline) throw new Error('STORAGE_CLEANUP_UNVERIFIED')
     await this.scheduleNextAlarm()
   }
 }
