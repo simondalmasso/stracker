@@ -18,24 +18,30 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).not.toContain('const online = () => { void forceRefresh() }')
   })
 
-  test('3D ACTIVE requires latched source backing plus rendered custom geometry and continues probing until rendered', async () => {
+  test('3D health probes require real rendering without repeatedly dirtying the MapLibre style', async () => {
     const source = await Bun.file(cityRuntimePath).text()
     expect(source).toContain('const sourceBacked = memory.sourceBacked')
     expect(source).toContain('const healthyEvidence = sourceBacked && renderedFeatureCount > 0')
+    expect(source).toContain('function ensureCustomLayerPresentation')
+    expect(source).toContain("map.getLayoutProperty(layerId, 'visibility') !== 'visible'")
+    expect(source).toContain("map.getPaintProperty(layerId, 'fill-extrusion-opacity')")
+    expect(source).toContain('const renderedFeatureCount = presentationChanged ? 0 : safeRenderedFeatureCount')
     expect(source).toContain("memory.latestStatus.providerState !== '3D_ACTIVE'")
     expect(source).toContain("map.on('render'")
     expect(source).toContain('queueHealthProbe(map, memory)')
   })
 
-  test('post-promotion 3D keeps the existing 90 second budget and emits bounded state diagnostics', async () => {
+  test('post-promotion 3D keeps the existing 90 second budget and emits readable bounded state diagnostics', async () => {
     const source = await Bun.file(post3dQaPath).text()
     expect(source).toContain('const POST_3D_READINESS_BUDGET_MS = 90_000')
     expect(source).toContain('PUBLIC_3D_READINESS_TIMEOUT_')
+    expect(source).toContain('SANTA_FE_POST_PROMOTION_READINESS_TIMEOUT')
     expect(source).toContain('sourceLoadedCount')
     expect(source).toContain('sourceBacked')
     expect(source).toContain('renderedFeatures')
     expect(source).toContain('querySourceFeatures')
     expect(source).toContain('PM206-')
+    expect(source).toContain('(?<![A-Za-z0-9_-])')
     expect(source).not.toContain('POST_3D_READINESS_BUDGET_MS = 120_000')
   })
 
