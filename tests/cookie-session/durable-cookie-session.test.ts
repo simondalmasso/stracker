@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { capabilityVerifier } from '../../native-sharing/src/security'
+import { extractProviderPoints } from '../../native-sharing-cloudflare/src/cookie-provider-payload'
+import { enrichCookieHistoryWithRoadNetwork } from '../../native-sharing-cloudflare/src/cookie-road-network'
 import {
   DurableCookieSessionRuntime,
   decryptCookiePayload,
   encryptCookiePayload,
+  type CookieHistoryResponse,
 } from '../../native-sharing-cloudflare/src/cookie-session-durable'
 import { SqliteCookieSessionStore } from '../../native-sharing-cloudflare/src/cookie-session-store'
 import type { CookieProbe } from '../../native-sharing-cloudflare/src/cookie-session'
@@ -27,6 +30,27 @@ function setup(now: () => Date, probe: CookieProbe) {
   return { sql, store, runtime }
 }
 
+describe('provider payload recovery', () => {
+  test('recovers every recognized coordinate and uses only plausible nearby provider timestamps', () => {
+    const observedAt = '2026-08-16T02:00:00.000Z'
+    const firstMs = Date.parse('2026-08-15T23:50:00.000Z')
+    const secondMs = Date.parse('2026-08-16T00:10:00.000Z')
+    const body = `prefix ${firstMs} [null,-60.7001,-31.6401] middle ${secondMs} [null,[-60.6902,-31.6302]] duplicate [null,[-60.6902,-31.6302]] suffix`
+    const points = extractProviderPoints(body, observedAt)
+    expect(points.length).toBeGreaterThanOrEqual(2)
+    expect(points[0]).toMatchObject({ lat: -31.6401, lng: -60.7001, capturedAt: new Date(firstMs).toISOString(), sourceQuality: 'provider_timestamp' })
+    expect(points.some((point) => point.lat === -31.6302 && point.lng === -60.6902 && point.sourceQuality === 'provider_timestamp')).toBe(true)
+    expect(points.every((point, index) => index === 0 || Date.parse(point.capturedAt) >= Date.parse(points[index - 1].capturedAt))).toBe(true)
+  })
+
+  test('does not invent a provider timestamp when none is present', () => {
+    const observedAt = '2026-08-16T02:00:00.000Z'
+    expect(extractProviderPoints('x [null,-60.70,-31.64] y', observedAt)).toEqual([{
+      lat: -31.64, lng: -60.7, accuracyM: null, capturedAt: observedAt, observedAt, sourceQuality: 'stracker_observed_at',
+    }])
+  })
+})
+
 describe('durable encrypted cookie session', () => {
   test('AES_GCM_ROUND_TRIP_AND_TAMPER_REJECTION', async () => {
     const encrypted = await encryptCookiePayload(SECRET, SESSION_ID, 'sensitive-fixture')
@@ -39,11 +63,7 @@ describe('durable encrypted cookie session', () => {
   test('survives runtime replacement with ciphertext only and keeps owner isolation', async () => {
     const clock = { value: Date.now() }
     const now = () => new Date(clock.value)
-    const probe: CookieProbe = async () => ({
-      ok: true,
-      state: 'ready',
-      point: { lat: -31.64, lng: -60.70, accuracyM: 9, capturedAt: now().toISOString(), observedAt: now().toISOString(), sourceQuality: 'stracker_observed_at' },
-    })
+    const probe: CookieProbe = async () => ({ ok: true, state: 'ready', point: { lat: -31.64, lng: -60.70, accuracyM: 9, capturedAt: now().toISOString(), observedAt: now().toISOString(), sourceQuality: 'stracker_observed_at' } })
     const { sql, store, runtime } = setup(now, probe)
     try {
       const imported = await runtime.importSession({ sessionId: SESSION_ID, ownerVerifier: OWNER_VERIFIER, raw: RAW, durationMs: 24 * 60 * 60 * 1000 })
@@ -54,17 +74,13 @@ describe('durable encrypted cookie session', () => {
       const databaseText = JSON.stringify(sql.database.query('SELECT * FROM cookie_session').all())
       expect(databaseText).not.toContain('credential-alpha-never-plaintext-at-rest')
       expect(databaseText).not.toContain('credential-beta-never-plaintext-at-rest')
-
       const replacement = new DurableCookieSessionRuntime(store, SECRET, probe, now)
-      const status = await replacement.status(SESSION_ID, OWNER_TOKEN)
-      expect(status.ok).toBe(true)
+      expect((await replacement.status(SESSION_ID, OWNER_TOKEN)).ok).toBe(true)
       const point = await replacement.point(SESSION_ID, OWNER_TOKEN)
       expect(point.ok).toBe(true)
       if (point.ok) expect(point.value.point).toMatchObject({ lat: -31.64, lng: -60.70 })
       expect(await replacement.status(SESSION_ID, 'x'.repeat(43))).toEqual({ ok: false, status: 404, code: 'NOT_FOUND' })
-    } finally {
-      sql.close()
-    }
+    } finally { sql.close() }
   })
 
   test('alarm samples while no browser request exists and enforces rolling 24h history', async () => {
@@ -90,9 +106,7 @@ describe('durable encrypted cookie session', () => {
         expect(history.value.points.every((point) => point.provenance === 'observed')).toBe(true)
         expect(history.value.rawRetentionHours).toBe(24)
       }
-    } finally {
-      sql.close()
-    }
+    } finally { sql.close() }
   })
 
   test('provider-timestamp backfill stays observed and learned transition prior changes inference confidence', async () => {
@@ -101,8 +115,7 @@ describe('durable encrypted cookie session', () => {
     const leftAt = new Date(base).toISOString()
     const rightAt = new Date(base + 10 * 60_000).toISOString()
     const probe: CookieProbe = async () => ({
-      ok: true,
-      state: 'ready',
+      ok: true, state: 'ready',
       point: { lat: -31.63, lng: -60.69, accuracyM: 8, capturedAt: rightAt, observedAt: now().toISOString(), sourceQuality: 'provider_timestamp' },
       points: [
         { lat: -31.64, lng: -60.70, accuracyM: 8, capturedAt: leftAt, observedAt: now().toISOString(), sourceQuality: 'provider_timestamp' },
@@ -125,23 +138,38 @@ describe('durable encrypted cookie session', () => {
       const history = await runtime.history(SESSION_ID, OWNER_TOKEN, new Date(base - 1000).toISOString())
       expect(history.ok).toBe(true)
       if (history.ok) {
-        const inferred = history.value.segments.find((segment) => segment.provenance === 'inferred')
-        expect(inferred).toMatchObject({ method: 'learned-corridor-prior', confidence: 'high' })
+        expect(history.value.segments.find((segment) => segment.provenance === 'inferred')).toMatchObject({ method: 'learned-corridor-prior', confidence: 'high' })
         expect(history.value.keyframes.some((frame) => frame.type === 'data_gap_start')).toBe(true)
         expect(history.value.keyframes.some((frame) => frame.type === 'data_gap_recovered')).toBe(true)
       }
-    } finally {
-      sql.close()
-    }
+    } finally { sql.close() }
+  })
+
+  test('road-network inference supersedes lower-priority linear inference and keeps pre-observation range inferred', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({ code: 'Ok', routes: [{ distance: 1500, duration: 600, geometry: { type: 'LineString', coordinates: [[-60.70, -31.64], [-60.695, -31.635], [-60.69, -31.63]] } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch
+    try {
+      const start = Date.parse('2026-08-16T00:00:00.000Z')
+      const history: CookieHistoryResponse = {
+        state: 'ready', windowStart: new Date(start - 60 * 60_000).toISOString(), windowEnd: new Date(start + 20 * 60_000).toISOString(),
+        points: [
+          { lat: -31.64, lng: -60.70, accuracyM: 8, capturedAt: new Date(start).toISOString(), observedAt: new Date(start).toISOString(), provenance: 'observed', sourceQuality: 'provider_timestamp' },
+          { lat: -31.63, lng: -60.69, accuracyM: 8, capturedAt: new Date(start + 10 * 60_000).toISOString(), observedAt: new Date(start + 10 * 60_000).toISOString(), provenance: 'observed', sourceQuality: 'provider_timestamp' },
+        ],
+        segments: [{ id: 'gap', provenance: 'inferred', confidence: 'low', method: 'generic-plausible-fallback', startedAt: new Date(start).toISOString(), endedAt: new Date(start + 10 * 60_000).toISOString(), points: [{ lat: -31.64, lng: -60.70 }, { lat: -31.63, lng: -60.69 }] }],
+        keyframes: [], rawRetentionHours: 24, derivedModelRetentionDays: 30, inferenceTruthLabelRequired: true,
+      }
+      const enriched = await enrichCookieHistoryWithRoadNetwork(history)
+      expect(enriched.segments[0]).toMatchObject({ provenance: 'inferred', confidence: 'low', startedAt: history.windowStart })
+      expect(enriched.segments.some((segment) => (segment.method as string) === 'road-network-route' && segment.points.length === 3)).toBe(true)
+    } finally { globalThis.fetch = originalFetch }
   })
 
   test('authentication rejection purges durable ciphertext while retaining only safe metadata/history', async () => {
     const clock = { value: Date.now() }
     const now = () => new Date(clock.value)
     let failAuth = false
-    const probe: CookieProbe = async () => failAuth
-      ? { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' }
-      : { ok: true, state: 'no_location', point: null, points: [] }
+    const probe: CookieProbe = async () => failAuth ? { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' } : { ok: true, state: 'no_location', point: null, points: [] }
     const { sql, runtime } = setup(now, probe)
     try {
       expect((await runtime.importSession({ sessionId: SESSION_ID, ownerVerifier: OWNER_VERIFIER, raw: RAW, durationMs: 24 * 60 * 60 * 1000 })).ok).toBe(true)
@@ -153,8 +181,6 @@ describe('durable encrypted cookie session', () => {
       const status = await runtime.status(SESSION_ID, OWNER_TOKEN)
       expect(status.ok).toBe(true)
       if (status.ok) expect(status.value.state).toBe('auth_expired')
-    } finally {
-      sql.close()
-    }
+    } finally { sql.close() }
   })
 })
