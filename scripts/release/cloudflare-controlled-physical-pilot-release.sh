@@ -12,6 +12,8 @@ set -Eeuo pipefail
 # ZERO_PERCENT_OVERRIDE_QA
 # santa-fe-affinity-canary-qa.ts
 # santa-fe-post-promotion-browser-qa.ts
+# shared-cookie-camera-continuity-qa.ts
+# ORDER002_SHARED_COOKIE_CAMERA_CONTINUITY_QA
 # POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP
 # offline-stop-browser-qa.ts
 # PUBLIC_POST_PROMOTION_QA
@@ -46,8 +48,8 @@ replace_once("  'backendReusedUnchanged': True,", "  'backendReusedUnchanged': F
 replace_once("  'backendRedeployed': False,", "  'backendRedeployed': True,", 'BACKEND_EVIDENCE_REDEPLOYED')
 replace_once(
     'AFFINITY_QA_OUTPUT="$STATE_DIR/santa-fe-affinity-canary.json"',
-    'AFFINITY_QA_OUTPUT="$STATE_DIR/santa-fe-affinity-canary.json"\nPOST_3D_QA_OUTPUT="$STATE_DIR/santa-fe-post-promotion-3d.json"',
-    'POST_3D_QA_OUTPUT_DECLARATION',
+    'AFFINITY_QA_OUTPUT="$STATE_DIR/santa-fe-affinity-canary.json"\nPOST_3D_QA_OUTPUT="$STATE_DIR/santa-fe-post-promotion-3d.json"\nSHARED_CAMERA_QA_OUTPUT="$STATE_DIR/order002-shared-cookie-camera-continuity.json"',
+    'POST_PROMOTION_QA_OUTPUT_DECLARATIONS',
 )
 
 start_marker = '\nfor kind in version build; do\n'
@@ -100,28 +102,38 @@ jq -e '.evidenceClass == "WEB_DESKTOP_AUTOMATION_ONLY" and .a22Visible3d == "PEN
 jq -e '.gates.PUBLIC_RUNTIME_EXACT_HEAD == "PASS" and .gates.WEB_3D_DENSE_CITY == "PASS" and [.gates[] | select(. != "PASS")] | length == 0' "$POST_3D_QA_OUTPUT" >/dev/null
 echo 'PUBLIC_POST_PROMOTION_SANTA_FE_3D_QA=PASS'
 echo 'POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS'
+STRACKER_QA_URL="$TARGET_URL" \
+STRACKER_EXPECTED_SHA="$SOURCE_SHA" \
+STRACKER_EXPECTED_VERSION_ID="$CANDIDATE_VERSION" \
+STRACKER_SHARED_CAMERA_QA_OUTPUT="$SHARED_CAMERA_QA_OUTPUT" \
+CHROME_BIN="${CHROME_BIN:-/usr/bin/google-chrome}" \
+bun scripts/release/shared-cookie-camera-continuity-qa.ts
+jq -e '.privateDataUsed == false and .realUserCoordinatesUsed == false and .coordinateValuesRetained == false and .rawSessionHandleRetained == false and .syntheticSessionIdentityRetained == false' "$SHARED_CAMERA_QA_OUTPUT" >/dev/null
+jq -e '.apiProof.providerRefreshRequests == 0 and .apiProof.deleteRequests == 0 and .apiProof.passiveServerStatePollObserved == true' "$SHARED_CAMERA_QA_OUTPUT" >/dev/null
+jq -e '.gates.PUBLIC_RUNTIME_EXACT_HEAD == "PASS" and .gates.SESSION_IDENTITY_SURVIVES_CAMERA_INTERACTION == "PASS" and .gates.MAX_ZOOM_3D_CONTINUITY == "PASS" and .gates.GHOSTRAIL_SURVIVES_CAMERA_INTERACTION == "PASS" and [.gates[] | select(. != "PASS")] | length == 0' "$SHARED_CAMERA_QA_OUTPUT" >/dev/null
+echo 'ORDER002_SHARED_COOKIE_CAMERA_CONTINUITY_QA=PASS'
 ''',
-    'POST_PROMOTION_3D_AFTER_BASE_QA',
+    'POST_PROMOTION_3D_AND_SHARED_CAMERA_AFTER_BASE_QA',
 )
 
 replace_once(
     ' "$AFFINITY_QA_OUTPUT" <<\'PY\'',
-    ' "$AFFINITY_QA_OUTPUT" "$POST_3D_QA_OUTPUT" <<\'PY\'',
-    'RELEASE_EVIDENCE_POST_3D_ARG',
+    ' "$AFFINITY_QA_OUTPUT" "$POST_3D_QA_OUTPUT" "$SHARED_CAMERA_QA_OUTPUT" <<\'PY\'',
+    'RELEASE_EVIDENCE_POST_QA_ARGS',
 )
 replace_once(
     "affinity = json.loads(Path(sys.argv[9]).read_text())",
-    "affinity = json.loads(Path(sys.argv[9]).read_text())\npost_3d = json.loads(Path(sys.argv[10]).read_text())",
-    'RELEASE_EVIDENCE_POST_3D_LOAD',
+    "affinity = json.loads(Path(sys.argv[9]).read_text())\npost_3d = json.loads(Path(sys.argv[10]).read_text())\nshared_camera = json.loads(Path(sys.argv[11]).read_text())",
+    'RELEASE_EVIDENCE_POST_QA_LOAD',
 )
 replace_once(
     "  'affinityCanary': affinity,",
-    "  'affinityCanary': affinity,\n  'postPromotionSantaFe3d': post_3d,",
-    'RELEASE_EVIDENCE_POST_3D_FIELD',
+    "  'affinityCanary': affinity,\n  'postPromotionSantaFe3d': post_3d,\n  'order002SharedCookieCameraContinuity': shared_camera,",
+    'RELEASE_EVIDENCE_POST_QA_FIELDS',
 )
 replace_once(
     "  'stagedReleaseSequence': ['zero-percent-metadata', 'one-percent-version-affinity-static-and-render', 'one-hundred-percent-post-promotion'],",
-    "  'stagedReleaseSequence': ['private-backend-exact-head', 'zero-percent-metadata', 'one-percent-version-affinity-static', 'one-hundred-percent-post-promotion-render'],",
+    "  'stagedReleaseSequence': ['private-backend-exact-head', 'zero-percent-metadata', 'one-percent-version-affinity-static', 'one-hundred-percent-post-promotion-render', 'desktop-shared-cookie-camera-continuity'],",
     'RELEASE_EVIDENCE_STAGED_SEQUENCE',
 )
 replace_once(
@@ -163,6 +175,8 @@ required = [
     'santa-fe-zero-percent-preflight.ts',
     'santa-fe-affinity-canary-qa.ts',
     'santa-fe-post-promotion-browser-qa.ts',
+    'shared-cookie-camera-continuity-qa.ts',
+    'ORDER002_SHARED_COOKIE_CAMERA_CONTINUITY_QA=PASS',
     'POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS',
     '${CANDIDATE_VERSION}@0%',
     '${CANDIDATE_VERSION}@1%',
@@ -183,6 +197,8 @@ if source.index("out.write_text(json.dumps(evidence") > source.rindex('rollback_
     raise SystemExit('ROLLBACK_DISARMED_BEFORE_RELEASE_EVIDENCE')
 if source.index("PUBLIC_POST_PROMOTION_QA=PASS") > source.index("POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS"):
     raise SystemExit('POST_3D_MUST_RUN_AFTER_BASE_POST_PROMOTION_QA')
+if source.index("POST_PROMOTION_3D_OUTSIDE_EXPENSIVE_QA_RETRY_LOOP=PASS") > source.index("ORDER002_SHARED_COOKIE_CAMERA_CONTINUITY_QA=PASS"):
+    raise SystemExit('SHARED_CAMERA_QA_MUST_RUN_AFTER_POST_3D')
 Path(sys.argv[2]).write_text(source)
 print('RELEASE_RUNTIME_PATCH_EXACT_ONCE=PASS')
 print('ORDER001_BACKEND_RELEASE_PATCH=PASS')
@@ -190,6 +206,7 @@ print('ZERO_PERCENT_OVERRIDE_PREFLIGHT_RESTORED=PASS')
 print('POST_PROMOTION_QA_FAIL_FAST=PASS')
 print('POST_PROMOTION_SANTA_FE_3D_QA_FAIL_FAST=PASS')
 print('POST_PROMOTION_3D_RETRY_LOOP_ISOLATION=PASS')
+print('ORDER002_SHARED_COOKIE_CAMERA_CONTINUITY_GATE=PASS')
 print('ROLLBACK_ARMED_THROUGH_RELEASE_EVIDENCE=PASS')
 print('RELEASE_ARTIFACT_VERSION_ID_SANITIZATION=PASS')
 PY
