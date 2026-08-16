@@ -39,13 +39,18 @@ function buildingSourceCandidate(map: MapLibreMap): BuildingSourceCandidate | nu
   return source ? { source, sourceLayer: 'building' } : null
 }
 
+function styleLayerVisibility(layer: { layout?: unknown } | undefined): 'visible' | 'none' {
+  if (!layer?.layout || typeof layer.layout !== 'object') return 'visible'
+  return 'visibility' in layer.layout && layer.layout.visibility === 'none' ? 'none' : 'visible'
+}
+
 function hideUncontrolledBuildingExtrusions(map: MapLibreMap): void {
   for (const layer of map.getStyle().layers ?? []) {
     if (layer.id === STRACKER_GENERIC_BUILDING_LAYER_ID || layer.type !== 'fill-extrusion') continue
     const candidate = layer as typeof layer & { 'source-layer'?: string }
     const sourceLayer = candidate['source-layer']?.toLowerCase() ?? ''
     const identity = `${layer.id} ${sourceLayer}`.toLowerCase()
-    if ((sourceLayer === 'building' || identity.includes('building')) && map.getLayoutProperty(layer.id, 'visibility') !== 'none') {
+    if ((sourceLayer === 'building' || identity.includes('building')) && styleLayerVisibility(layer) !== 'none') {
       map.setLayoutProperty(layer.id, 'visibility', 'none')
     }
   }
@@ -110,9 +115,10 @@ export function setLightCityBaseStyle(map: MapLibreMap): void {
 export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOptions): boolean {
   hideUncontrolledBuildingExtrusions(map)
 
-  if (map.getLayer(STRACKER_GENERIC_BUILDING_LAYER_ID)) {
+  const existingGenericLayer = (map.getStyle().layers ?? []).find((layer) => layer.id === STRACKER_GENERIC_BUILDING_LAYER_ID)
+  if (existingGenericLayer) {
     const desiredVisibility = options.enabled && options.density !== 'off' ? 'visible' : 'none'
-    const currentVisibility = map.getLayoutProperty(STRACKER_GENERIC_BUILDING_LAYER_ID, 'visibility')
+    const currentVisibility = styleLayerVisibility(existingGenericLayer)
     if (currentVisibility !== desiredVisibility) {
       map.setLayoutProperty(STRACKER_GENERIC_BUILDING_LAYER_ID, 'visibility', desiredVisibility)
       if (desiredVisibility === 'visible') configureSceneLight(map)
