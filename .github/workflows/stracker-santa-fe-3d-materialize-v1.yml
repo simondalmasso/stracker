@@ -87,7 +87,20 @@ jobs:
           echo 'PIPELINE_STREAMING_REGRESSION=PASS'
           echo 'MULTI_ASSET_VALIDATOR_REGRESSION=PASS'
 
+      - name: VALIDATE_COMMITTED_MATERIALIZATION
+        if: steps.asset_state.outputs.had_assets == 'true'
+        run: |
+          python scripts/santa-fe-3d/validate_static_asset.py \
+            --manifest public/data/santa-fe-3d/manifest.json \
+            --root public
+          test -s public/data/santa-fe-3d/source-lock.json
+          test -s src/lib/location-source/map-engine/santa-fe-3d-generated.ts
+          git diff --exit-code -- public/data/santa-fe-3d src/lib/location-source/map-engine/santa-fe-3d-generated.ts
+          echo 'COMMITTED_SANTA_FE_MATERIALIZATION=PASS'
+          echo 'LIVE_STAC_NOT_REQUIRED_FOR_COMMITTED_IMMUTABLE_ASSETS=PASS'
+
       - name: OVERTURE_STAC_AND_TINY_BBOX_DIAGNOSTIC
+        if: steps.asset_state.outputs.had_assets == 'false'
         run: |
           python - <<'PY'
           import json
@@ -159,6 +172,7 @@ jobs:
           PY
 
       - name: MATERIALIZE_SANTA_FE_CITY
+        if: steps.asset_state.outputs.had_assets == 'false'
         run: |
           chmod +x scripts/santa-fe-3d/materialize.sh
           stdout="${RUNNER_TEMP}/santa-fe-materialize.stdout.log"

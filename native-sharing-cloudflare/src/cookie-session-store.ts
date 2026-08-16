@@ -225,13 +225,7 @@ export class SqliteCookieSessionStore {
     return row ? rowToSession(row) : null
   }
 
-  updateProbeState(
-    sessionId: string,
-    state: CookieProviderState,
-    validatedAt: string,
-    lastProbeAt: string,
-    nextSampleAt: string,
-  ): boolean {
+  updateProbeState(sessionId: string, state: CookieProviderState, validatedAt: string, lastProbeAt: string, nextSampleAt: string): boolean {
     const cursor = this.sql.exec(
       `UPDATE cookie_session SET state = ?, validated_at = ?, last_probe_at = ?,
        next_sample_at = ?, consecutive_failures = 0
@@ -301,10 +295,7 @@ export class SqliteCookieSessionStore {
   }
 
   pointsSince(sinceIso: string): CookieStoredPoint[] {
-    return this.sql.exec<PointRow>(
-      'SELECT * FROM cookie_location_points WHERE captured_at >= ? ORDER BY captured_at ASC, id ASC',
-      sinceIso,
-    ).toArray().map(rowToPoint)
+    return this.sql.exec<PointRow>('SELECT * FROM cookie_location_points WHERE captured_at >= ? ORDER BY captured_at ASC, id ASC', sinceIso).toArray().map(rowToPoint)
   }
 
   pruneRawHistory(cutoffIso: string): number {
@@ -354,10 +345,7 @@ export class SqliteCookieSessionStore {
       toCell,
       todBucket,
     ))
-    return {
-      count: Number(row?.traversal_count ?? 0),
-      typicalDurationMs: Number(row?.typical_duration_ms ?? 0),
-    }
+    return { count: Number(row?.traversal_count ?? 0), typicalDurationMs: Number(row?.typical_duration_ms ?? 0) }
   }
 
   pruneMobility(cutoffIso: string): void {
@@ -376,6 +364,7 @@ export class SqliteCookieSessionStore {
     const current = this.session()
     if (!current) return null
     const hard = Date.parse(current.hardExpiresAt)
+    if (current.state === 'auth_expired') return hard
     const auth = current.authExpiresAt ? Date.parse(current.authExpiresAt) : Number.POSITIVE_INFINITY
     return Math.min(hard, auth)
   }
@@ -384,6 +373,7 @@ export class SqliteCookieSessionStore {
     const current = this.session()
     if (!current) return null
     const deadline = this.effectiveSessionDeadlineMs()
+    if (current.state === 'auth_expired') return deadline
     const sample = current.nextSampleAt ? Date.parse(current.nextSampleAt) : Number.POSITIVE_INFINITY
     const next = Math.min(deadline ?? Number.POSITIVE_INFINITY, sample)
     return Number.isFinite(next) ? next : null

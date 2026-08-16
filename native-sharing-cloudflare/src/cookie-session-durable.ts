@@ -12,7 +12,6 @@ import {
   probeGoogleCookieSession,
   type CookiePoint,
   type CookieProbe,
-  type CookieProviderState,
   type CookieSessionImportInput,
   type CookieSessionPointResponse,
   type CookieSessionPublicStatus,
@@ -95,33 +94,38 @@ function base64ToBytes(value: string): Uint8Array {
   return bytes
 }
 
+function bufferSource(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+}
+
 async function encryptionKey(secret: string): Promise<CryptoKey> {
   if (new TextEncoder().encode(secret).byteLength < 32) throw new Error('COOKIE_ENCRYPTION_KEY_INVALID')
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret))
+  const digest = await crypto.subtle.digest('SHA-256', bufferSource(new TextEncoder().encode(secret)))
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
 }
 
 export async function encryptCookiePayload(secret: string, sessionId: string, plaintext: string): Promise<{ ciphertext: string; iv: string }> {
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(sessionId) },
+    { name: 'AES-GCM', iv: bufferSource(iv), additionalData: bufferSource(new TextEncoder().encode(sessionId)) },
     await encryptionKey(secret),
-    new TextEncoder().encode(plaintext),
+    bufferSource(new TextEncoder().encode(plaintext)),
   )
   return { ciphertext: bytesToBase64(new Uint8Array(encrypted)), iv: bytesToBase64(iv) }
 }
 
 export async function decryptCookiePayload(secret: string, sessionId: string, ciphertext: string, iv: string): Promise<string> {
   const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: base64ToBytes(iv), additionalData: new TextEncoder().encode(sessionId) },
+    { name: 'AES-GCM', iv: bufferSource(base64ToBytes(iv)), additionalData: bufferSource(new TextEncoder().encode(sessionId)) },
     await encryptionKey(secret),
-    base64ToBytes(ciphertext),
+    bufferSource(base64ToBytes(ciphertext)),
   )
   return new TextDecoder().decode(decrypted)
 }
 
 function effectiveExpiry(record: CookieSessionRecord): number {
   const hard = Date.parse(record.hardExpiresAt)
+  if (record.state === 'auth_expired') return hard
   const auth = record.authExpiresAt ? Date.parse(record.authExpiresAt) : Number.POSITIVE_INFINITY
   return Math.min(hard, auth)
 }
@@ -264,6 +268,7 @@ function keyframes(points: CookieStoredPoint[], segments: CookieHistorySegment[]
   }]
   let moving = false
   let previousBearing: number | null = null
+  let dwellStart: CookieStoredPoint | null = null
   for (let index = 1; index < points.length; index += 1) {
     const previous = points[index - 1]
     const current = points[index]
@@ -271,8 +276,19 @@ function keyframes(points: CookieStoredPoint[], segments: CookieHistorySegment[]
     const distanceM = haversineMeters(previous, current)
     const speedMps = distanceM / (durationMs / 1000)
     const nowMoving = speedMps >= MOVE_SPEED_MPS
-    if (!moving && nowMoving) frames.push({ id: `move-${index}`, type: 'movement_start', at: current.capturedAt, lat: current.lat, lng: current.lng, provenance: 'observed', confidence: 'high' })
-    if (moving && speedMps <= STOP_SPEED_MPS) frames.push({ id: `stop-${index}`, type: 'movement_stop', at: current.capturedAt, lat: current.lat, lng: current.lng, provenance: 'observed', confidence: 'high' })
+    if (!moving && nowMoving) {
+      frames.push({ id: `move-${index}`, type: 'movement_start', at: current.capturedAt, lat: current.lat, lng: current.lng, provenance: 'observed', confidence: 'high' })
+      if (dwellStart && Date.parse(current.capturedAt) - Date.parse(dwellStart.capturedAt) >= 5 * 60_000) {
+        frames.push({ id: `dwell-end-${index}`, type: 'dwell_end', at: current.capturedAt, lat: current.lat, lng: current.lng, provenance: 'observed', confidence: 'medium' })
+      }
+      dwellStart = null
+    }
+    if (moving && speedMps <= STOP_SPEED_MPS) {
+      frames.push({ id: `stop-${index}`, type: 'movement_stop', at: current.capturedAt, lat: current.lat, lng: current.lng, provenance: 'observed', confidence: 'high' })
+      dwellStart = current
+      frames.push({ id: `dwell-start-${index}`, type: 'dwell_start', at: current.capturedAt, lat: current.lat, lng: current.lng, provenance: 'observed', confidence: 'medium' })
+    }
+    if (!moving && !nowMoving && !dwellStart && distanceM <= 35) dwellStart = previous
     if (distanceM >= SIGNIFICANT_DISPLACEMENT_M) frames.push({ id: `displacement-${index}`, type: 'significant_displacement', at: current.capturedAt, lat: current.lat, lng: current.lng, provenance: 'observed', confidence: 'high' })
     const bearing = bearingDegrees(previous, current)
     if (previousBearing !== null && distanceM >= 50 && angleDelta(previousBearing, bearing) >= 60) frames.push({ id: `direction-${index}`, type: 'major_direction_change', at: current.capturedAt, lat: current.lat, lng: current.lng, provenance: 'observed', confidence: 'medium' })
