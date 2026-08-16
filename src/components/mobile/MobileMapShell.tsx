@@ -5,7 +5,7 @@ import { Building2, Clock3, LocateFixed, Route, X } from 'lucide-react'
 import type { BasemapMode, CameraMode, GhostRailSegment, LocationKeyframe, LocationSnapshot, LocationSource } from '@/lib/location-source/contracts'
 import { initialCameraControllerState, planCamera, type CameraControllerState } from '@/lib/location-source/camera-controller'
 import { createMapLibreAdapter } from '@/lib/location-source/map-engine/maplibre-adapter'
-import type { BasemapProviderState, MapEngineAdapter, MapPerformanceSnapshot, MapProviderState, MapRenderState } from '@/lib/location-source/map-engine/contracts'
+import type { BasemapProviderState, MapEngineAdapter, MapPerformanceSnapshot, MapProviderState, MapRenderState, RailSegmentSelection } from '@/lib/location-source/map-engine/contracts'
 import { basemapLabel, SATELLITE_PROVIDER } from '@/lib/location-source/map-engine/satellite-provider'
 
 interface MobileMapShellProps {
@@ -96,6 +96,7 @@ export default function MobileMapShell({ source, snapshot, ghostrail, keyframes 
   const [expanded, setExpanded] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<LocationKeyframe | null>(null)
+  const [selectedRail, setSelectedRail] = useState<RailSegmentSelection | null>(null)
   const [contextRecovery, setContextRecovery] = useState(0)
   const [providerState, setProviderState] = useState<MapProviderState>('loading')
   const [performance, setPerformance] = useState<MapPerformanceSnapshot | null>(null)
@@ -139,6 +140,7 @@ export default function MobileMapShell({ source, snapshot, ghostrail, keyframes 
 
   const focusEvent = useCallback((event: LocationKeyframe) => {
     setSelectedEvent(event)
+    setSelectedRail(null)
     setCameraMode('manual')
     adapterRef.current?.updateCamera({
       mode: 'manual',
@@ -172,6 +174,7 @@ export default function MobileMapShell({ source, snapshot, ghostrail, keyframes 
       onWebglContextRestored: () => setContextRecovery((value) => Math.min(4, value + 1)),
       onProviderState: setProviderState,
       onBasemapProviderState: setBasemapProviderState,
+      onRailSegmentClick: (segment) => { setSelectedEvent(null); setSelectedRail(segment) },
       onPerformance: setPerformance,
     })
     applyCamera({ recenter: true })
@@ -202,13 +205,14 @@ export default function MobileMapShell({ source, snapshot, ghostrail, keyframes 
       {providerState === 'degraded' ? <div role="status" className="absolute inset-x-3 top-[calc(max(12px,env(safe-area-inset-top))+112px)] z-[520] rounded-2xl border border-white/15 bg-black/90 px-4 py-3 text-center text-xs text-white/80 backdrop-blur-xl">MAPA DEGRADADO · LOS DATOS DE UBICACIÓN SIGUEN AISLADOS</div> : null}
       {satelliteUnavailable ? <div role="alert" className="absolute inset-x-3 top-[calc(max(12px,env(safe-area-inset-top))+112px)] z-[525] rounded-2xl border border-white/20 bg-black/95 px-4 py-3 text-center text-xs font-semibold text-white backdrop-blur-xl">SATÉLITE NO DISPONIBLE EN ESTA ZONA</div> : null}
       {selectedEvent ? <div role="status" data-event-popup className="absolute left-3 top-[calc(max(12px,env(safe-area-inset-top))+116px)] z-[530] max-w-[calc(100vw-84px)] rounded-2xl border border-white/15 bg-black/90 px-3 py-2 text-xs shadow-xl backdrop-blur-xl"><p className="font-semibold">{EVENT_LABELS[selectedEvent.type]}</p><p className="mt-1 text-white/55">{new Date(selectedEvent.at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · {selectedEvent.provenance === 'observed' ? 'OBSERVADO' : `INFERIDO · ${selectedEvent.confidence.toUpperCase()}`}</p></div> : null}
+      {selectedRail ? <div role="status" data-rail-popup className="absolute left-3 top-[calc(max(12px,env(safe-area-inset-top))+116px)] z-[531] max-w-[calc(100vw-84px)] rounded-2xl border border-white/15 bg-black/90 px-3 py-2 text-xs shadow-xl backdrop-blur-xl"><p className="font-semibold">{selectedRail.provenance === 'observed' ? 'RECORRIDO OBSERVADO' : `RECORRIDO INFERIDO · ${selectedRail.confidence.toUpperCase()}`}</p><p className="mt-1 text-white/55">{selectedRail.method || (selectedRail.provenance === 'observed' ? 'provider-observed' : 'hipótesis')} · {new Date(selectedRail.startedAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}–{new Date(selectedRail.endedAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</p></div> : null}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] flex justify-center px-3 pt-[max(12px,env(safe-area-inset-top))]"><div className="max-w-[calc(100vw-24px)] truncate rounded-full border border-white/10 bg-black/85 px-4 py-2 text-sm font-semibold shadow-lg backdrop-blur-xl">{sourceTitle} · {freshnessText(snapshot)}</div></div>
       <div className={`absolute right-[64px] top-[calc(max(12px,env(safe-area-inset-top))+58px)] z-[505] grid grid-cols-3 overflow-hidden rounded-xl border border-white/10 bg-black/90 backdrop-blur-xl ${expanded ? 'left-[64px]' : 'left-3'}`} aria-label="Modo cartográfico">
         {BASEMAP_MODES.map((mode) => <button key={mode} type="button" aria-pressed={basemapMode === mode} onClick={() => setBasemapMode(mode)} className={`min-h-11 px-1 text-[10px] font-semibold tracking-[0.03em] ${basemapMode === mode ? 'bg-white text-black' : 'text-white/70'}`}>{basemapLabel(mode)}</button>)}
       </div>
       <div className="absolute right-3 top-[calc(max(12px,env(safe-area-inset-top))+58px)] z-[500] flex flex-col gap-2">
         <button type="button" aria-label="Activar o desactivar edificios 3D" aria-pressed={buildings3d} disabled={basemapMode !== 'vector-3d'} onClick={() => setBuildings3d((value) => !value)} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"><Building2 size={20} /></button>
-        <button type="button" aria-label="Recentrar mapa" onClick={() => { setSelectedEvent(null); applyCamera({ recenter: true }) }} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95"><LocateFixed size={20} /></button>
+        <button type="button" aria-label="Recentrar mapa" onClick={() => { setSelectedEvent(null); setSelectedRail(null); applyCamera({ recenter: true }) }} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95"><LocateFixed size={20} /></button>
         <button type="button" aria-label="Mostrar u ocultar GhostRail" aria-pressed={railVisible} onClick={() => setRailVisible((value) => !value)} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95"><Route size={20} /></button>
         {keyframes.length ? <button type="button" aria-label="Eventos 24 horas" aria-pressed={eventsOpen} onClick={() => setEventsOpen((value) => !value)} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95"><Clock3 size={20} /></button> : null}
       </div>
