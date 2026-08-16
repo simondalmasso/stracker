@@ -155,7 +155,8 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
     const restored = loadCookieSessionHandle()
     if (!restored) return
     handleRef.current = restored
-    void hydrate(restored, false)
+    const timer = window.setTimeout(() => { void hydrate(restored, false) }, 0)
+    return () => window.clearTimeout(timer)
   }, [hydrate])
 
   const doRefresh = useCallback(async () => {
