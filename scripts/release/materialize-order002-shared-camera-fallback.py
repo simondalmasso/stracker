@@ -57,5 +57,10 @@ for required in [
     if required not in source:
         raise SystemExit('SHARED_CAMERA_RUNTIME_MARKER_MISSING_' + required.replace(' ', '_'))
 
+if source.count("buildingState') === '3D_FALLBACK'") != 1:
+    raise SystemExit('SHARED_CAMERA_BROWSER_FALLBACK_COUNT_INVALID')
+if source.count("state.buildingState === '3D_FALLBACK'") != 1:
+    raise SystemExit('SHARED_CAMERA_NODE_FALLBACK_COUNT_INVALID')
+
 output_path.write_text(source)
 print('ORDER002_SHARED_CAMERA_FALLBACK_MATERIALIZATION=PASS')
