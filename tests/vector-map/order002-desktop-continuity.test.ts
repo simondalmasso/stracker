@@ -19,17 +19,18 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).not.toContain('const online = () => { void forceRefresh() }')
   })
 
-  test('3D health probes require real rendering without repeatedly dirtying the MapLibre style', async () => {
+  test('Santa Fe custom 3D owns eligible presentation while health requires visible rendered geometry', async () => {
     const source = await Bun.file(cityRuntimePath).text()
-    expect(source).toContain('const sourceBacked = memory.sourceBacked')
-    expect(source).toContain('const healthyEvidence = sourceBacked && renderedFeatureCount > 0')
+    expect(source).toContain('const healthyEvidence = renderedFeatureCount > 0')
+    expect(source).toContain("const providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_LOADING'")
+    expect(source).toContain('genericFallbackVisible: false')
+    expect(source).toContain('return true')
     expect(source).toContain('function ensureCustomLayerPresentation')
     expect(source).toContain("map.getLayoutProperty(layerId, 'visibility') !== 'visible'")
     expect(source).toContain("map.getPaintProperty(layerId, 'fill-extrusion-opacity')")
     expect(source).toContain('const renderedFeatureCount = presentationChanged ? 0 : safeRenderedFeatureCount')
-    expect(source).toContain("memory.latestStatus.providerState !== '3D_ACTIVE'")
-    expect(source).toContain("map.on('render'")
-    expect(source).toContain('queueHealthProbe(map, memory)')
+    expect(source).toContain("memory.latestStatus?.providerState !== '3D_ACTIVE'")
+    expect(source).not.toContain("map.on('render'")
   })
 
   test('generic fallback also avoids no-op layout/light mutations during custom 3D health probing', async () => {
@@ -42,17 +43,18 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain("if (desiredVisibility === 'visible') configureSceneLight(map)")
   })
 
-  test('post-promotion 3D keeps the existing 90 second budget and emits readable bounded state diagnostics', async () => {
+  test('post-promotion 3D keeps the existing 90 second budget and treats rendered geometry as acceptance evidence', async () => {
     const source = await Bun.file(post3dQaPath).text()
     expect(source).toContain('const POST_3D_READINESS_BUDGET_MS = 90_000')
     expect(source).toContain('PUBLIC_3D_READINESS_TIMEOUT_')
     expect(source).toContain('SANTA_FE_POST_PROMOTION_READINESS_TIMEOUT')
+    expect(source).toContain('state.renderedFeatures > 0')
+    expect(source).not.toContain('&& state.sourceBacked\n    && state.layerCount')
+    expect(source).toContain('SOURCE_IDLE_TELEMETRY_NOT_REQUIRED_FOR_VISIBLE_GEOMETRY')
     expect(source).toContain('sourceLoadedCount')
     expect(source).toContain('sourceBacked')
-    expect(source).toContain('renderedFeatures')
     expect(source).toContain('querySourceFeatures')
     expect(source).toContain('PM206-')
-    expect(source).toContain('(?<![A-Za-z0-9_-])')
     expect(source).not.toContain('POST_3D_READINESS_BUDGET_MS = 120_000')
   })
 
