@@ -170,9 +170,6 @@ function installHealthObservers(map: MapLibreMap, memory: RuntimeHealthMemory): 
     if (!isSantaFe3dSourceId(event.sourceId)) return
     queueHealthProbe(map, memory)
   })
-  map.on('render', () => {
-    if (memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE') queueHealthProbe(map, memory)
-  })
   map.on('idle', () => {
     if (memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE') queueHealthProbe(map, memory)
   })
@@ -213,7 +210,7 @@ function ensureCustomLayerPresentation(map: MapLibreMap, layerIds: string[], des
 
 function statusLabel(state: SantaFe3dProviderState): string {
   return ({
-    '3D_LOADING': '3D CARGANDO · RESPALDO ACTIVO',
+    '3D_LOADING': '3D CARGANDO · CIUDAD SANTA FE',
     '3D_ACTIVE': '3D ACTIVO · CIUDAD SANTA FE',
     '3D_FALLBACK': '3D RESPALDO · EDIFICIOS GENÉRICOS',
     '3D_UNAVAILABLE': '3D NO DISPONIBLE',
@@ -345,7 +342,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.maxSourceLoadedCount = Math.max(memory.maxSourceLoadedCount, loadedSourceIds.length)
   }
   const sourceBacked = memory.sourceBacked
-  const healthyEvidence = sourceBacked && renderedFeatureCount > 0
+  const healthyEvidence = renderedFeatureCount > 0
 
   if (healthyEvidence) {
     memory.consecutiveHealthy += 1
@@ -360,12 +357,8 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     queueHealthProbe(map, memory)
   }
 
-  const sourceLoaded = sourceBacked || loadedSourceIds.length > 0
-  const providerState: SantaFe3dProviderState = memory.healthy
-    ? '3D_ACTIVE'
-    : sourceLoaded || sourceFeatureCount > 0
-      ? '3D_FALLBACK'
-      : '3D_LOADING'
+  const sourceLoaded = sourceBacked || loadedSourceIds.length > 0 || renderedFeatureCount > 0
+  const providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_LOADING'
   publishStatus(map, {
     eligible: true,
     configured: existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length,
@@ -379,10 +372,10 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     customLayerCount: existingLayerIds.length,
     customRenderedFeatureCount: renderedFeatureCount,
     customQuerySourceFeatureCount: sourceFeatureCount,
-    genericFallbackVisible: !memory.healthy,
+    genericFallbackVisible: false,
     styleGeneration: memory.styleGeneration,
   })
-  return memory.healthy
+  return true
 }
 
 export function isSantaFe3dSourceId(sourceId: string | undefined): boolean {
