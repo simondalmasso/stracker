@@ -45,7 +45,7 @@ function hideUncontrolledBuildingExtrusions(map: MapLibreMap): void {
     const candidate = layer as typeof layer & { 'source-layer'?: string }
     const sourceLayer = candidate['source-layer']?.toLowerCase() ?? ''
     const identity = `${layer.id} ${sourceLayer}`.toLowerCase()
-    if (sourceLayer === 'building' || identity.includes('building')) {
+    if ((sourceLayer === 'building' || identity.includes('building')) && map.getLayoutProperty(layer.id, 'visibility') !== 'none') {
       map.setLayoutProperty(layer.id, 'visibility', 'none')
     }
   }
@@ -111,12 +111,12 @@ export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOpt
   hideUncontrolledBuildingExtrusions(map)
 
   if (map.getLayer(STRACKER_GENERIC_BUILDING_LAYER_ID)) {
-    map.setLayoutProperty(
-      STRACKER_GENERIC_BUILDING_LAYER_ID,
-      'visibility',
-      options.enabled && options.density !== 'off' ? 'visible' : 'none',
-    )
-    if (options.enabled && options.density !== 'off') configureSceneLight(map)
+    const desiredVisibility = options.enabled && options.density !== 'off' ? 'visible' : 'none'
+    const currentVisibility = map.getLayoutProperty(STRACKER_GENERIC_BUILDING_LAYER_ID, 'visibility')
+    if (currentVisibility !== desiredVisibility) {
+      map.setLayoutProperty(STRACKER_GENERIC_BUILDING_LAYER_ID, 'visibility', desiredVisibility)
+      if (desiredVisibility === 'visible') configureSceneLight(map)
+    }
     return true
   }
   if (!options.enabled || options.density === 'off') return false
