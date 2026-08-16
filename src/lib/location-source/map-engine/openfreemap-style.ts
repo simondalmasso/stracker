@@ -182,7 +182,8 @@ export function configureBuildings3d(map: MapLibreMap, options: BuildingLayerOpt
       ],
       'fill-extrusion-opacity': options.density === 'reduced' ? 0.78 : 0.92,
       'fill-extrusion-vertical-gradient': true,
-    }, before)
+    },
+  }, before)
   configureSceneLight(map)
   return true
 }
