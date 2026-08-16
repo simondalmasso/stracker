@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 const cookiePanelPath = 'src/components/mobile/CookieSessionPanel.tsx'
 const cityRuntimePath = 'src/lib/location-source/map-engine/santa-fe-city-runtime.ts'
+const openFreeMapStylePath = 'src/lib/location-source/map-engine/openfreemap-style.ts'
 const releaseWrapperPath = 'scripts/release/cloudflare-controlled-physical-pilot-release.sh'
 const publicQaPath = 'scripts/release/shared-cookie-camera-continuity-qa.ts'
 const post3dQaPath = 'scripts/release/santa-fe-post-promotion-browser-qa.ts'
@@ -29,6 +30,15 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain("memory.latestStatus.providerState !== '3D_ACTIVE'")
     expect(source).toContain("map.on('render'")
     expect(source).toContain('queueHealthProbe(map, memory)')
+  })
+
+  test('generic fallback also avoids no-op layout/light mutations during custom 3D health probing', async () => {
+    const source = await Bun.file(openFreeMapStylePath).text()
+    expect(source).toContain("map.getLayoutProperty(layer.id, 'visibility') !== 'none'")
+    expect(source).toContain('const desiredVisibility = options.enabled && options.density !== \'off\' ? \'visible\' : \'none\'')
+    expect(source).toContain('const currentVisibility = map.getLayoutProperty(STRACKER_GENERIC_BUILDING_LAYER_ID, \'visibility\')')
+    expect(source).toContain('if (currentVisibility !== desiredVisibility)')
+    expect(source).toContain("if (desiredVisibility === 'visible') configureSceneLight(map)")
   })
 
   test('post-promotion 3D keeps the existing 90 second budget and emits readable bounded state diagnostics', async () => {
