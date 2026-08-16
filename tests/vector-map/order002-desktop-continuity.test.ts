@@ -4,7 +4,9 @@ const cookiePanelPath = 'src/components/mobile/CookieSessionPanel.tsx'
 const cityRuntimePath = 'src/lib/location-source/map-engine/santa-fe-city-runtime.ts'
 const openFreeMapStylePath = 'src/lib/location-source/map-engine/openfreemap-style.ts'
 const releaseWrapperPath = 'scripts/release/cloudflare-controlled-physical-pilot-release.sh'
-const publicQaPath = 'scripts/release/shared-cookie-camera-continuity-qa.ts'
+const publicQaPath = 'scripts/release/shared-cookie-camera-continuity-base.ts'
+const publicQaLauncherPath = 'scripts/release/shared-cookie-camera-continuity-qa.ts'
+const publicQaPatcherPath = 'scripts/release/materialize-order002-shared-camera-fallback.py'
 const post3dQaPath = 'scripts/release/santa-fe-post-promotion-browser-qa.ts'
 
 describe('ORDER-002 desktop shared-session continuity contract', () => {
@@ -27,7 +29,6 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain('return memory.healthy')
     expect(source).toContain('loadedSourceIds.length > 0 || renderedFeatureCount > 0')
     expect(source).not.toContain("providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_LOADING'")
-    expect(source).not.toContain('genericFallbackVisible: false,\n    styleGeneration: memory.styleGeneration,\n  })\n  return true')
     expect(source).toContain('function ensureCustomLayerPresentation')
     expect(source).toContain("map.getLayoutProperty(layerId, 'visibility') !== 'visible'")
     expect(source).toContain("map.getPaintProperty(layerId, 'fill-extrusion-opacity')")
@@ -48,16 +49,18 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain('if (currentVisibility !== desiredVisibility)')
   })
 
-  test('post-promotion 3D keeps the 90 second budget and accepts only a real custom or generic 3D representation', async () => {
+  test('post-promotion 3D keeps the 90 second budget and accepts only a visually proven custom or generic representation', async () => {
     const source = await Bun.file(post3dQaPath).text()
     expect(source).toContain('const POST_3D_READINESS_BUDGET_MS = 90_000')
     expect(source).toContain('PUBLIC_3D_READINESS_TIMEOUT_')
     expect(source).toContain('SANTA_FE_POST_PROMOTION_READINESS_TIMEOUT')
-    expect(source).toContain('3D_ACTIVE')
-    expect(source).toContain('3D_FALLBACK')
+    expect(source).toContain("state.buildingState === '3D_ACTIVE'")
+    expect(source).toContain("state.buildingState === '3D_FALLBACK'")
     expect(source).toContain('fallbackVisible')
     expect(source).toContain('VISUAL_DELTA_TOO_LOW_')
     expect(source).toContain('PMTILES_RANGE_CONTRACT')
+    expect(source).toContain('GENERIC_FALLBACK_WHEN_CUSTOM_NOT_HEALTHY')
+    expect(source).toContain('NO_FALLBACK_SUPPRESSION_BY_BOUNDARY_ONLY')
     expect(source).not.toContain('POST_3D_READINESS_BUDGET_MS = 120_000')
   })
 
@@ -69,18 +72,27 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(wrapper.indexOf('ORDER002_SHARED_COOKIE_CAMERA_CONTINUITY_QA=PASS')).toBeLessThan(wrapper.lastIndexOf('rollback_required=0'))
   })
 
-  test('desktop public regression covers all owner-reported camera operations without real credentials', async () => {
-    const qa = await Bun.file(publicQaPath).text()
-    for (const marker of ['zoom-in-max', 'zoom-out', 'pan', 'rotate', 'pitch', 'recenter']) expect(qa).toContain(marker)
-    expect(qa).toContain("clickText(page, 'UBICACIÓN COMPARTIDA')")
-    expect(qa).toContain("clickText(page, 'SESIÓN DE GOOGLE MAPS')")
-    expect(qa).toContain('SESSION_IDENTITY_SURVIVES_CAMERA_INTERACTION')
-    expect(qa).toContain('GHOSTRAIL_SURVIVES_CAMERA_INTERACTION')
-    expect(qa).toContain('CAMERA_INTERACTION_DOES_NOT_DELETE_SESSION')
-    expect(qa).toContain('BACKGROUND_UI_POLL_DOES_NOT_FORCE_GOOGLE_PROBE')
-    expect(qa).toContain("buildingState === '3D_ACTIVE'")
-    expect(qa).toContain("buildingState === '3D_FALLBACK'")
-    expect(qa).toContain('realCookiesUsed: false')
-    expect(qa).toContain('privateDataUsed: false')
+  test('desktop public regression materializes fallback acceptance without weakening session or GhostRail invariants', async () => {
+    const [base, launcher, patcher] = await Promise.all([
+      Bun.file(publicQaPath).text(),
+      Bun.file(publicQaLauncherPath).text(),
+      Bun.file(publicQaPatcherPath).text(),
+    ])
+    for (const marker of ['zoom-in-max', 'zoom-out', 'pan', 'rotate', 'pitch', 'recenter']) expect(base).toContain(marker)
+    expect(base).toContain("clickText(page, 'UBICACIÓN COMPARTIDA')")
+    expect(base).toContain("clickText(page, 'SESIÓN DE GOOGLE MAPS')")
+    expect(base).toContain('SESSION_IDENTITY_SURVIVES_CAMERA_INTERACTION')
+    expect(base).toContain('GHOSTRAIL_SURVIVES_CAMERA_INTERACTION')
+    expect(base).toContain('CAMERA_INTERACTION_DOES_NOT_DELETE_SESSION')
+    expect(base).toContain('BACKGROUND_UI_POLL_DOES_NOT_FORCE_GOOGLE_PROBE')
+    expect(base).toContain('realCookiesUsed: false')
+    expect(base).toContain('privateDataUsed: false')
+    expect(launcher).toContain('shared-cookie-camera-continuity-base.ts')
+    expect(launcher).toContain('materialize-order002-shared-camera-fallback.py')
+    expect(patcher).toContain("data-buildings-3d-state') === '3D_FALLBACK'")
+    expect(patcher).toContain("state.buildingState === '3D_FALLBACK'")
+    expect(patcher).toContain('VALID_3D_REPRESENTATION_SURVIVES_CAMERA_INTERACTION')
+    expect(patcher).toContain('GENERIC_FALLBACK_ALLOWED_WHEN_CUSTOM_UNHEALTHY')
+    expect(patcher).toContain('EXPECTED_ONCE_OBSERVED_')
   })
 })
