@@ -195,6 +195,22 @@ function safeSourceFeatureCount(map: MapLibreMap, sourceIds: string[]): number {
   return total
 }
 
+function ensureCustomLayerPresentation(map: MapLibreMap, layerIds: string[], desiredOpacity: number): boolean {
+  let changed = false
+  for (const layerId of layerIds) {
+    if (map.getLayoutProperty(layerId, 'visibility') !== 'visible') {
+      map.setLayoutProperty(layerId, 'visibility', 'visible')
+      changed = true
+    }
+    const currentOpacity = Number(map.getPaintProperty(layerId, 'fill-extrusion-opacity'))
+    if (!Number.isFinite(currentOpacity) || Math.abs(currentOpacity - desiredOpacity) > 0.0001) {
+      map.setPaintProperty(layerId, 'fill-extrusion-opacity', desiredOpacity)
+      changed = true
+    }
+  }
+  return changed
+}
+
 function statusLabel(state: SantaFe3dProviderState): string {
   return ({
     '3D_LOADING': '3D CARGANDO · RESPALDO ACTIVO',
@@ -273,7 +289,7 @@ function hideCustomLayers(map: MapLibreMap): number {
   for (const layerId of SANTA_FE_3D_LAYER_IDS) {
     if (!map.getLayer(layerId)) continue
     count += 1
-    map.setLayoutProperty(layerId, 'visibility', 'none')
+    if (map.getLayoutProperty(layerId, 'visibility') !== 'none') map.setLayoutProperty(layerId, 'visibility', 'none')
   }
   return count
 }
@@ -316,15 +332,12 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   const existingLayerIds = SANTA_FE_3D_LAYER_IDS.filter((layerId) => Boolean(map.getLayer(layerId)))
   const existingSourceIds = SANTA_FE_3D_SOURCE_IDS.filter((sourceId) => Boolean(map.getSource(sourceId)))
   const desiredOpacity = density === 'reduced' ? 0.82 : 0.94
-  for (const layerId of existingLayerIds) {
-    map.setLayoutProperty(layerId, 'visibility', 'visible')
-    map.setPaintProperty(layerId, 'fill-extrusion-opacity', desiredOpacity)
-  }
+  const presentationChanged = ensureCustomLayerPresentation(map, existingLayerIds, desiredOpacity)
 
   const loadedSourceIds = existingSourceIds.filter((sourceId) => {
     try { return map.isSourceLoaded(sourceId) } catch { return false }
   })
-  const renderedFeatureCount = safeRenderedFeatureCount(map, existingLayerIds)
+  const renderedFeatureCount = presentationChanged ? 0 : safeRenderedFeatureCount(map, existingLayerIds)
   const sourceFeatureCount = safeSourceFeatureCount(map, existingSourceIds)
   const sourceBackedNow = loadedSourceIds.length > 0 && existingLayerIds.length === SANTA_FE_3D_LAYER_IDS.length
   if (sourceBackedNow) {
@@ -342,7 +355,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.consecutiveHealthy = 0
   }
   memory.healthy = healthyEvidence
-  if (!memory.healthy && (sourceBacked || sourceFeatureCount > 0) && memory.consecutiveEmpty <= 120) {
+  if (!memory.healthy && (presentationChanged || sourceBacked || sourceFeatureCount > 0) && memory.consecutiveEmpty <= 120) {
     map.triggerRepaint()
     queueHealthProbe(map, memory)
   }
