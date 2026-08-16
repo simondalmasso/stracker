@@ -57,7 +57,6 @@ export function santaFe3dLayerDefinition(
     source: sourceId,
     'source-layer': SANTA_FE_3D_SOURCE_LAYER,
     minzoom: density === 'reduced' ? 15 : 13,
-    maxzoom: 20,
     filter: ['>=', ['to-number', ['get', 'height'], 0], 3],
     layout: { visibility: 'none' },
     paint: {
