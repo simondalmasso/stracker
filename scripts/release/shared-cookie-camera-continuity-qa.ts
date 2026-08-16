@@ -14,7 +14,7 @@ const materialize = Bun.spawnSync(['python', patcher, source, runtime], {
 if (materialize.exitCode !== 0) throw new Error(`ORDER002_SHARED_CAMERA_MATERIALIZATION_FAILED_${materialize.exitCode}`)
 
 try {
-  const smoke = Bun.spawnSync(['bun', runtime], {
+  const smoke = Bun.spawnSync([process.execPath, runtime], {
     cwd: process.cwd(),
     env: process.env,
     stdout: 'inherit',
