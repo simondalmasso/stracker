@@ -170,8 +170,11 @@ function installHealthObservers(map: MapLibreMap, memory: RuntimeHealthMemory): 
     if (!isSantaFe3dSourceId(event.sourceId)) return
     queueHealthProbe(map, memory)
   })
+  map.on('render', () => {
+    if (memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE') queueHealthProbe(map, memory)
+  })
   map.on('idle', () => {
-    if (!memory.healthy || memory.consecutiveEmpty > 0) queueHealthProbe(map, memory)
+    if (memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE') queueHealthProbe(map, memory)
   })
 }
 
@@ -333,7 +336,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.maxSourceLoadedCount = Math.max(memory.maxSourceLoadedCount, loadedSourceIds.length)
   }
   const sourceBacked = memory.sourceBacked
-  const healthyEvidence = renderedFeatureCount > 0 || sourceBacked
+  const healthyEvidence = sourceBackedNow && renderedFeatureCount > 0
 
   if (healthyEvidence) {
     memory.consecutiveHealthy += 1
@@ -342,14 +345,13 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.consecutiveEmpty += 1
     memory.consecutiveHealthy = 0
   }
-  if (!memory.healthy && memory.consecutiveHealthy >= 1) memory.healthy = true
-  if (memory.healthy && !sourceBacked && memory.consecutiveEmpty >= 2) memory.healthy = false
-  if (!memory.healthy && sourceFeatureCount > 0 && memory.consecutiveEmpty <= 8) {
+  memory.healthy = healthyEvidence
+  if (!memory.healthy && (sourceBackedNow || sourceFeatureCount > 0) && memory.consecutiveEmpty <= 120) {
     map.triggerRepaint()
     queueHealthProbe(map, memory)
   }
 
-  const sourceLoaded = sourceBacked || loadedSourceIds.length > 0
+  const sourceLoaded = loadedSourceIds.length > 0
   const providerState: SantaFe3dProviderState = memory.healthy
     ? '3D_ACTIVE'
     : sourceLoaded || sourceFeatureCount > 0
