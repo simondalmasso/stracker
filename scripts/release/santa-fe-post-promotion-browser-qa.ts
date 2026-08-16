@@ -26,9 +26,9 @@ function digest(value: string | Uint8Array): string {
 function safe(value: unknown): string {
   return String(value instanceof Error ? value.message : value || 'UNKNOWN')
     .replace(/https?:\/\/\S+/gi, '[URL]')
-    .replace(/[A-Za-z0-9_-]{43}(?:\.[A-Za-z0-9_-]{43})?/g, '[VALUE]')
+    .replace(/(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?:\.[A-Za-z0-9_-]{43})?(?![A-Za-z0-9_-])/g, '[VALUE]')
     .replace(/[^A-Za-z0-9_[\]-]+/g, '_')
-    .slice(0, 180)
+    .slice(0, 260)
 }
 
 type Public3dState = {
@@ -71,7 +71,7 @@ function public3dStateCode(state: Public3dState | null, transport: { pmtiles206:
     `PM206-${transport.pmtiles206}`,
     `CR-${transport.contentRange}`,
     `QT-${transport.queryTransport}`,
-  ].map(safe).join('__')
+  ].map((part) => part.replace(/[^A-Za-z0-9-]+/g, '_')).join('__')
 }
 
 async function readPublic3dState(page: Page): Promise<Public3dState> {
@@ -233,7 +233,11 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       if (public3dReady(state)) break
       await Bun.sleep(500)
     }
-    ok(state && public3dReady(state), `PUBLIC_3D_READINESS_TIMEOUT_${public3dStateCode(state, { pmtiles206, contentRange, queryTransport })}`)
+    if (!state || !public3dReady(state)) {
+      const diagnostic = public3dStateCode(state, { pmtiles206, contentRange, queryTransport })
+      console.log(`SANTA_FE_POST_PROMOTION_READINESS_TIMEOUT ATTEMPT=${attempt} STATE=${diagnostic}`)
+      throw new QaFailure(`PUBLIC_3D_READINESS_TIMEOUT_${diagnostic}`)
+    }
 
     const clip = await canvas.boundingBox()
     ok(clip, 'CANVAS_BOUNDS_MISSING')
@@ -309,7 +313,7 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
 ok(browserEvidence, `POST_3D_BROWSER_FAILED_${firstFailure}`)
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v6',
+  schema: 'stracker.santa-fe-post-promotion-3d.v7',
   sourceSha: expectedSha,
   expectedVersionIdHash: digest(expectedVersionId),
   identityAttempts,
