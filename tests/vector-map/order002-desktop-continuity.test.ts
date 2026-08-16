@@ -20,7 +20,7 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
   test('3D ACTIVE requires rendered custom geometry and continues probing until rendered', async () => {
     const source = await Bun.file(cityRuntimePath).text()
     expect(source).toContain('const healthyEvidence = sourceBackedNow && renderedFeatureCount > 0')
-    expect(source).toContain("memory.latestStatus?.providerState !== '3D_ACTIVE'")
+    expect(source).toContain("memory.latestStatus.providerState !== '3D_ACTIVE'")
     expect(source).toContain("map.on('render'")
     expect(source).toContain('queueHealthProbe(map, memory)')
   })
