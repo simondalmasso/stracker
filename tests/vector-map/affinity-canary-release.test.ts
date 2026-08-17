@@ -210,6 +210,19 @@ describe('Santa Fe query-range release contract', () => {
     expect(core).toContain('PUBLIC_ROLLBACK_EXECUTED=YES')
   })
 
+  test('zero-percent preflight proves candidate PMTiles bytes match committed content-addressed assets', async () => {
+    const source = await Bun.file('scripts/release/santa-fe-zero-percent-preflight.ts').text()
+    expect(source).toContain("manifest.asset_sha256")
+    expect(source).toContain("manifest.asset_sizes")
+    expect(source).toContain("offsetsPerAsset: 'START_MIDDLE_END'")
+    expect(source).toContain("PMTILES_CANDIDATE_SLICE_BYTES_MISMATCH")
+    expect(source).toContain("PMTILES_CANDIDATE_BYTES_MATCH_COMMITTED_ASSETS: 'PASS'")
+    expect(source).toContain("PMTILES_CANDIDATE_TOTAL_SIZE_MATCH: 'PASS'")
+    expect(source).toContain('ZERO_PERCENT_PMTILES_BYTE_PROOF=PASS')
+    expect(source).toContain("rawBytesRetained: false")
+    expect(source).toContain("sliceHashesRetained: false")
+  })
+
   test('materializes the zero-percent preflight exactly once and never promotes before canary QA', async () => {
     const config = await Bun.file('native-sharing-cloudflare/wrangler.release.jsonc').json()
     expect(config.assets?.run_worker_first || []).toContain('/data/santa-fe-3d/*.pmtiles')
