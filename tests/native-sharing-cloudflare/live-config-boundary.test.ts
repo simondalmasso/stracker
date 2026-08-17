@@ -1,3 +1,4 @@
+import './public-pmtiles-native-range.test'
 import { describe, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 
@@ -70,6 +71,7 @@ describe('live native sharing Cloudflare boundary', () => {
       '/shared/*',
       '/__stracker/version.json',
       '/__stracker/build.json',
+      '/data/santa-fe-3d/*.pmtiles',
     ]))
     expect(publicConfig).not.toHaveProperty('durable_objects')
     expect(publicConfig).not.toHaveProperty('exports')
