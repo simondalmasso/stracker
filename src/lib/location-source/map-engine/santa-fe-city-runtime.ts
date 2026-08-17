@@ -5,6 +5,7 @@ import { PMTiles, Protocol } from 'pmtiles'
 import { SANTA_FE_3D_ASSET_PATHS, SANTA_FE_3D_SOURCE_LAYER } from './santa-fe-3d-generated'
 import {
   SANTA_FE_3D_LAYER_IDS,
+  SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES,
   SANTA_FE_3D_SOURCE_IDS,
   isInsideSantaFe3dBounds,
   santaFe3dLayerDefinition,
@@ -362,7 +363,7 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
     memory.maxSourceLoadedCount = Math.max(memory.maxSourceLoadedCount, loadedSourceIds.length)
   }
   const sourceBacked = memory.sourceBacked
-  const healthyEvidence = sourceBacked && renderedFeatureCount > 0
+  const healthyEvidence = sourceBacked && renderedFeatureCount >= SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES
 
   if (healthyEvidence) {
     memory.consecutiveHealthy += 1
