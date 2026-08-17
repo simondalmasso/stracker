@@ -33,8 +33,10 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain("map.getLayoutProperty(layerId, 'visibility') !== 'visible'")
     expect(source).toContain("map.getPaintProperty(layerId, 'fill-extrusion-opacity')")
     expect(source).toContain('const renderedFeatureCount = presentationChanged ? 0 : safeRenderedFeatureCount')
+    expect(source).toContain("map.on('render', () => {")
     expect(source).toContain("memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE'")
-    expect(source).not.toContain("map.on('render'")
+    expect(source).toContain('queueHealthProbe(map, memory)')
+    expect(source).toContain('configureBuildings3d(map, { enabled: !memory.healthy, density })')
   })
 
   test('generic fallback avoids no-op mutations and never treats Santa Fe custom layers as fallback candidates', async () => {
@@ -52,11 +54,15 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
   test('post-promotion 3D keeps the 90 second budget and proves toggle OFF by React control plus visual delta', async () => {
     const source = await Bun.file(post3dQaPath).text()
     expect(source).toContain('const POST_3D_READINESS_BUDGET_MS = 90_000')
+    expect(source).toContain('const CUSTOM_PRIMARY_GRACE_MS = 30_000')
+    expect(source).toContain('const MIN_VISUAL_CHANGED_PIXELS = 8_000')
     expect(source).toContain('PUBLIC_3D_READINESS_TIMEOUT_')
     expect(source).toContain('SANTA_FE_POST_PROMOTION_READINESS_TIMEOUT')
     expect(source).toContain("state.buildingState === '3D_ACTIVE'")
     expect(source).toContain("state.buildingState === '3D_FALLBACK'")
     expect(source).toContain('fallbackVisible')
+    expect(source).toContain('primaryGraceDeadline')
+    expect(source).toContain('while (!custom3dReady(state) && Date.now() < primaryGraceDeadline)')
     expect(source).toContain("getAttribute('aria-pressed') === 'false'")
     expect(source).toContain('toggleControlOffConfirmed: true')
     expect(source).toContain('VISUAL_DELTA_TOO_LOW_')
