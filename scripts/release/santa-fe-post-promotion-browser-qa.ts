@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import puppeteer, { type Page } from 'puppeteer-core'
 import sharp from 'sharp'
+import { SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES } from '../../src/lib/location-source/map-engine/santa-fe-city-config'
 
 const target = new URL(process.env.STRACKER_QA_URL || '')
 const expectedSha = process.env.STRACKER_EXPECTED_SHA || ''
@@ -50,7 +51,7 @@ type Public3dState = {
 function custom3dReady(state: Public3dState): boolean {
   return state.buildingState === '3D_ACTIVE'
     && state.layerCount >= 4
-    && state.renderedFeatures > 0
+    && state.renderedFeatures >= SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES
     && !state.fallbackVisible
 }
 
@@ -279,6 +280,8 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
     const postToggleState = await readPublic3dState(page)
     const offImage = await page.screenshot({ clip })
     const changedPixels = await pixelDelta(onImage, offImage)
+    const measurementState = public3dStateCode(state, { pmtiles206, contentRange, queryTransport })
+    console.log(`SANTA_FE_POST_PROMOTION_MEASURE ATTEMPT=${attempt} REPRESENTATION=${representation(state)} CUSTOM_PRIMARY=${customPrimaryReached ? 'YES' : 'NO'} CHANGED_PIXELS=${changedPixels} STATE=${measurementState}`)
 
     ok(pmtiles206 > 0 && contentRange > 0 && queryTransport > 0, 'PMTILES_RANGE_CONTRACT')
     ok(changedPixels >= MIN_VISUAL_CHANGED_PIXELS, `VISUAL_DELTA_TOO_LOW_${changedPixels}`)
@@ -298,6 +301,7 @@ async function runBrowserAttempt(attempt: number): Promise<Record<string, unknow
       representation: representation(state),
       customPrimaryReached,
       fallbackObservedDuringConvergence: fallbackObserved,
+      customHealthMinRenderedFeatures: SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES,
       customSourceCount: state.sourceCount,
       customSourceLoadedCount: state.sourceLoadedCount,
       customSourceBacked: state.sourceBacked,
@@ -355,7 +359,7 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
 ok(browserEvidence, `POST_3D_BROWSER_FAILED_${firstFailure}`)
 
 const result = {
-  schema: 'stracker.santa-fe-post-promotion-3d.v11',
+  schema: 'stracker.santa-fe-post-promotion-3d.v12',
   sourceSha: expectedSha,
   expectedVersionIdHash: digest(expectedVersionId),
   identityAttempts,
@@ -377,6 +381,7 @@ const result = {
     PUBLIC_RUNTIME_EXACT_HEAD: 'PASS',
     WEB_3D_DENSE_CITY: 'PASS',
     POST_PROMOTION_VALID_3D_REPRESENTATION: 'PASS',
+    CUSTOM_PRIMARY_REQUIRES_DENSE_RENDERED_HEALTH: 'PASS',
     GENERIC_FALLBACK_WHEN_CUSTOM_NOT_HEALTHY: 'PASS',
     NO_FALLBACK_SUPPRESSION_BY_BOUNDARY_ONLY: 'PASS',
     CUSTOM_PRIMARY_GRACE_WITHIN_READINESS_BUDGET: 'PASS',
