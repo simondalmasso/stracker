@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 const cookiePanelPath = 'src/components/mobile/CookieSessionPanel.tsx'
+const cityConfigPath = 'src/lib/location-source/map-engine/santa-fe-city-config.ts'
 const cityRuntimePath = 'src/lib/location-source/map-engine/santa-fe-city-runtime.ts'
 const openFreeMapStylePath = 'src/lib/location-source/map-engine/openfreemap-style.ts'
 const releaseWrapperPath = 'scripts/release/cloudflare-controlled-physical-pilot-release.sh'
@@ -21,9 +22,13 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).not.toContain('const online = () => { void forceRefresh() }')
   })
 
-  test('Santa Fe custom 3D only owns presentation when visibly healthy and otherwise fails over', async () => {
-    const source = await Bun.file(cityRuntimePath).text()
-    expect(source).toContain('const healthyEvidence = sourceBacked && renderedFeatureCount > 0')
+  test('Santa Fe custom 3D only owns presentation when densely visible and otherwise fails over', async () => {
+    const [config, source] = await Promise.all([
+      Bun.file(cityConfigPath).text(),
+      Bun.file(cityRuntimePath).text(),
+    ])
+    expect(config).toContain('SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES = 80')
+    expect(source).toContain('renderedFeatureCount >= SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES')
     expect(source).toContain("const providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_FALLBACK'")
     expect(source).toContain('genericFallbackVisible: !memory.healthy')
     expect(source).toContain('return memory.healthy')
@@ -35,6 +40,7 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain('const renderedFeatureCount = presentationChanged ? 0 : safeRenderedFeatureCount')
     expect(source).toContain("map.on('render', () => {")
     expect(source).toContain("memory.latestStatus?.eligible && memory.latestStatus.providerState !== '3D_ACTIVE'")
+    expect(source).toContain('const HEALTH_PROBE_INTERVAL_MS = 250')
     expect(source).toContain('queueHealthProbe(map, memory)')
     expect(source).toContain('configureBuildings3d(map, { enabled: !memory.healthy, density })')
   })
@@ -51,13 +57,16 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain('if (currentVisibility !== desiredVisibility)')
   })
 
-  test('post-promotion 3D keeps the 90 second budget and proves toggle OFF by React control plus visual delta', async () => {
+  test('post-promotion 3D keeps the 90 second budget and proves dense custom or real fallback visual effect', async () => {
     const source = await Bun.file(post3dQaPath).text()
+    expect(source).toContain('SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES')
+    expect(source).toContain('state.renderedFeatures >= SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES')
     expect(source).toContain('const POST_3D_READINESS_BUDGET_MS = 90_000')
     expect(source).toContain('const CUSTOM_PRIMARY_GRACE_MS = 30_000')
     expect(source).toContain('const MIN_VISUAL_CHANGED_PIXELS = 8_000')
     expect(source).toContain('PUBLIC_3D_READINESS_TIMEOUT_')
     expect(source).toContain('SANTA_FE_POST_PROMOTION_READINESS_TIMEOUT')
+    expect(source).toContain('SANTA_FE_POST_PROMOTION_MEASURE')
     expect(source).toContain("state.buildingState === '3D_ACTIVE'")
     expect(source).toContain("state.buildingState === '3D_FALLBACK'")
     expect(source).toContain('fallbackVisible')
@@ -66,6 +75,7 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain("getAttribute('aria-pressed') === 'false'")
     expect(source).toContain('toggleControlOffConfirmed: true')
     expect(source).toContain('VISUAL_DELTA_TOO_LOW_')
+    expect(source).toContain('CUSTOM_PRIMARY_REQUIRES_DENSE_RENDERED_HEALTH')
     expect(source).toContain('POST_PROMOTION_BUILDING_TOGGLE_CONTROL_OFF')
     expect(source).toContain('POST_PROMOTION_BUILDING_TOGGLE_VISUAL_DELTA')
     expect(source).toContain('PMTILES_RANGE_CONTRACT')
