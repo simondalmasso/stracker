@@ -376,7 +376,6 @@ export function configureSantaFeCity3d(map: MapLibreMap, options: SantaFe3dRunti
   configureBuildings3d(map, { enabled: !memory.healthy, density })
 
   if (!memory.healthy && (presentationChanged || sourceBacked || sourceFeatureCount > 0) && memory.consecutiveEmpty <= 120) {
-    map.triggerRepaint()
     queueHealthProbe(map, memory)
   }
 
