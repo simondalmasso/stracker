@@ -18,6 +18,7 @@ let protocol: Protocol | null = null
 let protocolUsers = 0
 let protocolRegistered = false
 const registeredArchiveUrls = new Set<string>()
+const HEALTH_PROBE_INTERVAL_MS = 250
 
 export type SantaFe3dProviderState = '3D_LOADING' | '3D_ACTIVE' | '3D_FALLBACK' | '3D_UNAVAILABLE' | '3D_OFF'
 
@@ -54,6 +55,8 @@ interface RuntimeHealthMemory {
   styleSignature: string
   styleGeneration: number
   probeQueued: boolean
+  probeTimer: ReturnType<typeof setTimeout> | null
+  lastProbeAtMs: number
   observersInstalled: boolean
   lastOptions: SantaFe3dRuntimeOptions | null
   statusObserver: MutationObserver | null
@@ -132,6 +135,8 @@ function memoryFor(map: MapLibreMap): RuntimeHealthMemory {
       styleSignature: signature,
       styleGeneration: 1,
       probeQueued: false,
+      probeTimer: null,
+      lastProbeAtMs: 0,
       observersInstalled: false,
       lastOptions: null,
       statusObserver: null,
@@ -156,12 +161,20 @@ function memoryFor(map: MapLibreMap): RuntimeHealthMemory {
 function queueHealthProbe(map: MapLibreMap, memory: RuntimeHealthMemory): void {
   if (memory.probeQueued || !memory.lastOptions) return
   memory.probeQueued = true
-  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-    memory.probeQueued = false
-    const options = memory.lastOptions
-    if (!options || !map.isStyleLoaded()) return
-    configureSantaFeCity3d(map, options)
-  }))
+  const elapsed = performance.now() - memory.lastProbeAtMs
+  const delay = Math.max(0, HEALTH_PROBE_INTERVAL_MS - elapsed)
+  const run = () => {
+    memory.probeTimer = null
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      memory.probeQueued = false
+      const options = memory.lastOptions
+      if (!options || !map.isStyleLoaded()) return
+      memory.lastProbeAtMs = performance.now()
+      configureSantaFeCity3d(map, options)
+    }))
+  }
+  if (delay > 0) memory.probeTimer = setTimeout(run, delay)
+  else run()
 }
 
 function installHealthObservers(map: MapLibreMap, memory: RuntimeHealthMemory): void {
@@ -395,6 +408,7 @@ export function removeSantaFeCity3d(map: MapLibreMap): void {
   for (const layerId of [...SANTA_FE_3D_LAYER_IDS].reverse()) if (map.getLayer(layerId)) map.removeLayer(layerId)
   for (const sourceId of [...SANTA_FE_3D_SOURCE_IDS].reverse()) if (map.getSource(sourceId)) map.removeSource(sourceId)
   const memory = healthByMap.get(map)
+  if (memory?.probeTimer) clearTimeout(memory.probeTimer)
   memory?.statusObserver?.disconnect()
   healthByMap.delete(map)
 }
