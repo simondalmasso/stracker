@@ -9,6 +9,7 @@ import {
 export const SANTA_FE_3D_ATTRIBUTION = '© OpenStreetMap contributors; © Overture Maps Foundation'
 export const SANTA_FE_3D_SOURCE_PREFIX = 'stracker-santa-fe-3d-source'
 export const SANTA_FE_3D_LAYER_PREFIX = 'stracker-santa-fe-3d-buildings'
+export const SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES = 80
 export const SANTA_FE_3D_PUBLIC_FIXTURES = [
   { id: 'dense-central', lng: -60.7003, lat: -31.6401, zoom: 16.8, pitch: 58, bearing: 24 },
   { id: 'mixed-rise', lng: -60.6738, lat: -31.6237, zoom: 16.6, pitch: 56, bearing: 28 },
