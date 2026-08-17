@@ -22,12 +22,12 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).not.toContain('const online = () => { void forceRefresh() }')
   })
 
-  test('Santa Fe custom 3D only owns presentation when densely visible and otherwise fails over', async () => {
+  test('Santa Fe custom 3D only owns presentation when fixture-level visible and otherwise fails over', async () => {
     const [config, source] = await Promise.all([
       Bun.file(cityConfigPath).text(),
       Bun.file(cityRuntimePath).text(),
     ])
-    expect(config).toContain('SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES = 80')
+    expect(config).toContain('SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES = 40')
     expect(source).toContain('renderedFeatureCount >= SANTA_FE_3D_PUBLIC_HEALTH_MIN_RENDERED_FEATURES')
     expect(source).toContain("const providerState: SantaFe3dProviderState = memory.healthy ? '3D_ACTIVE' : '3D_FALLBACK'")
     expect(source).toContain('genericFallbackVisible: !memory.healthy')
@@ -43,6 +43,7 @@ describe('ORDER-002 desktop shared-session continuity contract', () => {
     expect(source).toContain('const HEALTH_PROBE_INTERVAL_MS = 250')
     expect(source).toContain('queueHealthProbe(map, memory)')
     expect(source).toContain('configureBuildings3d(map, { enabled: !memory.healthy, density })')
+    expect(source).not.toContain('map.triggerRepaint()')
   })
 
   test('generic fallback avoids no-op mutations and never treats Santa Fe custom layers as fallback candidates', async () => {
