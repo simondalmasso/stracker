@@ -1,6 +1,7 @@
 'use client'
 
-import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from 'maplibre-gl'
+import * as maplibregl from 'maplibre-gl'
+import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl'
 import { circlePolygon } from '../geo'
 import type { BasemapMode, RailProvenance } from '../contracts'
 import type { CameraUpdate, MapEngineAdapter, MapEngineCallbacks, MapPerformanceSnapshot, MapRenderState, RailSegmentSelection } from './contracts'
@@ -8,6 +9,8 @@ import { configureBuildings3d, OPENFREEMAP_ATTRIBUTION, OPENFREEMAP_STYLE_URL, s
 import { SATELLITE_LAYER_ID, SATELLITE_PROVIDER, SATELLITE_SOURCE_ID, usesSatelliteImagery } from './satellite-provider'
 import { SANTA_FE_3D_LAYER_IDS } from './santa-fe-city-config'
 import { acquireSantaFePmtilesProtocol, configureSantaFeCity3d, isSantaFe3dSourceId, removeSantaFeCity3d } from './santa-fe-city-runtime'
+
+maplibregl.setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).toString())
 
 const SOURCE_MARKER = 'stracker-marker'
 const SOURCE_ACCURACY = 'stracker-accuracy'
@@ -172,31 +175,31 @@ export function createMapLibreAdapter(): MapEngineAdapter {
       if (map) adapter.destroy()
       callbacks = nextCallbacks; callbacks.onProviderState('loading'); callbacks.onBasemapProviderState(initial.basemapMode === 'vector-3d' ? 'idle' : 'loading')
       latestState = initial; loaded = false; contextLostActive = false; satelliteFailureActive = false; appliedBasemapMode = null; appliedVectorTheme = null; rehydrating = false; clearSatelliteAvailabilityTimer(); createdAtMs = performance.now(); fpsWindowStart = createdAtMs; performance.clearResourceTimings(); releasePmtilesProtocol = acquireSantaFePmtilesProtocol()
-      map = new maplibregl.Map({ container, style: OPENFREEMAP_STYLE_URL, center: [initial.point.lng, initial.point.lat], zoom: 16.3, pitch: initial.buildings3d ? 56 : 0, bearing: initial.buildings3d ? 25 : 0, minZoom: 3, maxZoom: 20, maxPitch: 65, attributionControl: false, cooperativeGestures: false, fadeDuration: initial.reducedMotion ? 0 : 180 })
-      map.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: OPENFREEMAP_ATTRIBUTION }), 'bottom-left')
-      map.on('error', (event) => {
-        const candidate = event as { sourceId?: string; error?: Error & { status?: number; url?: string }; tile?: { request?: { url?: string } } }
+      const mountedMap = new maplibregl.Map({ container, style: OPENFREEMAP_STYLE_URL, center: [initial.point.lng, initial.point.lat], zoom: 16.3, pitch: initial.buildings3d ? 56 : 0, bearing: initial.buildings3d ? 25 : 0, minZoom: 3, maxZoom: 20, maxPitch: 65, attributionControl: false, cooperativeGestures: false, fadeDuration: initial.reducedMotion ? 0 : 180 }); map = mountedMap
+      mountedMap.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: OPENFREEMAP_ATTRIBUTION }), 'bottom-left')
+      mountedMap.on('error', (event) => {
+        const candidate = event as unknown as { sourceId?: string; error?: { message?: string; status?: number; url?: string }; tile?: { request?: { url?: string } } }
         const message = candidate.error?.message ?? ''; const errorUrl = candidate.error?.url ?? candidate.tile?.request?.url ?? ''
         const satelliteModeActive = Boolean(latestState && usesSatelliteImagery(latestState.basemapMode))
         if (satelliteModeActive && (candidate.sourceId === SATELLITE_SOURCE_ID || message.includes(SATELLITE_PROVIDER.host) || errorUrl.includes(SATELLITE_PROVIDER.host))) { markSatelliteUnavailable(); return }
         if (isSantaFe3dSourceId(candidate.sourceId) || errorUrl.includes('/data/santa-fe-3d/')) { callbacks?.onProviderState('degraded'); return }
         callbacks?.onProviderState('degraded')
       })
-      map.on('sourcedata', (event) => { if (event.sourceId === SATELLITE_SOURCE_ID && event.isSourceLoaded && !satelliteFailureActive && latestState && usesSatelliteImagery(latestState.basemapMode)) markSatelliteAvailable() })
-      map.on('style.load', () => { appliedBasemapMode = null; appliedVectorTheme = null; baseLayerVisibility.clear(); rehydrateRuntime() })
-      map.on('styledata', () => { if (map?.isStyleLoaded()) rehydrateRuntime() })
-      map.once('load', () => { loaded = true; firstMapVisibleMs = performance.now() - createdAtMs; rehydrateRuntime(); callbacks?.onProviderState('available'); if (map && latestState) adapter.render(latestState); emitPerformance() })
-      map.once('idle', () => { firstInteractiveMs = performance.now() - createdAtMs; callbacks?.onProviderState('available'); if (latestState && usesSatelliteImagery(latestState.basemapMode) && !satelliteFailureActive && map?.isSourceLoaded(SATELLITE_SOURCE_ID)) markSatelliteAvailable(); emitPerformance() })
-      map.on('render', () => { renderFrames += 1 })
-      map.on('moveend', () => { if (map && latestState && map.isStyleLoaded()) { applyBuildingPresentation(latestState.basemapMode); moveRuntimeLayersToTop(map) } })
-      for (const eventName of ['dragstart', 'rotatestart', 'pitchstart', 'zoomstart'] as const) map.on(eventName, (event) => { if (event.originalEvent) callbacks?.onManualInteraction() })
+      mountedMap.on('sourcedata', (event) => { if (event.sourceId === SATELLITE_SOURCE_ID && event.isSourceLoaded && !satelliteFailureActive && latestState && usesSatelliteImagery(latestState.basemapMode)) markSatelliteAvailable() })
+      mountedMap.on('style.load', () => { appliedBasemapMode = null; appliedVectorTheme = null; baseLayerVisibility.clear(); rehydrateRuntime() })
+      mountedMap.on('styledata', () => { if (mountedMap.isStyleLoaded()) rehydrateRuntime() })
+      mountedMap.once('load', () => { loaded = true; firstMapVisibleMs = performance.now() - createdAtMs; rehydrateRuntime(); callbacks?.onProviderState('available'); if (latestState) adapter.render(latestState); emitPerformance() })
+      mountedMap.once('idle', () => { firstInteractiveMs = performance.now() - createdAtMs; callbacks?.onProviderState('available'); if (latestState && usesSatelliteImagery(latestState.basemapMode) && !satelliteFailureActive && mountedMap.isSourceLoaded(SATELLITE_SOURCE_ID)) markSatelliteAvailable(); emitPerformance() })
+      mountedMap.on('render', () => { renderFrames += 1 })
+      mountedMap.on('moveend', () => { if (latestState && mountedMap.isStyleLoaded()) { applyBuildingPresentation(latestState.basemapMode); moveRuntimeLayersToTop(mountedMap) } })
+      for (const eventName of ['dragstart', 'rotatestart', 'pitchstart', 'zoomstart'] as const) mountedMap.on(eventName, (event) => { if (event.originalEvent) callbacks?.onManualInteraction() })
       const selectRail = (event: maplibregl.MapLayerMouseEvent) => callbacks?.onRailSegmentClick(railSelection((event.features?.[0]?.properties ?? null) as Record<string, unknown> | null))
       for (const layerId of [LAYER_RAIL_OBSERVED, LAYER_RAIL_INFERRED]) {
-        map.on('click', layerId, selectRail)
-        map.on('mouseenter', layerId, () => { if (map) map.getCanvas().style.cursor = 'pointer' })
-        map.on('mouseleave', layerId, () => { if (map) map.getCanvas().style.cursor = '' })
+        mountedMap.on('click', layerId, selectRail)
+        mountedMap.on('mouseenter', layerId, () => { mountedMap.getCanvas().style.cursor = 'pointer' })
+        mountedMap.on('mouseleave', layerId, () => { mountedMap.getCanvas().style.cursor = '' })
       }
-      const canvas = map.getCanvas(); canvas.addEventListener('webglcontextlost', handleContextLost, { capture: true }); canvas.addEventListener('webglcontextrestored', handleContextRestored, { capture: true })
+      const canvas = mountedMap.getCanvas(); canvas.addEventListener('webglcontextlost', handleContextLost, { capture: true }); canvas.addEventListener('webglcontextrestored', handleContextRestored, { capture: true })
       if ('PerformanceObserver' in window) { try { performanceObserver = new PerformanceObserver((list) => { for (const entry of list.getEntries()) { longTasks += 1; longTaskDurationMs += entry.duration } }); performanceObserver.observe({ type: 'longtask', buffered: true }) } catch { performanceObserver = null } }
       performanceTimer = setInterval(emitPerformance, 5_000)
     },

@@ -28,3 +28,10 @@
 - `nextjs-ui/` contains a legacy generated snapshot; rebuild it from maintained source before using it as a release artifact.
 - GitHub repository description/topics are proposed in the README but have not been changed because the connected GitHub actions available here do not expose repository-settings writes.
 - Final state remains `BLOCKED_REAL` until every gate above has evidence.
+
+## Dependency hardening and MapLibre v6 migration — 2026-10-16
+
+- A dependency graph generated in isolated GitHub Actions with Bun 1.3.4 passed the high/critical audit after refreshing the lockfile and pinning the published fixes: `maplibre-gl@6.14.0`, `next@16.4.2`, `axios@1.20.0`, `sharp@0.35.5`, `brace-expansion@1.1.20`, `source-map-js@1.2.2`, `undici@7.29.1`, `browserslist@4.28.7`, and `deepmerge-ts@8.0.2`. This was candidate validation, not a release.
+- MapLibre v6 is ESM-only. The map adapter and Santa Fe 3D runtime now use namespace imports; the adapter sets the bundled worker URL before constructing the map and narrows the mounted map reference for event callbacks.
+- `eslint-config-next` was removed because its dependency graph brought in `braces@3.0.3`, for which the upstream advisory currently has no published patched version. TypeScript ESLint recommended rules and React Hooks recommended rules replace the previous lint configuration. Next-specific ESLint rules are temporarily absent; restore them only after their dependency chain no longer introduces the unpatched package.
+- The dependency preview passed audit, lint, and vector-map tests; typecheck/build were still red on the old MapLibre default imports and nullable-map narrowing. Fresh CI on the resulting commit must prove those fixes. No merge or deployment was performed.

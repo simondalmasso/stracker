@@ -1,6 +1,7 @@
 'use client'
 
-import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl'
+import * as maplibregl from 'maplibre-gl'
+import type { Map as MapLibreMap } from 'maplibre-gl'
 import { PMTiles, Protocol } from 'pmtiles'
 import { SANTA_FE_3D_ASSET_PATHS, SANTA_FE_3D_SOURCE_LAYER } from './santa-fe-3d-generated'
 import {

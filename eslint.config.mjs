@@ -1,9 +1,9 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTs from "eslint-config-next/typescript";
+import tseslint from "typescript-eslint";
+import reactHooks from "eslint-plugin-react-hooks";
 
 export default defineConfig([
-  ...nextVitals,
-  ...nextTs,
+  ...tseslint.configs.recommended,
+  reactHooks.configs.flat.recommended,
   globalIgnores([".next/**", "out/**", "nextjs-ui/**", "skills/**", "tool-results/**", "src/components/tracker/**", "scripts/release/minimum-runtime-qa.ts"]),
 ]);
