@@ -29,12 +29,12 @@ jobs:
           const fs = require('node:fs');
           const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           p.dependencies['maplibre-gl'] = '^6.14.0';
-          p.dependencies['sharp'] = '^0.35.4';
+          p.dependencies['sharp'] = '^0.35.5';
           p.devDependencies = p.devDependencies || {};
           delete p.devDependencies['eslint-config-next'];
           p.devDependencies['typescript-eslint'] = '^8.46.2';
           p.devDependencies['eslint-plugin-react-hooks'] = '^7.0.1';
-          p.overrides = { ...(p.overrides || {}), 'deepmerge-ts': '8.0.2', 'brace-expansion': '1.1.19', 'sharp': '0.35.4', 'undici': '7.29.1', 'source-map-js': '1.2.2', 'browserslist': '4.28.7' };
+          p.overrides = { ...(p.overrides || {}), 'deepmerge-ts': '8.0.2', 'brace-expansion': '1.1.20', 'sharp': '0.35.5', 'undici': '7.29.1', 'source-map-js': '1.2.2', 'browserslist': '4.28.7' };
           delete p.overrides.braces;
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           fs.writeFileSync('eslint.config.mjs', `import { defineConfig, globalIgnores } from "eslint/config";
