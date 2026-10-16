@@ -5,24 +5,31 @@ on:
     branches:
       - feat/stracker-native-sharing-live-synthetic-v1
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      authorize_production_release:
+        description: "Owner confirms ORDER-006 release gates and explicitly authorizes production promotion"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: stracker-controlled-physical-pilot-${{ github.event.pull_request.number }}
+  group: stracker-controlled-physical-pilot-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 env:
-  SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   SOURCE_RUN_ID: ${{ github.run_id }}
   FROZEN_BASE_SHA: 745b229769594b7529859283e6e1a2eab7a8f291
   FROZEN_BASE_BRANCH: feat/stracker-native-sharing-live-synthetic-v1
 
 jobs:
   exact-head-validation:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/stracker-controlled-physical-pilot-v1'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/stracker-controlled-physical-pilot-v1') || (github.event_name == 'workflow_dispatch' && github.ref_name == 'feat/stracker-controlled-physical-pilot-v1')
     runs-on: ubuntu-latest
     timeout-minutes: 110
     outputs:
@@ -32,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -309,8 +316,12 @@ jobs:
           echo 'FINAL_INTEGRITY=PASS'
 
   release:
+    # Fail closed: PR updates validate only. Promotion requires a manual dispatch,
+    # explicit owner authorization, and a separately set repository variable.
+    if: github.event_name == 'workflow_dispatch' && inputs.authorize_production_release == true && vars.STRACKER_ORDER006_RELEASE_APPROVED == 'true' && github.ref_name == 'feat/stracker-controlled-physical-pilot-v1'
     needs: [exact-head-validation, verify-artifact]
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 170
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
