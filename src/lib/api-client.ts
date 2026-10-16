@@ -1,59 +1,30 @@
 /**
- * INFRA_01 (stracker_v5.3_integration): Authenticated API client.
+ * Same-origin API client for STRACKER's transitional architecture.
  *
- * Wraps `fetch` with an AuthMiddleware that:
- *   1. Validates + refreshes the session token before EVERY call (refresh
- *      loop, see auth.ts). This is the "validate el token antes de cada
- *      llamada al API" requirement.
- *   2. Injects `Authorization: Bearer <token>` into every outgoing request,
- *      so authentication no longer depends on the browser cookie jar
- *      (the point of failure under cross-site tracking restrictions).
- *   3. On HTTP 401, clears the stale token and retries exactly once with a
- *      freshly minted one (single retry → no infinite loops).
- *
- * Usage:
- *   import { fetchWithAuth } from '@/lib/api-client'
- *   const resp = await fetchWithAuth('/points?start=...&end=...')
+ * The browser never mints or injects credentials. Cloudflare Access
+ * will authenticate the user at the edge; the private Worker gateway
+ * will attach the server-only token when proxying to Render.
  */
 
-import { ensureSession, clearSession, getBearerToken } from './auth'
-
 export interface FetchWithAuthOptions extends RequestInit {
-  /** Skip auth header injection (public endpoints). */
+  /** Deprecated compatibility flag; no browser auth header is generated. */
   skipAuth?: boolean
 }
 
-function withAuthHeader(options: FetchWithAuthOptions): FetchWithAuthOptions {
-  if (options.skipAuth) return options
-  const token = getBearerToken()
-  const headers = new Headers(options.headers)
-  headers.set('Authorization', `Bearer ${token}`)
-  return { ...options, headers }
+function toRequestInit(options: FetchWithAuthOptions): RequestInit {
+  const init: FetchWithAuthOptions = { ...options }
+  delete init.skipAuth
+  return { credentials: 'same-origin', ...init }
 }
 
-/** Authenticated fetch. Validates the token, injects the Bearer header,
- *  and retries once on 401 with a fresh token. */
+/** Compatibility name retained for existing callers. */
 export async function fetchWithAuth(
   url: string,
   options: FetchWithAuthOptions = {},
 ): Promise<Response> {
-  // Refresh loop: validate/refresh (or mint) the token before each call.
-  ensureSession()
-
-  const init = withAuthHeader(options)
-  const resp = await fetch(url, init)
-
-  // 401 → token rejected. Clear + mint fresh + retry once.
-  if (resp.status === 401 && !options.skipAuth) {
-    clearSession()
-    const retryInit = withAuthHeader(options)
-    return fetch(url, retryInit)
-  }
-
-  return resp
+  return fetch(url, toRequestInit(options))
 }
 
-/** Convenience GET that parses JSON. Throws on non-2xx. */
 export async function apiGet<T = unknown>(
   url: string,
   options?: FetchWithAuthOptions,
@@ -63,7 +34,6 @@ export async function apiGet<T = unknown>(
   return resp.json() as Promise<T>
 }
 
-/** Convenience POST that JSON-encodes the body. Throws on non-2xx. */
 export async function apiPost<T = unknown>(
   url: string,
   body: unknown,

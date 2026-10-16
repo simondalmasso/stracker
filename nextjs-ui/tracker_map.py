@@ -51,6 +51,17 @@ from datetime import datetime, timezone, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from stracker_security import (
+    SecurityConfigurationError,
+    authorize_request_headers,
+    get_secret_key,
+    is_blocked_static_path,
+    is_protected_path,
+    is_public_asset_path,
+    runtime_mode,
+    validate_startup_security,
+)
+
 # ------------------------------------------------------------
 # CONFIGURACION
 # ------------------------------------------------------------
@@ -181,9 +192,8 @@ GHOSTRAIL_ENC_PATH = BASE_DIR / "ghostrail.enc"
 GHOSTRAIL_ARCHIVE_PATH = BASE_DIR / "ghostrail_archive.enc"
 ARCHIVE_AGE_DAYS = 30  # T-30d threshold
 
-# Load SECRET_KEY from env (30-day rotation enforced via Render dashboard).
-# Fallback to a deterministic dev key (clearly marked, never used in prod).
-SECRET_KEY = os.environ.get("SECRET_KEY", "v5.8-dev-fallback-key-DO-NOT-USE-IN-PROD")
+# SECRET_KEY is resolved lazily by stracker_security.get_secret_key().
+# There is intentionally no embedded fallback in any runtime mode.
 
 # Try to import the cryptography package (added to requirements.txt for v5.8).
 # If unavailable (e.g. local dev without pip install), the encrypted blob
@@ -193,13 +203,15 @@ try:
     _AESGCM_AVAILABLE = True
 except ImportError:
     _AESGCM_AVAILABLE = False
-    logger.warning("cryptography package not available — ghostrail.enc disabled (CSV remains canonical)")
+    logging.getLogger(__name__).warning(
+        "cryptography package not available — encrypted storage unavailable"
+    )
 
 
 def _derive_aes_key() -> bytes:
-    """Derive a 32-byte (256-bit) AES key from SECRET_KEY via SHA-256."""
+    """Derive a 32-byte AES key from an explicitly configured SECRET_KEY."""
     import hashlib
-    return hashlib.sha256(SECRET_KEY.encode("utf-8")).digest()
+    return hashlib.sha256(get_secret_key().encode("utf-8")).digest()
 
 
 def encrypt_record(plaintext: str) -> str:
@@ -218,6 +230,8 @@ def encrypt_record(plaintext: str) -> str:
         combined = iv + ct
         import base64
         return base64.b64encode(combined).decode("ascii")
+    except SecurityConfigurationError:
+        raise
     except Exception as e:
         logger.error("encrypt_record failed: %s", e)
         return ""
@@ -236,6 +250,8 @@ def decrypt_record(b64_payload: str) -> str:
         ct = combined[12:]
         pt = aesgcm.decrypt(iv, ct, None)
         return pt.decode("utf-8")
+    except SecurityConfigurationError:
+        raise
     except Exception as e:
         logger.error("decrypt_record failed: %s", e)
         return ""
@@ -274,6 +290,8 @@ def write_encrypted_ghostrail(points: list) -> None:
         }
         GHOSTRAIL_ENC_PATH.write_text(json.dumps(envelope), encoding="utf-8")
         logger.info("ghostrail.enc written: %d encrypted records", len(encrypted_records))
+    except SecurityConfigurationError:
+        raise
     except Exception as e:
         logger.error("write_encrypted_ghostrail failed: %s", e)
 
@@ -2507,6 +2525,17 @@ class TrackerHandler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         logger.info("HTTP %s - %s", self.client_address[0], fmt % args)
 
+    def _send_not_found(self):
+        self._send_json({"status": "error", "error": "not_found"}, status=404)
+
+    def _require_authorization(self, path: str) -> bool:
+        decision = authorize_request_headers(self.headers)
+        if decision.allowed:
+            return True
+        error = "service_unavailable" if decision.status == 503 else "unauthorized"
+        self._send_json({"status": "error", "error": error}, status=decision.status)
+        return False
+
     # ── V6.0 SECURITY_EXTERNAL_AUDIT — strict CORS + hardening headers ──
     # The allowed origin list is sourced from env var CORS_ALLOWED_ORIGINS
     # (comma-separated). Defaults cover the production deployment and
@@ -2591,7 +2620,7 @@ class TrackerHandler(SimpleHTTPRequestHandler):
             )
             self.send_header(
                 "Access-Control-Allow-Headers",
-                "Content-Type, Authorization, X-Session-Token, X-Request-Id",
+                "Content-Type, Authorization, X-Stracker-Service-Token, X-Session-Token, X-Request-Id",
             )
             self.send_header("Access-Control-Max-Age", "600")
         return origin
@@ -2643,16 +2672,26 @@ class TrackerHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         # V6.11: strip query string for route matching (RA1 pattern)
         path = self.path.split("?", 1)[0]
+        if is_blocked_static_path(path):
+            self._send_not_found()
+            return
+        if is_protected_path(path) and not self._require_authorization(path):
+            return
         if path in ("/health", "/health/", "/healthz"):
-            try:
-                csv_exists = CSV_PATH.exists()
-                html_exists = HTML_PATH.exists()
-                archive_exists = GHOSTRAIL_ARCHIVE_PATH.exists()
-                point_count = 0
-                if csv_exists: point_count = max(0, sum(1 for _ in open(CSV_PATH, encoding="utf-8")) - 1)
-                self._send_json({"status": "ok", "uptime_s": round(time.time() - _SERVER_START_TS, 2), "base_dir": str(BASE_DIR), "html_exists": html_exists, "csv_exists": csv_exists, "archive_exists": archive_exists, "points": point_count, "version": "v6.0_final_polish", "timestamp": datetime.now(timezone.utc).isoformat(), "security": {"hsts": True, "csp": True, "x_frame_options": "DENY", "x_content_type_options": "nosniff", "cors": "strict"}, "storage": {"hot_db": "ghostrail.enc", "cold_db": "ghostrail_archive.enc", "archive_age_days": ARCHIVE_AGE_DAYS, "archive_compression": "zip"}})
-            except Exception as e:
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+            self._send_json({
+                "status": "ok",
+                "version": "v6.0_final_polish+p0_security",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            return
+        if path in ("/health/details", "/health/details/"):
+            self._send_json({
+                "status": "ok",
+                "version": "v6.0_final_polish+p0_security",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "uptime_s": round(time.time() - _SERVER_START_TS, 2),
+                "runtime_mode": runtime_mode().value,
+            })
             return
 
         # V6.0 STORAGE_OPTIMIZATION: /api/archive endpoint
@@ -2708,12 +2747,11 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                     "limit": payload.get("limit", limit),
                     "returned": payload.get("returned", 0),
                     "archived_at": payload.get("archived_at"),
-                    "records": payload.get("records", []),
-                    "_v60": {"cold_storage": True, "endpoint": "/api/archive", "hot_db": "/ghostrail/encrypted"},
+                    "records_omitted": True,
                 })
             except Exception as e:
                 logger.error("/api/archive error: %s", e)
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+                self._send_json({"status": "error", "error": "internal_error"}, status=500)
             return
 
         # V5.8 SECURITY_FORTRESS: /ghostrail/encrypted endpoint
@@ -2744,16 +2782,11 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                     "key_rotation_days": blob.get("key_rotation_days", 30),
                     "record_count": blob.get("record_count", 0),
                     "encrypted_at": blob.get("encrypted_at"),
-                    "aesgcm_available": _AESGCM_AVAILABLE,
-                    "secret_key_configured": bool(os.environ.get("SECRET_KEY")),
-                    # The actual encrypted records (base64-encoded IV || ciphertext || tag)
-                    "records": blob.get("records", []),
-                    # Sample of the first record (truncated for inspection)
-                    "sample_record_prefix": (blob.get("records", [""])[0] or "")[:32] + "..." if blob.get("records") else None,
+                    "records_omitted": True,
                 })
             except Exception as e:
                 logger.error("/ghostrail/encrypted error: %s", e)
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+                self._send_json({"status": "error", "error": "internal_error"}, status=500)
             return
 
         # V5.8 PREDICT_ENGINE_MARKOV: /predict endpoint
@@ -2787,7 +2820,7 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                 })
             except Exception as e:
                 logger.error("/predict error: %s", e)
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+                self._send_json({"status": "error", "error": "internal_error"}, status=500)
             return
 
         if path in ("/points", "/points/"):
@@ -2836,7 +2869,7 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                 self._send_json({"points": pts, "stats": sts, "state": state, "ghostrail_pts": ghostrail_pts, "last_update": _LAST_UPDATE.isoformat() if _LAST_UPDATE else None, "device_label": _DEVICE_LABEL, "_v58": {"rate_limit": "60/min", "encrypted_db": "/ghostrail/encrypted", "predict": "/predict"}, "_v60": {"cold_storage": "/api/archive", "archive_age_days": ARCHIVE_AGE_DAYS, "security_headers": ["HSTS", "CSP", "X-Frame-Options", "X-Content-Type-Options"], "cors": "strict"}})
             except Exception as e:
                 logger.error("/points error: %s", e)
-                self._send_json({"status": "error", "error": str(e)}, status=500)
+                self._send_json({"status": "error", "error": "internal_error"}, status=500)
             return
 
         if path in ("", "/"):
@@ -2868,7 +2901,7 @@ class TrackerHandler(SimpleHTTPRequestHandler):
         # V6.11 STATIC_ASSET_FALLBACK: serve static assets from nextjs-ui/
         # if not found in BASE_DIR (manifest.json, logo.svg, robots.txt, etc.)
         requested = path.lstrip("/")
-        if requested and ".." not in requested:
+        if is_public_asset_path(path) and requested and ".." not in requested:
             root_candidate = BASE_DIR / requested
             if not root_candidate.exists() or not root_candidate.is_file():
                 niu_candidate = BASE_DIR / "nextjs-ui" / requested
@@ -2889,13 +2922,21 @@ class TrackerHandler(SimpleHTTPRequestHandler):
                     except Exception as _e:
                         logger.warning("V6.11 static fallback failed for %s: %s", path, _e)
 
-        return super().do_GET()
+        if is_public_asset_path(path):
+            return super().do_GET()
+        self._send_not_found()
+        return
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]  # V6.11: strip query string
+        if is_blocked_static_path(path):
+            self._send_not_found()
+            return
+        if is_protected_path(path) and not self._require_authorization(path):
+            return
         if path in ("/api/cookies", "/cookies"):
             self._handle_cookies_upload(); return
-        self.send_response(404); self.end_headers()
+        self._send_not_found()
 
     def _serve_cookies_page(self):
         html = """<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cookies - Tracker v6</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;background:#0a0a0a;color:#f5f5f7;padding:20px;max-width:800px;margin:auto}h1{color:#0a84ff;font-size:22px;font-weight:700}ol li{margin:12px 0;line-height:1.6;color:#8a8a8a}strong{color:#fff}a{color:#007aff}textarea{width:100%;height:250px;background:rgba(255,255,255,.04);color:#34c759;border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px;font-family:'SF Mono',Menlo,monospace;font-size:13px}button{background:#007aff;color:#fff;border:none;padding:12px 28px;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;margin-top:10px}button:hover{background:#0056b3}#status{margin-top:12px;padding:10px;border-radius:8px;display:none;font-size:14px}.ok{background:rgba(52,199,89,.1);color:#34c759;border:1px solid rgba(52,199,89,.2)}.err{background:rgba(255,59,48,.1);color:#ff3b30;border:1px solid rgba(255,59,48,.2)}</style></head><body><h1>Refrescar Cookies</h1><p style="color:#8a8a8a;margin-bottom:16px">Las cookies expiran cada ~7 dias.</p><ol><li>Instala <strong><a href="https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm" target="_blank">Cookie-Editor</a></strong></li><li>Anda a <a href="https://www.google.com/maps" target="_blank">Google Maps</a></li><li>Cookie-Editor > <strong>Export</strong> > <strong>JSON</strong></li><li>Pega abajo</li></ol><textarea id="jsonInput" placeholder="Pega el JSON..."></textarea><br><button onclick="enviarCookies()">Enviar</button><div id="status"></div><script>async function enviarCookies(){var s=document.getElementById('status');s.style.display='none';var txt=document.getElementById('jsonInput').value.trim();if(!txt){s.className='err';s.textContent='Pega el JSON';s.style.display='block';return}try{JSON.parse(txt)}catch(e){s.className='err';s.textContent='JSON invalido';s.style.display='block';return}var btn=document.querySelector('button');btn.disabled=true;btn.textContent='Enviando...';try{var r=await fetch('/api/cookies',{method:'POST',headers:{'Content-Type':'application/json'},body:txt});var d=await r.json();if(r.ok){s.className='ok';s.textContent=d.message;document.getElementById('jsonInput').value=''}else{s.className='err';s.textContent=d.error}}catch(e){s.className='err';s.textContent='Error: '+e.message}s.style.display='block';btn.disabled=false;btn.textContent='Enviar'}</script></body></html>"""
@@ -3033,6 +3074,11 @@ def _open_browser_when_ready(port, stop_event):
 # ------------------------------------------------------------
 def main():
     setup_logging()
+    try:
+        validate_startup_security(_AESGCM_AVAILABLE)
+    except SecurityConfigurationError as exc:
+        logger.critical("Security configuration invalid; startup aborted: %s", exc)
+        return 78
     logger.info("=" * 50)
     logger.info("Tracker v6.0 — FINAL POLISH (Cold Storage + Security Audit + Apple UI)")
     logger.info("=" * 50)
