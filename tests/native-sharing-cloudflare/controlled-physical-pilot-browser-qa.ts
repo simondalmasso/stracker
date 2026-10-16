@@ -114,12 +114,32 @@ async function installPilotFakes(page) {
   })
 }
 
-async function configure(page, viewport, observations, errors, consoleErrors, revocation) {
+async function configure(page, viewport, observations, errors, consoleErrors, requestFailures, revocation) {
   await page.setViewport(viewport)
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }])
   await installPilotFakes(page)
   await page.setRequestInterception(true)
   page.on('pageerror', () => errors.push('pageerror'))
+  page.on('requestfailed', (request) => {
+    const resourceType = request.resourceType()
+    if (resourceType !== 'script' && resourceType !== 'worker') return
+    let protocol = 'unknown'
+    let host = 'unknown'
+    let file = 'unknown'
+    try {
+      const url = new URL(request.url())
+      protocol = url.protocol.slice(0, 12)
+      host = url.host.slice(0, 100)
+      file = url.pathname.split('/').filter(Boolean).pop()?.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 100) || '(root)'
+    } catch {}
+    requestFailures.push({
+      resourceType,
+      protocol,
+      host,
+      file,
+      error: (request.failure()?.errorText || 'unknown').replace(/[\\r\\n\\t]+/g, ' ').slice(0, 100),
+    })
+  })
   page.on('console', (message) => {
     if (message.type() !== 'error') return
     const text = message.text()
@@ -193,11 +213,11 @@ try {
   const tcl = await tclContext.newPage()
   const windows = await windowsContext.newPage()
   const emitterRequests = [], tclRequests = [], windowsRequests = []
-  const errors = [], consoleErrors = []
+  const errors = [], consoleErrors = [], requestFailures = []
   const revocation = { value: false }
-  await configure(emitter, { width: 360, height: 800, deviceScaleFactor: 1, isMobile: true, hasTouch: true }, emitterRequests, errors, consoleErrors, revocation)
-  await configure(tcl, { width: 360, height: 800, deviceScaleFactor: 1, isMobile: true, hasTouch: true }, tclRequests, errors, consoleErrors, revocation)
-  await configure(windows, { width: 1366, height: 768, deviceScaleFactor: 1, isMobile: false, hasTouch: false }, windowsRequests, errors, consoleErrors, revocation)
+  await configure(emitter, { width: 360, height: 800, deviceScaleFactor: 1, isMobile: true, hasTouch: true }, emitterRequests, errors, consoleErrors, requestFailures, revocation)
+  await configure(tcl, { width: 360, height: 800, deviceScaleFactor: 1, isMobile: true, hasTouch: true }, tclRequests, errors, consoleErrors, requestFailures, revocation)
+  await configure(windows, { width: 1366, height: 768, deviceScaleFactor: 1, isMobile: false, hasTouch: false }, windowsRequests, errors, consoleErrors, requestFailures, revocation)
 
   await emitter.goto(`${base}/share`, { waitUntil: 'networkidle0' })
   ok((await emitter.evaluate(() => document.body.textContent || '')).includes('SÓLO EN PRIMER PLANO'), 'FOREGROUND_NOTICE')
@@ -273,6 +293,16 @@ try {
   }
   ok((await wakeStats(emitter)).held === false, 'WAKE_LOCK_RELEASE_ON_STOP')
 
+  if (requestFailures.length > 0) {
+    const rows = new Map()
+    for (const failure of requestFailures) {
+      const key = `${failure.resourceType}:${failure.protocol}//${failure.host}/${failure.file}:${failure.error}`
+      rows.set(key, (rows.get(key) || 0) + 1)
+    }
+    console.log('CONTROLLED_PILOT_REQUEST_FAILURES=' + JSON.stringify(
+      [...rows.entries()].slice(0, 30).map(([key, count]) => ({ key, count })),
+    ))
+  }
   result.pageErrorTotal = errors.length
   result.relevantConsoleErrors = consoleErrors.length
   result.horizontalOverflowTotal = Number(await overflow(emitter)) + Number(await overflow(tcl)) + Number(await overflow(windows))
