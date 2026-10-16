@@ -35,3 +35,9 @@
 - MapLibre v6 is ESM-only. The map adapter and Santa Fe 3D runtime now use namespace imports; the adapter sets the bundled worker URL before constructing the map and narrows the mounted map reference for event callbacks.
 - `eslint-config-next` was removed because its dependency graph brought in `braces@3.0.3`, for which the upstream advisory currently has no published patched version. TypeScript ESLint recommended rules and React Hooks recommended rules replace the previous lint configuration. Next-specific ESLint rules are temporarily absent; restore them only after their dependency chain no longer introduces the unpatched package.
 - The dependency preview passed audit, lint, and vector-map tests; typecheck/build were still red on the old MapLibre default imports and nullable-map narrowing. Fresh CI on the resulting commit must prove those fixes. No merge or deployment was performed.
+
+## Backend regression and privacy correction — 2026-10-16
+
+- The first full validation after dependency hardening passed exact ancestry, frozen install, and the high/critical dependency audit. It then stopped at `BACKEND_REGRESSION`: `tracker_map.py` and `nextjs-ui/tracker_map.py` differed at the Google Maps URL, and the stale generated copy contained a precise coordinate absent from the maintained source.
+- `nextjs-ui/tracker_map.py` is now synchronized byte-for-byte from `tracker_map.py`, removing that stale coordinate and restoring the workflow's explicit parity contract. Fresh CI must verify the correction.
+- `STRACKER Santa Fe 3D Materialize V1` passed the committed-asset validator and pipeline unit tests. It normalized the `pmtiles@4.4.1` lock pin in commit `d1c7e4a`; this is not a production deployment.
