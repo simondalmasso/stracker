@@ -29,7 +29,7 @@ jobs:
           const fs = require('node:fs');
           const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           p.dependencies['maplibre-gl'] = '^6.11.2';
-          p.overrides = { ...(p.overrides || {}), 'deepmerge-ts': '^8.0.2' };
+          p.overrides = { ...(p.overrides || {}), 'deepmerge-ts': '8.0.2', 'brace-expansion': '1.1.19', 'sharp': '0.35.4', 'undici': '7.29.1', 'source-map-js': '1.2.2', 'braces': '3.0.4', 'browserslist': '4.28.7' };
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           NODE
           if bun update; then
