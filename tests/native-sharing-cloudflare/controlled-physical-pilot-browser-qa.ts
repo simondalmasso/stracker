@@ -124,7 +124,16 @@ async function configure(page, viewport, observations, errors, consoleErrors, re
     if (message.type() !== 'error') return
     const text = message.text()
     if (revocation.value && /410/.test(text) && /failed to load resource/i.test(text)) return
-    consoleErrors.push(text.replace(/https?:\/\/\S+/g, '[URL]').slice(0, 120))
+    const location = message.location()
+    let source = 'document'
+    try { source = new URL(location.url).pathname.split('/').filter(Boolean).pop() || 'document' } catch {}
+    const category =
+      /net::ERR_(ABORTED|FAILED|CONNECTION|NAME_NOT_RESOLVED|CERT_AUTHORITY_INVALID)/i.test(text) ? 'NETWORK_RESOURCE_FAILURE' :
+      /failed to load resource/i.test(text) ? 'RESOURCE_LOAD_FAILURE' :
+      /webgl|context lost/i.test(text) ? 'WEBGL_FAILURE' :
+      /cors|cross-origin/i.test(text) ? 'CORS_FAILURE' :
+      /favicon/i.test(text) ? 'FAVICON_FAILURE' : 'OTHER_CONSOLE_ERROR'
+    consoleErrors.push({ category, source: source.slice(0, 80), line: Number.isInteger(location.lineNumber) ? location.lineNumber : null })
   })
   page.on('request', (request) => {
     void (async () => {
@@ -260,6 +269,16 @@ try {
   result.pageErrorTotal = errors.length
   result.relevantConsoleErrors = consoleErrors.length
   result.horizontalOverflowTotal = Number(await overflow(emitter)) + Number(await overflow(tcl)) + Number(await overflow(windows))
+  if (consoleErrors.length > 0) {
+    const counts = new Map()
+    for (const error of consoleErrors) {
+      const key = `${error.category}:${error.source}:${error.line ?? 'na'}`
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+    console.log('CONTROLLED_PILOT_CONSOLE_DIAGNOSTICS=' + JSON.stringify(
+      [...counts.entries()].slice(0, 20).map(([key, count]) => ({ key, count })),
+    ))
+  }
   ok(result.pageErrorTotal === 0, 'PAGEERROR_TOTAL')
   ok(result.relevantConsoleErrors === 0, 'RELEVANT_CONSOLE_ERRORS')
   ok(result.horizontalOverflowTotal === 0, 'HORIZONTAL_OVERFLOW_TOTAL')
