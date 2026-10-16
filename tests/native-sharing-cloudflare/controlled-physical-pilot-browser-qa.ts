@@ -133,7 +133,14 @@ async function configure(page, viewport, observations, errors, consoleErrors, re
       /webgl|context lost/i.test(text) ? 'WEBGL_FAILURE' :
       /cors|cross-origin/i.test(text) ? 'CORS_FAILURE' :
       /favicon/i.test(text) ? 'FAVICON_FAILURE' : 'OTHER_CONSOLE_ERROR'
-    consoleErrors.push({ category, source: source.slice(0, 80), line: Number.isInteger(location.lineNumber) ? location.lineNumber : null })
+    const signature = text
+      .replace(/https?:\/\/\S+/gi, '[URL]')
+      .replace(/\b(?:Bearer|token|capability|secret|authorization)\s*[:=]?\s*\S+/gi, '$1 [REDACTED]')
+      .replace(/\b[A-Fa-f0-9]{32,}\b/g, '[HEX]')
+      .replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[OPAQUE]')
+      .replace(/[\r\n\t]+/g, ' ')
+      .slice(0, 140)
+    consoleErrors.push({ category, source: source.slice(0, 80), line: Number.isInteger(location.lineNumber) ? location.lineNumber : null, signature })
   })
   page.on('request', (request) => {
     void (async () => {
