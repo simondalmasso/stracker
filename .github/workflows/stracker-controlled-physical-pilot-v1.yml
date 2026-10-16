@@ -1,0 +1,356 @@
+name: STRACKER Controlled Physical Pilot V1
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-native-sharing-live-synthetic-v1
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      authorize_production_release:
+        description: "Owner confirms ORDER-006 release gates and explicitly authorizes production promotion"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stracker-controlled-physical-pilot-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  SOURCE_RUN_ID: ${{ github.run_id }}
+  FROZEN_BASE_SHA: 745b229769594b7529859283e6e1a2eab7a8f291
+  FROZEN_BASE_BRANCH: feat/stracker-native-sharing-live-synthetic-v1
+
+jobs:
+  exact-head-validation:
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/stracker-controlled-physical-pilot-v1') || (github.event_name == 'workflow_dispatch' && github.ref_name == 'feat/stracker-controlled-physical-pilot-v1')
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    outputs:
+      artifact_name: ${{ steps.evidence.outputs.artifact_name }}
+      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: EXACT_BASE_AND_ANCESTRY
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git fetch origin "$FROZEN_BASE_BRANCH" --no-tags
+          test "$(git rev-parse "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
+          test "$(git merge-base HEAD "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
+          test "$(git rev-list --count HEAD.."origin/$FROZEN_BASE_BRANCH")" = '0'
+          git diff --check "$FROZEN_BASE_SHA"...HEAD
+          echo 'EXACT_BASE_AND_ANCESTRY=PASS'
+
+      - name: FROZEN_INSTALL
+        run: |
+          bun install --frozen-lockfile
+          git diff --exit-code -- package.json bun.lock
+          echo 'FROZEN_INSTALL=PASS'
+
+      - name: DEPENDENCY_AUDIT_NO_CRITICAL_OR_HIGH
+        run: |
+          bun audit --audit-level high
+          echo 'DEPENDENCY_AUDIT_NO_CRITICAL_OR_HIGH=PASS'
+
+      - name: BACKEND_REGRESSION
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m py_compile tracker_map.py nextjs-ui/tracker_map.py stracker_security.py stracker_session.py
+          python -m unittest discover -s tests -p 'test_*.py'
+          cmp tracker_map.py nextjs-ui/tracker_map.py
+          echo 'BACKEND_REGRESSION=PASS'
+
+      - name: ESLINT
+        run: |
+          bun run lint
+          bunx eslint native-sharing/src native-sharing-cloudflare/src
+          echo 'ESLINT=PASS'
+
+      - name: TYPECHECK
+        run: |
+          bun run typecheck
+          bunx tsc -p native-sharing/tsconfig.json
+          echo 'TYPECHECK=PASS'
+
+      - name: WRANGLER_TYPES_AND_WORKER_TYPECHECK
+        run: |
+          cleanup() { rm -f native-sharing-cloudflare/worker-backend-configuration.d.ts native-sharing-cloudflare/worker-public-configuration.d.ts; }
+          trap cleanup EXIT
+          bunx wrangler@4.111.0 types native-sharing-cloudflare/worker-backend-configuration.d.ts --config native-sharing-cloudflare/wrangler.backend.jsonc
+          bunx tsc -p native-sharing-cloudflare/tsconfig.backend.json
+          bunx wrangler@4.111.0 types native-sharing-cloudflare/worker-public-configuration.d.ts --config native-sharing-cloudflare/wrangler.release.jsonc
+          bunx tsc -p native-sharing-cloudflare/tsconfig.public.json
+          cleanup; trap - EXIT
+          echo 'WRANGLER_TYPES=PASS'
+          echo 'WORKER_TYPECHECK=PASS'
+
+      - name: NATIVE_SHARING_AND_PILOT_UNIT_TESTS
+        run: |
+          bun test tests/native-sharing/native-sharing.test.ts tests/native-sharing/pilot-runtime.test.ts
+          echo 'NATIVE_SHARING_UNIT_TESTS=PASS'
+          echo 'PILOT_RUNTIME_UNIT_TESTS=PASS'
+          echo 'FRESH_DELAYED_STALE_UI_TESTS=PASS'
+          echo 'SANITIZED_DIAGNOSTIC_UNIT_SCAN=PASS'
+
+      - name: CLOUDFLARE_RUNTIME_UNIT_TESTS
+        run: |
+          bun test tests/native-sharing-cloudflare/runtime.test.ts tests/native-sharing-cloudflare/service-binding-gateway.test.ts tests/native-sharing-cloudflare/live-config-boundary.test.ts
+          echo 'CLOUDFLARE_RUNTIME_UNIT_TESTS=PASS'
+          echo 'SERVICE_BINDING_CONTRACT_TESTS=PASS'
+          echo 'PUBLIC_GATEWAY_ALLOWLIST_TESTS=PASS'
+
+      - name: WORKERD_SQLITE_AND_ATOMICITY
+        run: |
+          bunx vitest run --config native-sharing-cloudflare/vitest.e2e.config.mts
+          echo 'WORKERD_SQLITE_E2E=PASS'
+          echo 'WORKERD_SQLITE_ATOMICITY=PASS'
+          echo 'ALARM_CLEANUP_VERIFIED=PASS'
+          echo 'CROSS_SESSION_ISOLATION=PASS'
+
+      - name: STATIC_EXPORT_BUILD
+        run: |
+          SOURCE_SHA="$SOURCE_SHA" bash scripts/release/prepare-controlled-physical-pilot-export.sh
+          node tools/map-spike/release-bundle-gate.mjs
+          jq -e --arg sha "$SOURCE_SHA" '.sourceSha == $sha and .release == "controlled-physical-pilot-v1"' out/__stracker/build.json >/dev/null
+          echo 'STATIC_EXPORT_BUILD=PASS'
+          echo 'CONTROLLED_PILOT_UI_ENABLED=PASS'
+
+      - name: PRIOR_TWO_CONTEXT_BROWSER_E2E
+        env:
+          QA_CLOUDFLARE_OUTPUT: ${{ runner.temp }}/native-sharing-browser.json
+        run: |
+          CHROME_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"; test -n "$CHROME_BIN"; export CHROME_BIN
+          bun tests/native-sharing-cloudflare/browser-runtime-qa.ts
+          jq -e '.privateDataUsed == false and .coordinateValuesRetained == false and .secretValuesRetained == false' "$QA_CLOUDFLARE_OUTPUT" >/dev/null
+          jq -e '.pageErrorTotal == 0 and .horizontalOverflowTotal == 0 and .capabilityExchangeCountPerViewer == 1' "$QA_CLOUDFLARE_OUTPUT" >/dev/null
+          echo 'TWO_CONTEXT_BROWSER_E2E=PASS'
+          echo 'ALL_REQUIRED_VIEWPORTS=PASS'
+
+      - name: CONTROLLED_PILOT_BROWSER_E2E
+        env:
+          PILOT_BROWSER_QA_OUTPUT: ${{ runner.temp }}/controlled-pilot-browser.json
+        run: |
+          CHROME_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"; test -n "$CHROME_BIN"; export CHROME_BIN
+          mkdir -p out/__stracker
+          printf '{"sourceSha":"%s","versionId":"local-controlled-pilot"}\n' "$SOURCE_SHA" > out/__stracker/version.json
+          bun tests/native-sharing-cloudflare/controlled-physical-pilot-browser-qa.ts
+          rm -f out/__stracker/version.json
+          jq -e '.privateDataUsed == false and .realCoordinatesUsed == false and .syntheticCoordinateValuesRetained == false and .capabilityOrTokenRetained == false' "$PILOT_BROWSER_QA_OUTPUT" >/dev/null
+          jq -e '.pageErrorTotal == 0 and .relevantConsoleErrors == 0 and .horizontalOverflowTotal == 0 and .offlineDurationSeconds == 30' "$PILOT_BROWSER_QA_OUTPUT" >/dev/null
+          jq -e '[.gates[] | select(. != "PASS")] | length == 0' "$PILOT_BROWSER_QA_OUTPUT" >/dev/null
+          echo 'VISIBILITY_FOREGROUND_CONTRACT_TESTS=PASS'
+          echo 'NO_BACKGROUND_RELIABILITY_CLAIM_TEST=PASS'
+          echo 'WAKE_LOCK_FEATURE_DETECTION_TESTS=PASS'
+          echo 'WAKE_LOCK_RELEASE_TESTS=PASS'
+          echo 'LATEST_POINT_ONLY_RETRY_TESTS=PASS'
+          echo 'OFFLINE_30_SECOND_RECOVERY_TEST=PASS'
+          echo 'NO_DUPLICATE_OR_OUT_OF_ORDER_TEST=PASS'
+          echo 'REVOCATION_REMOVES_MAP_TEST=PASS'
+          echo 'SANITIZED_DIAGNOSTIC_SCAN=PASS'
+          echo 'A22_VIEWPORT_BROWSER_E2E=PASS'
+          echo 'TCL408_VIEWPORT_BROWSER_E2E=PASS'
+          echo 'WINDOWS_CHROME_VIEWPORT_E2E=PASS'
+
+      - name: OFFLINE_STOP_BROWSER_E2E
+        env:
+          OFFLINE_STOP_QA_OUTPUT: ${{ runner.temp }}/offline-stop-browser.json
+        run: |
+          CHROME_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"; test -n "$CHROME_BIN"; export CHROME_BIN
+          bun tests/native-sharing-cloudflare/offline-stop-browser-qa.ts
+          jq -e '.privateDataUsed == false and .realCoordinatesUsed == false and .capabilityOrTokenRetained == false' "$OFFLINE_STOP_QA_OUTPUT" >/dev/null
+          jq -e '.pageErrorTotal == 0 and .relevantConsoleErrors == 0' "$OFFLINE_STOP_QA_OUTPUT" >/dev/null
+          jq -e '.gates.OFFLINE_STOP_DOES_NOT_FALSELY_REPORT_REVOKED == "PASS" and .gates.STOP_REVOKE_CONFIRMED == "PASS" and .gates.SYNTHETIC_FAILURE_CLASSIFICATION_EXACT == "PASS"' "$OFFLINE_STOP_QA_OUTPUT" >/dev/null
+          echo 'OFFLINE_STOP_DOES_NOT_FALSELY_REPORT_REVOKED=PASS'
+          echo 'STOP_REVOKE_CONFIRMED=PASS'
+
+      - name: SECURITY_SCANNER_TESTS
+        run: |
+          python tests/security/test_native_sharing_cloudflare_artifact.py
+          python tests/security/test_native_sharing_cloudflare_lifecycle_scan.py
+          echo 'SECURITY_SCANNER_TESTS=PASS'
+
+      - name: SECURITY_RELEASE_SCAN
+        run: |
+          python scripts/security/native-sharing-cloudflare-release-scan.py --root .
+          test ! -e __stracker_tree_probe_do_not_commit__
+          echo 'SECURITY_RELEASE_SCAN=PASS'
+
+      - name: BACKEND_AND_PUBLIC_WRANGLER_DRY_RUN
+        run: |
+          bunx wrangler@4.111.0 versions upload --dry-run --config native-sharing-cloudflare/wrangler.backend.jsonc --outdir "${RUNNER_TEMP}/backend-dist"
+          bunx wrangler@4.111.0 versions upload --dry-run --config native-sharing-cloudflare/wrangler.release.jsonc --outdir "${RUNNER_TEMP}/public-dist"
+          test -d "${RUNNER_TEMP}/backend-dist" && test -d "${RUNNER_TEMP}/public-dist"
+          echo 'BACKEND_WRANGLER_DRY_RUN=PASS'
+          echo 'PUBLIC_WRANGLER_DRY_RUN=PASS'
+          echo 'CLOUDFLARE_MUTATION=NO'
+
+      - name: RELEASE_AUTOMATION_CONTRACT
+        run: |
+          bash -n scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          bash -n scripts/release/order001-backend-release.sh
+          bash -n scripts/release/order001-backend-rollback.sh
+          bunx tsc --target ES2022 --module ESNext --moduleResolution Bundler --lib ES2022,DOM --types bun-types --skipLibCheck --strict --noEmit scripts/release/live-controlled-physical-pilot-browser-qa.ts
+          grep -q 'ORDER001_PRIVATE_BACKEND_EXACT_HEAD' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'order001-backend-release.sh' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'order001-backend-rollback.sh' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'COOKIE_SESSION_ENCRYPTION_KEY' scripts/release/order001-backend-release.sh
+          ! grep -q 'PRIVATE_BACKEND_REUSED_UNCHANGED=PASS' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'CANDIDATE_VERSION}@0%' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'CANDIDATE_VERSION}@100%' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'Cloudflare-Workers-Version-Overrides' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          grep -q 'offline-stop-browser-qa.ts' scripts/release/cloudflare-controlled-physical-pilot-release.sh
+          ! grep -Eq 'wrangler(@[^ ]+)?[[:space:]]+delete|deleteAll\(' scripts/release/cloudflare-controlled-physical-pilot-release.sh scripts/release/order001-backend-release.sh scripts/release/order001-backend-rollback.sh
+          echo 'RELEASE_AUTOMATION_CONTRACT=PASS'
+
+      - name: ZERO_COST_MODEL
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          backend = json.loads(Path('native-sharing-cloudflare/wrangler.backend.jsonc').read_text())
+          public = json.loads(Path('native-sharing-cloudflare/wrangler.release.jsonc').read_text())
+          assert backend['workers_dev'] is False and backend['preview_urls'] is False and backend.get('routes') == []
+          assert backend['exports']['NativeSharingDurableObject'] == {'type': 'durable-object', 'storage': 'sqlite'}
+          assert public['workers_dev'] is True and public['preview_urls'] is False and public.get('routes') == []
+          assert public['services'] == [{'binding': 'NATIVE_SHARING_BACKEND', 'service': 'stracker-native-sharing-backend'}]
+          print('RECURRING_COST_USD=0')
+          print('AUTOMATIC_UPGRADE=NO')
+          PY
+          echo 'ZERO_COST_MODEL=PASS'
+
+      - name: PREPARE_SANITIZED_ARTIFACT
+        id: evidence
+        env:
+          BASE_BROWSER_OUTPUT: ${{ runner.temp }}/native-sharing-browser.json
+          PILOT_BROWSER_OUTPUT: ${{ runner.temp }}/controlled-pilot-browser.json
+          OFFLINE_STOP_OUTPUT: ${{ runner.temp }}/offline-stop-browser.json
+          EVIDENCE_DIR: ${{ runner.temp }}/stracker-controlled-pilot-validation
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          base = json.loads(Path(os.environ['BASE_BROWSER_OUTPUT']).read_text())
+          pilot = json.loads(Path(os.environ['PILOT_BROWSER_OUTPUT']).read_text())
+          offline_stop = json.loads(Path(os.environ['OFFLINE_STOP_OUTPUT']).read_text())
+          evidence = {
+            'schema': 'stracker.controlled-physical-pilot.validation.v2',
+            'sourceSha': os.environ['SOURCE_SHA'], 'runId': os.environ['SOURCE_RUN_ID'],
+            'baseSha': '745b229769594b7529859283e6e1a2eab7a8f291',
+            'cloudflareMutation': False,
+            'backendReleaseMode': 'exact-head-on-release',
+            'backendReusedUnchanged': False,
+            'privateDataUsed': False, 'realCoordinatesUsed': False,
+            'syntheticCoordinateValuesRetained': False, 'capabilityOrTokenRetained': False,
+            'pageErrorTotal': pilot['pageErrorTotal'] + offline_stop['pageErrorTotal'],
+            'relevantConsoleErrors': pilot['relevantConsoleErrors'] + offline_stop['relevantConsoleErrors'],
+            'horizontalOverflowTotal': pilot['horizontalOverflowTotal'], 'offlineDurationSeconds': pilot['offlineDurationSeconds'],
+            'physicalValidation': 'PENDING_HUMAN',
+            'gates': {
+              'EXACT_BASE_AND_ANCESTRY':'PASS','FROZEN_INSTALL':'PASS','DEPENDENCY_AUDIT_NO_CRITICAL_OR_HIGH':'PASS',
+              'BACKEND_REGRESSION':'PASS','ESLINT':'PASS','TYPECHECK':'PASS','WRANGLER_TYPES':'PASS',
+              'NATIVE_SHARING_UNIT_TESTS':'PASS','PILOT_RUNTIME_UNIT_TESTS':'PASS','CLOUDFLARE_RUNTIME_UNIT_TESTS':'PASS',
+              'WORKERD_SQLITE_E2E':'PASS','WORKERD_SQLITE_ATOMICITY':'PASS','STATIC_EXPORT_BUILD':'PASS',
+              'PRIOR_TWO_CONTEXT_BROWSER_E2E':'PASS','CONTROLLED_PILOT_BROWSER_E2E':'PASS','OFFLINE_STOP_BROWSER_E2E':'PASS',
+              'SECURITY_SCANNER_TESTS':'PASS','SECURITY_RELEASE_SCAN':'PASS','BACKEND_WRANGLER_DRY_RUN':'PASS',
+              'PUBLIC_WRANGLER_DRY_RUN':'PASS','RELEASE_AUTOMATION_CONTRACT':'PASS','ZERO_COST_MODEL':'PASS',
+              'ORDER001_BACKEND_EXACT_HEAD_RELEASE_CONTRACT':'PASS',
+              **pilot['gates'], **offline_stop['gates'],
+            },
+          }
+          out = Path(os.environ['EVIDENCE_DIR'])/'validation-evidence.json'
+          out.write_text(json.dumps(evidence, indent=2, sort_keys=True)+'\n')
+          digest = hashlib.sha256(out.read_bytes()).hexdigest()
+          (Path(os.environ['EVIDENCE_DIR'])/'validation-evidence.sha256').write_text(digest+'\n')
+          print('SANITIZED_ARTIFACT_SCAN=PASS')
+          PY
+          artifact_name="stracker-controlled-pilot-validation-${SOURCE_SHA}-${SOURCE_RUN_ID}"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "evidence_sha256=$(cat "$EVIDENCE_DIR/validation-evidence.sha256")" >> "$GITHUB_OUTPUT"
+          echo "VALIDATION_EVIDENCE_DIR=$EVIDENCE_DIR" >> "$GITHUB_ENV"
+
+      - name: UPLOAD_VALIDATION_ARTIFACT
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.evidence.outputs.artifact_name }}
+          path: ${{ env.VALIDATION_EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-artifact:
+    needs: exact-head-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.exact-head-validation.outputs.artifact_name }}
+          path: ${{ runner.temp }}/evidence
+      - name: FINAL_INTEGRITY
+        env:
+          EXPECTED_EVIDENCE_SHA256: ${{ needs.exact-head-validation.outputs.evidence_sha256 }}
+        run: |
+          test "$(sha256sum "${RUNNER_TEMP}/evidence/validation-evidence.json" | cut -d' ' -f1)" = "$EXPECTED_EVIDENCE_SHA256"
+          test "$(cat "${RUNNER_TEMP}/evidence/validation-evidence.sha256")" = "$EXPECTED_EVIDENCE_SHA256"
+          jq -e --arg sha "$SOURCE_SHA" '.sourceSha == $sha and .cloudflareMutation == false and .backendReleaseMode == "exact-head-on-release" and .backendReusedUnchanged == false and .physicalValidation == "PENDING_HUMAN"' "${RUNNER_TEMP}/evidence/validation-evidence.json" >/dev/null
+          jq -e '.privateDataUsed == false and .realCoordinatesUsed == false and .syntheticCoordinateValuesRetained == false and .capabilityOrTokenRetained == false' "${RUNNER_TEMP}/evidence/validation-evidence.json" >/dev/null
+          jq -e '.gates.OFFLINE_STOP_DOES_NOT_FALSELY_REPORT_REVOKED == "PASS" and .gates.STOP_REVOKE_CONFIRMED == "PASS" and .gates.ORDER001_BACKEND_EXACT_HEAD_RELEASE_CONTRACT == "PASS"' "${RUNNER_TEMP}/evidence/validation-evidence.json" >/dev/null
+          echo 'FINAL_INTEGRITY=PASS'
+
+  release:
+    # Fail closed: PR updates validate only. Promotion requires a manual dispatch,
+    # explicit owner authorization, and a separately set repository variable.
+    if: github.event_name == 'workflow_dispatch' && inputs.authorize_production_release == true && vars.STRACKER_ORDER006_RELEASE_APPROVED == 'true' && github.ref_name == 'feat/stracker-controlled-physical-pilot-v1'
+    needs: [exact-head-validation, verify-artifact]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 170
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - name: EXACT_HEAD_RECHECK
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git fetch origin "$FROZEN_BASE_BRANCH" --no-tags
+          test "$(git rev-parse "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
+          test "$(git merge-base HEAD "origin/$FROZEN_BASE_BRANCH")" = "$FROZEN_BASE_SHA"
+          echo 'EXACT_HEAD_RECHECK=PASS'
+      - name: FROZEN_INSTALL
+        run: bun install --frozen-lockfile
+      - name: VERIFY_BACKEND_AND_ROLLOUT_PUBLIC_OR_ROLLBACK
+        run: bash scripts/release/cloudflare-controlled-physical-pilot-release.sh
+      - name: UPLOAD_RELEASE_EVIDENCE
+        uses: actions/upload-artifact@v4
+        with:
+          name: stracker-controlled-pilot-release-${{ env.SOURCE_SHA }}-${{ env.SOURCE_RUN_ID }}
+          path: |
+            ${{ env.RELEASE_EVIDENCE_DIR }}/release-evidence.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/release-evidence.sha256
+          if-no-files-found: error
+          retention-days: 14

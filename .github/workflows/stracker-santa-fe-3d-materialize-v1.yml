@@ -1,0 +1,272 @@
+name: STRACKER Santa Fe 3D Materialize V1
+
+on:
+  pull_request:
+    branches:
+      - feat/stracker-native-sharing-live-synthetic-v1
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: stracker-santa-fe-3d-materialize-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  materialize:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/stracker-controlled-physical-pilot-v1')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      TIPPECANOE_COMMIT: 7c80fccdc17e4f8d9f4a52d518b4845290224366
+      PMTILES_ARCHIVE_SHA256: 23a2a2222f658320b539ccd06ac3b9b3b803ecbdd39a6cb5249d2ce2e16e38ae
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: EXACT_HEAD
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - name: DETECT_COMMITTED_MATERIALIZATION
+        id: asset_state
+        run: |
+          if git ls-files 'public/data/santa-fe-3d/*.pmtiles' | grep -q .; then
+            echo 'had_assets=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'had_assets=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: PINNED_BUILD_TOOLCHAIN
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libsqlite3-dev zlib1g-dev
+          python -m pip install --disable-pip-version-check \
+            overturemaps==1.0.1 \
+            shapely==2.1.1 \
+            pyproj==3.7.1
+          git clone --filter=blob:none --no-checkout https://github.com/felt/tippecanoe.git "${RUNNER_TEMP}/tippecanoe"
+          git -C "${RUNNER_TEMP}/tippecanoe" checkout --detach "$TIPPECANOE_COMMIT"
+          make -C "${RUNNER_TEMP}/tippecanoe" -j2
+          sudo make -C "${RUNNER_TEMP}/tippecanoe" install
+          curl --fail --location --retry 3 \
+            --output "${RUNNER_TEMP}/go-pmtiles.tar.gz" \
+            https://github.com/protomaps/go-pmtiles/releases/download/v1.30.1/go-pmtiles_1.30.1_Linux_x86_64.tar.gz
+          test "$(sha256sum "${RUNNER_TEMP}/go-pmtiles.tar.gz" | cut -d' ' -f1)" = "$PMTILES_ARCHIVE_SHA256"
+          mkdir -p "${RUNNER_TEMP}/bin"
+          tar -xzf "${RUNNER_TEMP}/go-pmtiles.tar.gz" -C "${RUNNER_TEMP}/bin"
+          test -x "${RUNNER_TEMP}/bin/pmtiles"
+          echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/bin/pmtiles" version
+          tippecanoe --version
+          echo 'PINNED_BUILD_TOOLCHAIN=PASS'
+
+      - name: MATERIALIZE_PACKAGE_LOCK
+        run: |
+          bun add --exact pmtiles@4.4.1
+          grep -q '"pmtiles": "4.4.1"' package.json
+          bun install --frozen-lockfile
+          echo 'PMTILES_JS_PIN=PASS'
+
+      - name: PIPELINE_UNIT_TESTS
+        run: |
+          python -m unittest discover -s tests/santa_fe_3d -p 'test_*.py' -v
+          echo 'PIPELINE_STREAMING_REGRESSION=PASS'
+          echo 'MULTI_ASSET_VALIDATOR_REGRESSION=PASS'
+
+      - name: VALIDATE_COMMITTED_MATERIALIZATION
+        if: steps.asset_state.outputs.had_assets == 'true'
+        run: |
+          python scripts/santa-fe-3d/validate_static_asset.py \
+            --manifest public/data/santa-fe-3d/manifest.json \
+            --root public
+          test -s public/data/santa-fe-3d/source-lock.json
+          test -s src/lib/location-source/map-engine/santa-fe-3d-generated.ts
+          git diff --exit-code -- public/data/santa-fe-3d src/lib/location-source/map-engine/santa-fe-3d-generated.ts
+          echo 'COMMITTED_SANTA_FE_MATERIALIZATION=PASS'
+          echo 'LIVE_STAC_NOT_REQUIRED_FOR_COMMITTED_IMMUTABLE_ASSETS=PASS'
+
+      - name: OVERTURE_STAC_AND_TINY_BBOX_DIAGNOSTIC
+        if: steps.asset_state.outputs.had_assets == 'false'
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import traceback
+          from pathlib import Path
+          from urllib.request import urlopen
+          from overturemaps.core import record_batch_reader
+
+          release = "2026-07-22.0"
+          tiny_bbox = (-60.7045, -31.6485, -60.6945, -31.6385)
+          report = {"release": release, "tiny_bbox_public_fixture": True, "datasets": {}}
+          try:
+              with urlopen("https://stac.overturemaps.org/catalog.json", timeout=45) as response:
+                  catalog = json.load(response)
+              releases = {
+                  link.get("href", "").strip("./").split("/")[0]
+                  for link in catalog.get("links", [])
+                  if link.get("rel") == "child"
+              }
+              report["stac_latest_release"] = catalog.get("latest")
+              report["pinned_release_exists"] = release in releases
+              if release not in releases:
+                  raise RuntimeError(f"PINNED_RELEASE_UNAVAILABLE:{release}")
+
+              for kind in ("building", "building_part"):
+                  collection_url = f"https://stac.overturemaps.org/{release}/buildings/{kind}/collection.json"
+                  with urlopen(collection_url, timeout=45) as response:
+                      collection = json.load(response)
+                  if collection.get("id") != kind:
+                      raise RuntimeError(f"STAC_COLLECTION_MISMATCH:{kind}:{collection.get('id')}")
+                  reader = record_batch_reader(
+                      kind,
+                      bbox=tiny_bbox,
+                      release=release,
+                      connect_timeout=45,
+                      request_timeout=240,
+                      stac=True,
+                  )
+                  if reader is None:
+                      raise RuntimeError(f"OVERTURE_READER_UNAVAILABLE:{kind}")
+                  rows = 0
+                  schema = None
+                  for batch in reader:
+                      schema = batch.schema
+                      rows += batch.num_rows
+                  if schema is None:
+                      raise RuntimeError(f"EMPTY_SCHEMA:{kind}")
+                  report["datasets"][kind] = {
+                      "rows": rows,
+                      "columns": schema.names,
+                      "geometry_column_type": str(schema.field("geometry").type),
+                      "height_columns": [
+                          name for name in ("height", "num_floors", "min_height", "min_floor")
+                          if name in schema.names
+                      ],
+                  }
+                  if kind == "building" and rows <= 0:
+                      raise RuntimeError("BUILDING_READ_ROWS_NOT_GT_ZERO")
+              report_path = Path(os.environ["RUNNER_TEMP"]) / "overture-preflight.json"
+              report_path.write_text(json.dumps(report, indent=2, sort_keys=True))
+              print(json.dumps(report, indent=2, sort_keys=True))
+              print("OVERTURE_STAC_AND_TINY_BBOX_DIAGNOSTIC=PASS")
+          except Exception as exc:
+              signature = f"{type(exc).__name__}:{exc}".replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=STRACKER_OVERTURE_PREFLIGHT::{signature}")
+              traceback.print_exc()
+              raise
+          PY
+
+      - name: MATERIALIZE_SANTA_FE_CITY
+        if: steps.asset_state.outputs.had_assets == 'false'
+        run: |
+          chmod +x scripts/santa-fe-3d/materialize.sh
+          stdout="${RUNNER_TEMP}/santa-fe-materialize.stdout.log"
+          stderr="${RUNNER_TEMP}/santa-fe-materialize.stderr.log"
+          set +e
+          bash scripts/santa-fe-3d/materialize.sh >"$stdout" 2>"$stderr"
+          code=$?
+          set -e
+          cat "$stdout"
+          cat "$stderr" >&2
+          if [ "$code" -ne 0 ]; then
+            signature="$(tail -n 24 "$stderr" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/%/%25/g; s/\r/%0D/g; s/\n/%0A/g' | cut -c1-1800)"
+            echo "::error title=STRACKER_MATERIALIZATION_ROOT_CAUSE::exit=${code};${signature}"
+            exit "$code"
+          fi
+          python scripts/santa-fe-3d/validate_static_asset.py \
+            --manifest public/data/santa-fe-3d/manifest.json \
+            --root public
+          echo 'SANTA_FE_DENSE_CITY_MATERIALIZED=PASS'
+
+      - name: PREPARE_DIAGNOSTIC_ARTIFACT
+        if: failure()
+        run: |
+          mkdir -p "${RUNNER_TEMP}/santa-fe-3d-diagnostic"
+          cp "${RUNNER_TEMP}"/overture-preflight.json "${RUNNER_TEMP}/santa-fe-3d-diagnostic/" 2>/dev/null || true
+          cp "${RUNNER_TEMP}"/santa-fe-materialize.*.log "${RUNNER_TEMP}/santa-fe-3d-diagnostic/" 2>/dev/null || true
+          printf '%s\n' "$SOURCE_SHA" > "${RUNNER_TEMP}/santa-fe-3d-diagnostic/source-sha.txt"
+          ! grep -RIE 'authorization:|bearer |capability|private[_ -]?link|cookie' "${RUNNER_TEMP}/santa-fe-3d-diagnostic"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: stracker-santa-fe-3d-diagnostic-${{ env.SOURCE_SHA }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/santa-fe-3d-diagnostic
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: PREPARE_MATERIALIZATION_ARTIFACT
+        run: |
+          mkdir -p "${RUNNER_TEMP}/santa-fe-3d-materialized/public/data/santa-fe-3d"
+          mkdir -p "${RUNNER_TEMP}/santa-fe-3d-materialized/src/lib/location-source/map-engine"
+          cp package.json bun.lock "${RUNNER_TEMP}/santa-fe-3d-materialized/"
+          cp public/data/santa-fe-3d/* "${RUNNER_TEMP}/santa-fe-3d-materialized/public/data/santa-fe-3d/"
+          cp src/lib/location-source/map-engine/santa-fe-3d-generated.ts \
+            "${RUNNER_TEMP}/santa-fe-3d-materialized/src/lib/location-source/map-engine/"
+          find "${RUNNER_TEMP}/santa-fe-3d-materialized" -type f -print0 | sort -z | xargs -0 sha256sum \
+            > "${RUNNER_TEMP}/santa-fe-3d-materialized/MATERIALIZATION.sha256"
+          ! grep -RIE 'authorization:|bearer |capability|private[_ -]?link' \
+            "${RUNNER_TEMP}/santa-fe-3d-materialized/public/data/santa-fe-3d" \
+            --exclude='*.pmtiles'
+          echo 'MATERIALIZATION_ARTIFACT_SANITIZED=PASS'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stracker-santa-fe-3d-materialized-${{ env.SOURCE_SHA }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/santa-fe-3d-materialized
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: COMMIT_PACKAGE_LOCK_DRIFT_TO_CANONICAL_BRANCH
+        if: github.event_name == 'pull_request'
+        env:
+          CANONICAL_BRANCH: feat/stracker-controlled-physical-pilot-v1
+        run: |
+          test "$GITHUB_HEAD_REF" = "$CANONICAL_BRANCH"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          if git diff --quiet -- package.json bun.lock; then
+            echo 'PACKAGE_LOCK_DRIFT=CLEAN'
+            exit 0
+          fi
+          remote_head="$(git ls-remote origin "refs/heads/$CANONICAL_BRANCH" | cut -f1)"
+          test "$remote_head" = "$SOURCE_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json bun.lock
+          ! git diff --cached --quiet
+          git commit -m 'fix(deps): regenerate patched dependency lock'
+          git push origin "HEAD:refs/heads/$CANONICAL_BRANCH"
+          echo 'PACKAGE_LOCK_DRIFT_COMMITTED=PASS'
+
+      - name: COMMIT_FIRST_MATERIALIZATION_TO_CANONICAL_BRANCH
+        if: github.event_name == 'pull_request' && steps.asset_state.outputs.had_assets == 'false'
+        env:
+          CANONICAL_BRANCH: feat/stracker-controlled-physical-pilot-v1
+        run: |
+          test "$GITHUB_HEAD_REF" = "$CANONICAL_BRANCH"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          remote_head="$(git ls-remote origin "refs/heads/$CANONICAL_BRANCH" | cut -f1)"
+          test "$remote_head" = "$SOURCE_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json bun.lock public/data/santa-fe-3d src/lib/location-source/map-engine/santa-fe-3d-generated.ts
+          ! git diff --cached --quiet
+          git commit -m 'build(map): materialize Santa Fe dense city assets'
+          git push origin "HEAD:refs/heads/$CANONICAL_BRANCH"
+          echo 'MATERIALIZED_ASSETS_COMMITTED=PASS'

@@ -24,7 +24,7 @@ Work Log:
     * upload/.git history: CSV in .gitignore, never committed
   - CONCLUSION: Sunday June 28 00:00-07:00 ART telemetry NOT RECOVERABLE. Render's
     ephemeral filesystem wiped all history on the last cold-start. The only data
-    available is today's single point: (-31.6469905, -60.7161401) at 2026-06-29T12:35 UTC.
+- [PRIVATE LOCATION REDACTED] Exact personal coordinates removed from this public worklog.
   - Printed extraction results to console for analyst review.
 
 - Phase 3 UI_RECONSTRUCTION_AND_HEADING:

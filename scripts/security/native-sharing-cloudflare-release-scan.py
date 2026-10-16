@@ -88,7 +88,14 @@ def scan_config(root: Path, config_path: Path) -> list[Finding]:
 
     assets = config.get('assets', {})
     worker_first = set(assets.get('run_worker_first', []))
-    if not {'/api/share/*', '/shared', '/shared/*'}.issubset(worker_first):
+    required_worker_first = {
+        '/api/share/*',
+        '/api/cookie-sessions',
+        '/api/cookie-sessions/*',
+        '/shared',
+        '/shared/*',
+    }
+    if not required_worker_first.issubset(worker_first):
         findings.add(Finding('WORKER_FIRST_BOUNDARY_INVALID', config_rel))
     if assets.get('binding') != 'ASSETS' or assets.get('directory') != '../out':
         findings.add(Finding('STATIC_ASSETS_BINDING_INVALID', config_rel))
@@ -110,8 +117,29 @@ def scan_repository(root: Path) -> list[Finding]:
         path for path in source_root.rglob('*')
         if path.is_file() and path.suffix in {'.ts', '.js', '.json', '.jsonc'}
     ]
+    google_provider_pattern = re.compile(r'locationsharing/read|google\.com/maps/rpc|\bgoogle-shared\b', re.I)
+    allowed_google_provider_requirements = {
+        source_root / 'src/cookie-session.ts': (
+            "const PROVIDER_URL = 'https://www.google.com/maps/rpc/locationsharing/read?authuser=0&hl=es&gl=ar&pb='",
+            'const PROVIDER_TIMEOUT_MS = 8_000',
+            "const GOOGLE_DOMAIN = /^(?:[a-z0-9-]+\\.)*google\\.com$/i",
+            "redirect: 'manual'",
+            'Cookie: cookieHeader(cookies)',
+            "return { ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' }",
+            "return { ok: false, status: 503, code: 'COOKIE_PROVIDER_UNAVAILABLE' }",
+        ),
+        source_root / 'src/cookie-provider-probe.ts': (
+            "const PROVIDER_URL = 'https://www.google.com/maps/rpc/locationsharing/read?authuser=0&hl=es&gl=ar&pb='",
+            'const PROVIDER_TIMEOUT_MS = 8_000',
+            "redirect: 'manual'",
+            'Cookie: providerCookieHeader(cookies)',
+            "response.status === 401 || response.status === 403",
+            "return { ok: false, status: 503, code: 'COOKIE_PROVIDER_UNAVAILABLE' }",
+            "(await response.text()).slice(0, 1_000_000)",
+            'extractProviderPoints(body, observedAt)',
+        ),
+    }
     patterns = [
-        ('GOOGLE_PROVIDER_ENABLED', re.compile(r'locationsharing/read|google\.com/maps/rpc|\bgoogle-shared\b', re.I)),
         ('REAL_GOOGLE_CREDENTIAL', re.compile(r'\b(?:SID|HSID|SSID|APISID|SAPISID)=', re.I)),
         ('PRIVATE_KEY_MATERIAL', re.compile(r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----')),
         ('SENSITIVE_LOGGING', re.compile(r'console\.(?:log|info|debug|warn|error)\s*\([^\n;]*(?:emitter|viewer|capability|token|authorization|cookie)', re.I)),
@@ -120,6 +148,12 @@ def scan_repository(root: Path) -> list[Finding]:
     ]
     for path in executable:
         text = path.read_text(encoding='utf-8', errors='replace')
+        if google_provider_pattern.search(text):
+            requirements = allowed_google_provider_requirements.get(path)
+            if requirements is None:
+                findings.add(Finding('GOOGLE_PROVIDER_ENABLED', relative(root, path)))
+            elif any(requirement not in text for requirement in requirements):
+                findings.add(Finding('GOOGLE_PROVIDER_BOUNDARY_INVALID', relative(root, path)))
         for rule_id, pattern in patterns:
             if pattern.search(text):
                 findings.add(Finding(rule_id, relative(root, path)))

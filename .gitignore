@@ -26,3 +26,5 @@ server.log
 upload/
 __pycache__/
 *.py[cod]
+/tool-results/
+*.tsbuildinfo

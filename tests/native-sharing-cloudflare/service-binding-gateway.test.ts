@@ -1,3 +1,4 @@
+import './cookie-session-gateway.test'
 import { afterEach, describe, expect, test } from 'bun:test'
 import type { CreateSessionResponse, ViewerExchangeResponse } from '../../native-sharing/src/contracts.js'
 import { handleMinimumRuntimeRequest } from '../../native-sharing-cloudflare/src/minimal-worker.js'

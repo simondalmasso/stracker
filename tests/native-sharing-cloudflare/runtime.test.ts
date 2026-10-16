@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
+import '../cookie-session/durable-cookie-session.test.js'
 import type { AcceptedNativePoint, CreateSessionResponse, NativeSharedLocationPoint } from '../../native-sharing/src/contracts.js'
 import { handleNativeSharingRequest } from '../../native-sharing-cloudflare/src/worker.js'
 import {
@@ -62,7 +63,9 @@ describe('SQLite Durable Object runtime', () => {
     expect(source).toContain('function sqlExecutor(storage: DurableObjectStorage)')
     expect(source).toContain('return storage.sql.exec<T>(query, ...bindings)')
     expect(source).toContain('return storage.transactionSync(callback)')
-    expect(source).toContain('new SqliteNativeSharingStore(sqlExecutor(this.ctx.storage))')
+    expect(source).toContain('const sql = sqlExecutor(this.ctx.storage)')
+    expect(source).toContain('new SqliteNativeSharingStore(sql)')
+    expect(source).toContain('new SqliteCookieSessionStore(sql)')
     expect(source).not.toMatch(/storage\.(?:get|put|list)\s*\(/)
     expect(config.exports?.NativeSharingDurableObject).toEqual({ type: 'durable-object', storage: 'sqlite' })
     expect(config).not.toHaveProperty('migrations')
@@ -135,16 +138,9 @@ describe('SQLite Durable Object runtime', () => {
     expect(secondFailure).toBeInstanceOf(NativeSharingStoreFault)
     expect((secondFailure as NativeSharingStoreFault).code).toBe('SEQUENCE_RACE')
 
-    const session = object.sql.database.query(
-      'SELECT point_count, last_sequence FROM sharing_session WHERE id = ?',
-    ).get(created.input.session.id) as { point_count: number; last_sequence: number }
-    const pointRows = object.sql.database.query(
-      'SELECT COUNT(*) AS count FROM accepted_points',
-    ).get() as { count: number }
-    const sequenceState = object.sql.database.query(
-      `SELECT last_sequence FROM rate_or_sequence_state WHERE state_key = 'point-sequence'`,
-    ).get() as { last_sequence: number }
-
+    const session = object.sql.database.query('SELECT point_count, last_sequence FROM sharing_session WHERE id = ?').get(created.input.session.id) as { point_count: number; last_sequence: number }
+    const pointRows = object.sql.database.query('SELECT COUNT(*) AS count FROM accepted_points').get() as { count: number }
+    const sequenceState = object.sql.database.query(`SELECT last_sequence FROM rate_or_sequence_state WHERE state_key = 'point-sequence'`).get() as { last_sequence: number }
     expect(session).toEqual({ point_count: 1, last_sequence: 1 })
     expect(pointRows.count).toBe(1)
     expect(sequenceState.last_sequence).toBe(1)
@@ -158,14 +154,12 @@ describe('SQLite Durable Object runtime', () => {
     const exchange = await object.runtime.exchangeViewerCapability(created.viewerCapability)
     if (!exchange.ok) throw new Error(exchange.code)
     expect((await object.runtime.getStatus(created.input.session.id, exchange.value.viewerSessionToken)).ok).toBe(true)
-
     const rotated = await object.runtime.rotateViewer(created.input.session.id, created.emitterToken)
     expect(rotated.ok).toBe(true)
     expectError(await object.runtime.getStatus(created.input.session.id, exchange.value.viewerSessionToken), 'VIEWER_SESSION_INVALID')
     if (!rotated.ok) throw new Error(rotated.code)
     const replacement = await object.runtime.exchangeViewerCapability(rotated.value.viewerCapability)
     if (!replacement.ok) throw new Error(replacement.code)
-
     expect((await object.runtime.revoke(created.input.session.id, created.emitterToken)).ok).toBe(true)
     expectError(await object.runtime.getStatus(created.input.session.id, replacement.value.viewerSessionToken), 'SESSION_REVOKED')
     object.sql.close()
@@ -175,11 +169,8 @@ describe('SQLite Durable Object runtime', () => {
     const fixed = new Date('2026-07-22T20:00:00.000Z')
     const object = createTestSessionObject(() => fixed)
     const created = await directSession(object.runtime, fixed)
-    for (let index = 0; index < MAX_ACTIVE_VIEWER_SESSIONS; index += 1) {
-      expect((await object.runtime.exchangeViewerCapability(created.viewerCapability)).ok).toBe(true)
-    }
+    for (let index = 0; index < MAX_ACTIVE_VIEWER_SESSIONS; index += 1) expect((await object.runtime.exchangeViewerCapability(created.viewerCapability)).ok).toBe(true)
     expectError(await object.runtime.exchangeViewerCapability(created.viewerCapability), 'VIEWER_SESSION_QUOTA_EXCEEDED')
-
     object.sql.database.query('UPDATE sharing_session SET point_count = ? WHERE id = ?').run(MAX_POINTS_PER_SESSION, created.input.session.id)
     expectError(await object.runtime.appendPoint(created.input.session.id, created.emitterToken, point(1, fixed.toISOString())), 'POINT_QUOTA_EXCEEDED')
     expect((await object.store.getSession(created.input.session.id))?.pointCount).toBe(MAX_POINTS_PER_SESSION)
@@ -203,49 +194,23 @@ describe('Worker HTTP boundary', () => {
   test('rejects invalid origin, query capabilities, methods and oversized bodies', async () => {
     const ns = namespace()
     const env = testBindings(ns)
-    const crossOrigin = new Request('https://stracker.test/api/share/sessions', {
-      method: 'POST',
-      headers: { Origin: 'https://attacker.test', 'Content-Type': 'application/json' },
-      body: '{}',
-    })
+    const crossOrigin = new Request('https://stracker.test/api/share/sessions', { method: 'POST', headers: { Origin: 'https://attacker.test', 'Content-Type': 'application/json' }, body: '{}' })
     expect((await handleNativeSharingRequest(crossOrigin, env)).status).toBe(403)
     expect((await handleNativeSharingRequest(apiRequest('/api/share/sessions?token=synthetic', { method: 'POST', body: '{}' }), env)).status).toBe(400)
     expect((await handleNativeSharingRequest(apiRequest('/api/share/sessions', { method: 'GET' }), env)).status).toBe(405)
-    expect((await handleNativeSharingRequest(apiRequest('/api/share/sessions', {
-      method: 'POST',
-      body: JSON.stringify({ value: 'x'.repeat(17 * 1024) }),
-    }), env)).status).toBe(413)
+    expect((await handleNativeSharingRequest(apiRequest('/api/share/sessions', { method: 'POST', body: JSON.stringify({ value: 'x'.repeat(17 * 1024) }) }), env)).status).toBe(413)
   })
 
   test('fails closed when bindings or storage are unavailable', async () => {
     expect((await handleNativeSharingRequest(apiRequest('/api/share/sessions', { method: 'POST', body: '{}' }), {})).status).toBe(503)
-
-    const failingStub: NativeSharingRpcStub = {
-      createSession: async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }),
-      appendPoint: async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }),
-      exchangeViewerCapability: async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }),
-      getStatus: async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }),
-      getPoints: async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }),
-      logoutViewer: async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }),
-      rotateViewer: async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }),
-      revoke: async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }),
-    }
+    const failingStub = new Proxy({} as NativeSharingRpcStub, { get: () => async () => ({ ok: false, status: 503, code: 'STORAGE_UNAVAILABLE' }) })
     const env: NativeSharingRuntimeBindings = { NATIVE_SHARING: { getByName: () => failingStub } }
     expect((await handleNativeSharingRequest(apiRequest('/api/share/sessions', { method: 'POST', body: '{}' }), env)).status).toBe(503)
   })
 
   test('rejects late RPC responses at the Worker timeout boundary', async () => {
     const delayed = new Promise<never>(() => {})
-    const stub: NativeSharingRpcStub = {
-      createSession: () => delayed,
-      appendPoint: () => delayed,
-      exchangeViewerCapability: () => delayed,
-      getStatus: () => delayed,
-      getPoints: () => delayed,
-      logoutViewer: () => delayed,
-      rotateViewer: () => delayed,
-      revoke: () => delayed,
-    }
+    const stub = new Proxy({} as NativeSharingRpcStub, { get: () => () => delayed })
     const env: NativeSharingRuntimeBindings = { NATIVE_SHARING: { getByName: () => stub } }
     const started = Date.now()
     const response = await handleNativeSharingRequest(apiRequest('/api/share/sessions', { method: 'POST', body: '{}' }), env)

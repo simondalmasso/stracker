@@ -1,0 +1,32 @@
+{
+  "type": "FeatureCollection",
+  "name": "santa-fe-capital-public-urban-envelope",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "source": "OpenStreetMap Nominatim public place search: Santa Fe, Departamento La Capital, Santa Fe, Argentina",
+        "license": "ODbL-1.0",
+        "attribution": "© OpenStreetMap contributors",
+        "derivation": "Public city-scale urban envelope simplified for static LOD1 generation; no owner coordinates or screenshot-derived points.",
+        "retrieved_on": "2026-08-05",
+        "public_qa_fixture": true
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-60.775, -31.72],
+            [-60.775, -31.56],
+            [-60.735, -31.535],
+            [-60.665, -31.54],
+            [-60.615, -31.59],
+            [-60.625, -31.69],
+            [-60.69, -31.74],
+            [-60.775, -31.72]
+          ]
+        ]
+      }
+    }
+  ]
+}

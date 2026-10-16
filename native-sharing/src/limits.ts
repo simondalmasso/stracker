@@ -1,6 +1,6 @@
 export const CAPABILITY_BYTES = 32
 export const VIEWER_SESSION_TOKEN_BYTES = 32
-export const VIEWER_SESSION_TTL_MS = 10 * 60 * 1000
+export const VIEWER_SESSION_TTL_MS = 4 * 60 * 60 * 1000
 export const MAX_SESSION_DURATION_MS = 4 * 60 * 60 * 1000
 export const DEFAULT_SESSION_DURATION_MS = 60 * 60 * 1000
 export const MIN_SESSION_DURATION_MS = 5 * 60 * 1000

@@ -86,7 +86,7 @@ HTML_PATH = BASE_DIR / "mapa.html"
 LOG_PATH = BASE_DIR / "tracker.log"
 
 GMAPS_SHARE_URL = (
-    "https://www.google.com/maps/@-31.6469679,-60.7161333,21z"
+    "https://www.google.com/maps/"
     "/data=!4m2!7m1!2e1?hl=es&entry=ttu&g_ep=EgoyMDI6MDUyMC4wIKXMDSoASAFQAw%3D%3D"
 )
 
@@ -118,23 +118,42 @@ ACCURACY_RE = re.compile(r'\]\s*,\s*\d{13}\s*,\s*(\d+)\s*,\s*"')
 GPS_NOISE_THRESHOLD = 20
 
 # ---- Zonas de geofencing ----
-HOME_ZONE_CENTER = (-31.64693, -60.71598)
+def _parse_zone_center(env_name):
+    """Read an owner-configured private zone from runtime env; never hardcode it."""
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return None
+    try:
+        lat_text, lng_text = raw.split(",", 1)
+        lat, lng = float(lat_text), float(lng_text)
+    except (TypeError, ValueError):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    return (lat, lng)
+
+
+# Personal geofences are optional and configured at runtime, not committed.
+HOME_ZONE_CENTER = _parse_zone_center("STRACKER_HOME_ZONE_CENTER")
 HOME_ZONE_RADIUS_M = 150
-WORK_ZONE_CENTER = (-31.6366, -60.7012)
+WORK_ZONE_CENTER = _parse_zone_center("STRACKER_WORK_ZONE_CENTER")
 WORK_ZONE_RADIUS_M = 150
-USER_HOME_CENTER = (-31.643, -60.714)
+USER_HOME_CENTER = _parse_zone_center("STRACKER_USER_HOME_CENTER") or HOME_ZONE_CENTER
 USER_HOME_RADIUS_M = 200
 
-# ---- POI System (priority order) ----
 POI_LIST = [
-    {"id": "home", "name": "Casa", "lat": HOME_ZONE_CENTER[0], "lng": HOME_ZONE_CENTER[1], "radius": HOME_ZONE_RADIUS_M},
-    {"id": "work", "name": "Trabajo", "lat": WORK_ZONE_CENTER[0], "lng": WORK_ZONE_CENTER[1], "radius": WORK_ZONE_RADIUS_M},
+    {"id": zone_id, "name": name, "lat": center[0], "lng": center[1], "radius": radius}
+    for zone_id, name, center, radius in [
+        ("home", "Casa", HOME_ZONE_CENTER, HOME_ZONE_RADIUS_M),
+        ("work", "Trabajo", WORK_ZONE_CENTER, WORK_ZONE_RADIUS_M),
+    ]
+    if center is not None
 ]
 
-# ---- Proximity targets ----
 PROXIMITY_TARGETS = [
-    {"name": "Casa", "lat": HOME_ZONE_CENTER[0], "lng": HOME_ZONE_CENTER[1]},
-    {"name": "Trabajo", "lat": WORK_ZONE_CENTER[0], "lng": WORK_ZONE_CENTER[1]},
+    {"name": name, "lat": center[0], "lng": center[1]}
+    for name, center in [("Casa", HOME_ZONE_CENTER), ("Trabajo", WORK_ZONE_CENTER)]
+    if center is not None
 ]
 
 HEADING_NAMES = [
@@ -644,9 +663,9 @@ def _detect_hotspots(pts):
         if dwell < 60 * 60 * 1000:
             continue
         label = f"Spot {len(hotspots) + 1}"
-        if _haversine_m(c["lat"], c["lng"], HOME_ZONE_CENTER[0], HOME_ZONE_CENTER[1]) < HOME_ZONE_RADIUS_M:
+        if HOME_ZONE_CENTER is not None and _haversine_m(c["lat"], c["lng"], HOME_ZONE_CENTER[0], HOME_ZONE_CENTER[1]) < HOME_ZONE_RADIUS_M:
             label = "Casa"
-        elif _haversine_m(c["lat"], c["lng"], WORK_ZONE_CENTER[0], WORK_ZONE_CENTER[1]) < WORK_ZONE_RADIUS_M:
+        elif WORK_ZONE_CENTER is not None and _haversine_m(c["lat"], c["lng"], WORK_ZONE_CENTER[0], WORK_ZONE_CENTER[1]) < WORK_ZONE_RADIUS_M:
             label = "Trabajo"
         hotspots.append({"id": i, "lat": c["lat"], "lng": c["lng"], "label": label, "dwell_min": round(dwell / 60000)})
     return hotspots
@@ -913,19 +932,19 @@ def compute_telemetry(lat, lng, timestamp):
 
 
 def is_in_work_zone(lat, lng):
-    if lat is None or lng is None:
+    if lat is None or lng is None or WORK_ZONE_CENTER is None:
         return False
     return haversine_m(WORK_ZONE_CENTER[0], WORK_ZONE_CENTER[1], lat, lng) <= WORK_ZONE_RADIUS_M
 
 
 def is_in_home_zone(lat, lng):
-    if lat is None or lng is None:
+    if lat is None or lng is None or HOME_ZONE_CENTER is None:
         return False
     return haversine_m(HOME_ZONE_CENTER[0], HOME_ZONE_CENTER[1], lat, lng) <= HOME_ZONE_RADIUS_M
 
 
 def is_in_user_home_zone(lat, lng):
-    if lat is None or lng is None:
+    if lat is None or lng is None or USER_HOME_CENTER is None:
         return False
     return haversine_m(USER_HOME_CENTER[0], USER_HOME_CENTER[1], lat, lng) <= USER_HOME_RADIUS_M
 
@@ -1331,19 +1350,19 @@ def _compute_proximity(lat, lng, mode):
     if lat is None or lng is None:
         return result
 
-    # Distance to home
-    home_dist = round(haversine_m(lat, lng, HOME_ZONE_CENTER[0], HOME_ZONE_CENTER[1]))
+    # Distance to home is unavailable until the owner configures a private zone.
+    home_dist = round(haversine_m(lat, lng, HOME_ZONE_CENTER[0], HOME_ZONE_CENTER[1])) if HOME_ZONE_CENTER is not None else None
     result["distance_m"] = home_dist
 
     if mode == "CAR":
         result["mode"] = "CAR"
-        if home_dist <= ARRIVAL_CAR_CLOSE_M:
+        if home_dist is not None and home_dist <= ARRIVAL_CAR_CLOSE_M:
             result["arrival"] = "ARRIVED"
-        elif home_dist <= ARRIVAL_CAR_APPROACH_M:
+        elif home_dist is not None and home_dist <= ARRIVAL_CAR_APPROACH_M:
             result["arrival"] = "APPROACHING"
     elif mode in ("WALK", "BUS"):
         result["mode"] = "WALK"
-        if home_dist <= ARRIVAL_WALK_APPROACH_M:
+        if home_dist is not None and home_dist <= ARRIVAL_WALK_APPROACH_M:
             result["arrival"] = "APPROACHING"
 
     return result
@@ -1431,7 +1450,7 @@ def build_state(raw, prev_state=None):
 
     # Distance to home
     distance_to_home_m = None
-    if lat is not None and lng is not None:
+    if lat is not None and lng is not None and HOME_ZONE_CENTER is not None:
         distance_to_home_m = round(haversine_m(lat, lng, HOME_ZONE_CENTER[0], HOME_ZONE_CENTER[1]))
 
     # ── 4. NETWORK + SIGNAL QUALITY ──
@@ -2313,8 +2332,8 @@ darkTile.addTo(map);
 var mapMode='standard';
 function toggleMapMode(){if(mapMode==='standard'){map.removeLayer(darkTile);satTile.addTo(map);satLabels.addTo(map);mapMode='satellite'}else{map.removeLayer(satTile);map.removeLayer(satLabels);darkTile.addTo(map);mapMode='standard'}var b=document.getElementById('btnSatellite');if(b)b.classList.toggle('active',mapMode==='satellite')}
 
-L.circle([-31.6366,-60.7012],{radius:150,color:'#2a2a2a',fillColor:'#0a84ff',fillOpacity:.03,weight:1,opacity:.12}).addTo(map);
-L.circle([-31.64693,-60.71598],{radius:150,color:'#2a2a2a',fillColor:'#34c759',fillOpacity:.03,weight:1,opacity:.12}).addTo(map);
+/* Personal home/work geofences are never embedded in public map assets. */
+/* Personal home/work geofences are never embedded in public map assets. */
 map.invalidateSize();
 
 var clusterGroup=L.markerClusterGroup({maxClusterRadius:50,spiderfyOnMaxZoom:true,disableClusteringAtZoom:17,chunkedLoading:true});

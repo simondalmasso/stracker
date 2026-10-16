@@ -9,7 +9,7 @@
   "assets": {
     "directory": "../out",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/share/*", "/shared", "/shared/*"]
+    "run_worker_first": ["/api/share/*", "/api/cookie-sessions", "/api/cookie-sessions/*", "/shared", "/shared/*"]
   },
   "durable_objects": {
     "bindings": [

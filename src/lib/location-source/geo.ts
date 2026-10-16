@@ -1,3 +1,4 @@
+import type { Feature, Polygon } from 'geojson'
 import type { GeoPoint } from './contracts'
 
 const EARTH_RADIUS_M = 6_371_008.8
@@ -58,7 +59,7 @@ export function elapsedSeconds(previousIso: string, nextIso: string): number | n
   return (next - previous) / 1000
 }
 
-export function circlePolygon(center: GeoPoint, radiusM: number, steps = 48): GeoJSON.Feature<GeoJSON.Polygon> {
+export function circlePolygon(center: GeoPoint, radiusM: number, steps = 48): Feature<Polygon> {
   const safeRadius = Math.max(0, radiusM)
   const latRadians = toRadians(center.lat)
   const coordinates: [number, number][] = []
