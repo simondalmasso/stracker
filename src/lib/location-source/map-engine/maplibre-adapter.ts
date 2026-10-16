@@ -10,7 +10,7 @@ import { SATELLITE_LAYER_ID, SATELLITE_PROVIDER, SATELLITE_SOURCE_ID, usesSatell
 import { SANTA_FE_3D_LAYER_IDS } from './santa-fe-city-config'
 import { acquireSantaFePmtilesProtocol, configureSantaFeCity3d, isSantaFe3dSourceId, removeSantaFeCity3d } from './santa-fe-city-runtime'
 
-maplibregl.setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).toString())
+maplibregl.setWorkerUrl('/maplibre/maplibre-gl-worker.mjs')
 
 const SOURCE_MARKER = 'stracker-marker'
 const SOURCE_ACCURACY = 'stracker-accuracy'
