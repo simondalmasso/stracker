@@ -1,7 +1,7 @@
 # ORDER-006 — forensic status
 
-**State: BLOCKED_REAL**  
-**Cut:** 2026-10-16  
+**State: BLOCKED_REAL**
+**Cut:** 2026-10-16
 **No merge or production promotion performed by this recovery patch.**
 
 ## Evidence
