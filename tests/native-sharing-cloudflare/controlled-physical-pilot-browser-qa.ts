@@ -135,7 +135,7 @@ async function configure(page, viewport, observations, errors, consoleErrors, re
       /favicon/i.test(text) ? 'FAVICON_FAILURE' : 'OTHER_CONSOLE_ERROR'
     const signature = text
       .replace(/https?:\/\/\S+/gi, '[URL]')
-      .replace(/\b(?:Bearer|token|capability|secret|authorization)\s*[:=]?\s*\S+/gi, '$1 [REDACTED]')
+      .replace(/\b(?:Bearer|token|capability|secret|authorization)\s*[:=]?\s*\S+/gi, '[REDACTED]')
       .replace(/\b[A-Fa-f0-9]{32,}\b/g, '[HEX]')
       .replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[OPAQUE]')
       .replace(/[\r\n\t]+/g, ' ')
@@ -282,8 +282,13 @@ try {
       const key = `${error.category}:${error.source}:${error.line ?? 'na'}`
       counts.set(key, (counts.get(key) || 0) + 1)
     }
+    const diagnosticRows = new Map()
+    for (const error of consoleErrors) {
+      const key = `${error.category}:${error.source}:${error.line ?? 'na'}:${error.signature}`
+      diagnosticRows.set(key, (diagnosticRows.get(key) || 0) + 1)
+    }
     console.log('CONTROLLED_PILOT_CONSOLE_DIAGNOSTICS=' + JSON.stringify(
-      [...counts.entries()].slice(0, 20).map(([key, count]) => ({ key, count })),
+      [...diagnosticRows.entries()].slice(0, 20).map(([key, count]) => ({ key, count })),
     ))
   }
   ok(result.pageErrorTotal === 0, 'PAGEERROR_TOTAL')
