@@ -5,6 +5,8 @@ export type CandidateFailureClassification =
   | 'BUILD_JSON_SOURCE_SHA_MISMATCH'
   | 'BUILD_JSON_RELEASE_MISMATCH'
   | 'ASSET_BINDING_VERSION_SKEW'
+  | 'PMTILES_RANGE_TRANSPORT_FAILURE'
+  | 'PMTILES_RANGE_CONTRACT_INVALID'
   | 'AFFINITY_ROUTING_INCONSISTENT'
   | 'VERSION_METADATA_MISMATCH'
   | 'OTHER_EVIDENCED'
@@ -130,12 +132,12 @@ function classifyObservation(
   if (observation.observedBuildSourceSha !== expected.sourceSha) return 'BUILD_JSON_SOURCE_SHA_MISMATCH'
   if (observation.observedBuildRelease !== expected.release) return 'BUILD_JSON_RELEASE_MISMATCH'
   if (observation.manifestHttpStatus !== 200 || !observation.manifestExact) return 'ASSET_BINDING_VERSION_SKEW'
+  if (observation.rangeHttpStatus !== 206) return 'PMTILES_RANGE_TRANSPORT_FAILURE'
   if (
-    observation.rangeHttpStatus !== 206
-    || !observation.rangeContentRangeValid
+    !observation.rangeContentRangeValid
     || !observation.rangeTransportMarkerValid
     || !observation.rangeLengthValid
-  ) return 'ASSET_BINDING_VERSION_SKEW'
+  ) return 'PMTILES_RANGE_CONTRACT_INVALID'
   return 'PASS'
 }
 

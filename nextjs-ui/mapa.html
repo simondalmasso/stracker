@@ -207,7 +207,7 @@ var BATTERY_TIER={'HIGH':'⚡','MID':'🌟','LOW':'☠'};
 var GPS_MAP={'GOOD':'🟢','WEAK':'🟡','NO_SIGNAL':'🔴','STRONG':'🟢'};
 
 /* ===== INIT MAP ===== */
-var map=L.map('map',{zoomControl:true,attributionControl:false,center:[-31.64693,-60.71598],zoom:17});
+var map=L.map('map',{zoomControl:true,attributionControl:false,center:[-31.6333,-60.7],zoom:12});
 
 /* ===== SATELLITE TILE SYSTEM — 4-LAYER FALLBACK v10.0 ===== */
 var _satErrorCount=0;
@@ -326,8 +326,8 @@ function toggleMapMode(){
 }
 
 /* Zone circles */
-L.circle([-31.64693,-60.71598],{radius:150,color:'#2a2a2a',fillColor:'#34C759',fillOpacity:.03,weight:1,opacity:.12}).addTo(map);
-L.circle([-31.6366,-60.7012],{radius:150,color:'#2a2a2a',fillColor:'#0077FF',fillOpacity:.03,weight:1,opacity:.12}).addTo(map);
+/* Personal home/work geofences are not shipped in public assets. */
+/* Personal home/work geofences are not shipped in public assets. */
 
 /* Points markers */
 var validPts=pts.filter(function(p){return p.lat!=null&&p.lng!=null&&isFinite(p.lat)&&isFinite(p.lng)});
@@ -345,7 +345,7 @@ function updateLiveMarker(lat,lng,speed){
   var sHtml=speed>1?'<div class="live-speed">'+Math.round(speed)+' km/h</div>':'';
   liveMarker=L.marker([lat,lng],{icon:L.divIcon({className:'',html:'<div class="live-marker"><div class="live-dot"></div>'+sHtml+'</div>',iconSize:[40,40],iconAnchor:[20,20]}),zIndexOffset:10000}).addTo(map);
 }
-updateLiveMarker(-31.64693,-60.71598,0);
+updateLiveMarker(-31.6333,-60.7,0);
 
 /* GhostRail */
 var _ghostTrailLayer=null;
@@ -554,7 +554,7 @@ function _showToast(msg){var t=document.getElementById('toast');if(!t)return;if(
 
 /* ===== FAB BUTTONS (INSIDE DRAWER ONLY) ===== */
 document.getElementById('btnCenter').onclick=function(){
-  map.setView([-31.64693,-60.71598],17,{animate:true});
+  map.setView([-31.6333,-60.7],12,{animate:true});
 };
 document.getElementById('btnLayers').onclick=toggleMapMode;
 document.getElementById('btnGhost').onclick=function(){
@@ -583,7 +583,7 @@ setInterval(function(){
     st.movement=Object.assign({},st.movement,{motion_class:"WALK",motion_display:"se mueve 📱🔛",mode_emoji:"🚶 A PIE",speed_kmh:3.2});
     st.device=Object.assign({},st.device,{screen_state:"ON",screen:"🟢"});
     st.location=Object.assign({},st.location,{zone:"TRANSIT",zone_es:"MOVIMIENTO",label_primary:"En ruta"});
-    updateLiveMarker(-31.64693,-60.71598,3.2);
+    updateLiveMarker(-31.6333,-60.7,3.2);
   }
   render(st);
 },30000);

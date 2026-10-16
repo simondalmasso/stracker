@@ -25,6 +25,8 @@ type AttemptState = {
   versionId?: string
   manifestExact?: boolean
   rangeValid?: boolean
+  rangeStatus?: number
+  rangeHeadersValid?: boolean
 }
 
 function responseJson(value: unknown, headers: Record<string, string> = {}): Response {
@@ -57,9 +59,11 @@ function candidateFetch(states: AttemptState[], observedKeys: string[] = []): ty
     }
     if (url.pathname.endsWith('.pmtiles')) {
       const valid = state.rangeValid !== false
+      const status = state.rangeStatus ?? (valid ? 206 : 200)
+      const headersValid = state.rangeHeadersValid !== false
       return new Response(new Uint8Array(valid ? 16_384 : 4), {
-        status: valid ? 206 : 200,
-        headers: valid ? {
+        status,
+        headers: status === 206 && valid && headersValid ? {
           'Content-Range': 'bytes 0-16383/999999',
           'X-Stracker-PMTiles-Transport': 'query-v1',
           'Content-Length': '16384',
@@ -192,6 +196,28 @@ describe('Santa Fe query-range release contract', () => {
     expect(output).not.toContain(affinityKey)
     expect(output).toContain('EXPECTED_VERSION_ID_HASH=')
     expect(output).toContain('AFFINITY_KEY_HASH=affinity-key-hash')
+  })
+
+  test('classifies a public PMTiles 502 as transport failure, not version skew', async () => {
+    let classification: CandidateFailureClassification | null = null
+    try {
+      await runRetry([{ rangeStatus: 502 }])
+    } catch (error) {
+      expect(error).toBeInstanceOf(CandidateCoherenceError)
+      classification = (error as CandidateCoherenceError).classification
+    }
+    expect(classification).toBe('PMTILES_RANGE_TRANSPORT_FAILURE')
+  })
+
+  test('classifies malformed 206 range metadata separately from transport failure', async () => {
+    let classification: CandidateFailureClassification | null = null
+    try {
+      await runRetry([{ rangeStatus: 206, rangeHeadersValid: false }])
+    } catch (error) {
+      expect(error).toBeInstanceOf(CandidateCoherenceError)
+      classification = (error as CandidateCoherenceError).classification
+    }
+    expect(classification).toBe('PMTILES_RANGE_CONTRACT_INVALID')
   })
 
   test('persistent timeout remains a release error with rollback armed', async () => {
