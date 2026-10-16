@@ -43,3 +43,5 @@
 - `STRACKER Santa Fe 3D Materialize V1` passed the committed-asset validator and pipeline unit tests. It normalized the `pmtiles@4.4.1` lock pin in commit `d1c7e4a`; this is not a production deployment.
 
 - Follow-up CI found one remaining MapLibre v5-style default import in the generated browser QA fixture. The fixture now uses the v6 namespace API and serves the two module-worker assets at same-origin paths; the next CI run must validate the actual WebGL render and toggle effect.
+
+- The first full browser pass after MapLibre v6 migration passed the static export build, dense-city render (7,700 features), cookie-session browser QA, and map/worker test. Viewer-session lifecycle QA then failed only at `CONSOLE_ERRORS_ZERO`. Its local asset server served `.mjs` workers as `application/octet-stream`; the harness now serves `.mjs` as JavaScript. Fresh browser CI must confirm this diagnosis and the session/zoom lifecycle.
