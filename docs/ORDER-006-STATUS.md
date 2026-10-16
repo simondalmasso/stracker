@@ -41,3 +41,5 @@
 - The first full validation after dependency hardening passed exact ancestry, frozen install, and the high/critical dependency audit. It then stopped at `BACKEND_REGRESSION`: `tracker_map.py` and `nextjs-ui/tracker_map.py` differed at the Google Maps URL, and the stale generated copy contained a precise coordinate absent from the maintained source.
 - `nextjs-ui/tracker_map.py` is now synchronized byte-for-byte from `tracker_map.py`, removing that stale coordinate and restoring the workflow's explicit parity contract. Fresh CI must verify the correction.
 - `STRACKER Santa Fe 3D Materialize V1` passed the committed-asset validator and pipeline unit tests. It normalized the `pmtiles@4.4.1` lock pin in commit `d1c7e4a`; this is not a production deployment.
+
+- Follow-up CI found one remaining MapLibre v5-style default import in the generated browser QA fixture. The fixture now uses the v6 namespace API and serves the two module-worker assets at same-origin paths; the next CI run must validate the actual WebGL render and toggle effect.
