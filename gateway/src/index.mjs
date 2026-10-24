@@ -80,7 +80,7 @@ function securedAssetHeaders(sourceHeaders, pathname) {
   headers.set('Referrer-Policy', 'no-referrer')
   headers.set('X-Frame-Options', 'DENY')
   headers.set('Permissions-Policy', 'geolocation=(self), camera=(), microphone=()')
-  headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.tile.openstreetmap.org; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+  headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.tile.openstreetmap.org https://server.arcgisonline.com https://tiles.openfreemap.org; connect-src 'self' https://tiles.openfreemap.org https://*.openfreemap.org https://server.arcgisonline.com; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
   headers.set('X-Stracker-Gateway', GATEWAY_MARKER)
   headers.set('X-Stracker-Access-Subject', 'verified')
   if (pathname === '/') {

@@ -499,3 +499,30 @@ input:focus {
   from { opacity: 0; transform: translateY(-8px) scale(0.94); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* Tiny London-inspired isometric 2.5D map canvas. */
+
+.stracker-maplibre-container .maplibregl-map,
+.stracker-maplibre-container .maplibregl-canvas-container,
+.stracker-maplibre-container .maplibregl-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.stracker-atlas-marker {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 3px solid #090b10;
+  border-radius: 50%;
+  background: #f8fafc;
+  box-shadow: 0 0 0 7px rgb(248 250 252 / 16%), 0 4px 18px rgb(0 0 0 / 45%);
+}
+.stracker-atlas-marker span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #090b10;
+}

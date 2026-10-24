@@ -1,7 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, LocateFixed, MapPinned, ShieldCheck } from 'lucide-react'
 import type { LocationSource, ProductFlow, SharedSessionStatus } from '@/lib/location-source/contracts'
 import { isMapUnlocked } from '@/lib/location-source/contracts'
@@ -304,6 +304,7 @@ export default function MobileLocationApp() {
   const [importing, setImporting] = useState(false)
   const my = useMyLocation()
   const shared = useSharedLocation()
+  const sharedStatusRefreshRef = useRef(shared.refreshStatus)
 
   const select = useCallback((next: LocationSource) => {
     my.stop()
@@ -312,8 +313,13 @@ export default function MobileLocationApp() {
     window.localStorage.setItem(SOURCE_KEY, next)
     setFlow(next === 'my-device' ? 'MY_LOCATION_FLOW' : 'SHARED_LOCATION_FLOW')
     setImporting(false)
-    if (next === 'google-shared') void shared.refreshStatus()
   }, [my, shared])
+
+  useEffect(() => {
+    if (source === 'google-shared' && flow === 'SHARED_LOCATION_FLOW') {
+      void sharedStatusRefreshRef.current()
+    }
+  }, [source, flow])
 
   const reset = useCallback(() => {
     my.stop()
@@ -353,6 +359,47 @@ export default function MobileLocationApp() {
         onReplaceSession={() => setImporting(true)}
         onDeleteSession={() => void shared.deleteSession().then(reset)}
       />
+    )
+  }
+
+  if (
+    !importing &&
+    source === 'google-shared' &&
+    shared.rememberedSession &&
+    !shared.snapshot &&
+    (!shared.status || shared.status.configured || shared.state === 'SHARED_ERROR')
+  ) {
+    return (
+      <main className="relative flex min-h-[100dvh] items-center justify-center overflow-x-hidden bg-black px-5 text-white">
+        <BackButton onClick={reset} />
+        <div className="w-full max-w-sm text-center">
+          <MapPinned className="mx-auto" size={34} />
+          <h1 className="mt-5 text-2xl font-semibold">
+            {shared.state === 'SHARED_NO_LOCATION' ? 'Sesión guardada' : 'Recuperando sesión guardada'}
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-white/55">
+            {shared.state === 'SHARED_NO_LOCATION'
+              ? 'La sesión de Google Maps sigue vinculada, pero no hay una ubicación compartida activa disponible ahora. No hace falta volver a pegar las cookies.'
+              : 'STRACKER está intentando recuperar la sesión guardada. Si el backend no responde, se puede reintentar sin volver a pegar las cookies.'}
+          </p>
+          {shared.error ? <p role="alert" className="mt-4 rounded-2xl border border-white/10 p-3 text-sm">{shared.error}</p> : null}
+          <button
+            type="button"
+            disabled={shared.loading}
+            onClick={() => void sharedStatusRefreshRef.current()}
+            className="mt-6 min-h-12 w-full rounded-2xl bg-white text-sm font-semibold text-black disabled:opacity-40"
+          >
+            {shared.loading ? 'CONSULTANDO…' : 'VOLVER A CONSULTAR'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setImporting(true)}
+            className="mt-3 min-h-11 w-full rounded-2xl border border-white/15 text-sm font-semibold"
+          >
+            REEMPLAZAR SESIÓN
+          </button>
+        </div>
+      </main>
     )
   }
 

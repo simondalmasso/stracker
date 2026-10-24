@@ -1,16 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import {
-  Circle,
-  CircleMarker,
-  MapContainer,
-  Polyline,
-  TileLayer,
-  useMap,
-} from 'react-leaflet'
+import { useMemo, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { Layers, LocateFixed, Route, X } from 'lucide-react'
 import type { LocationSnapshot, LocationSource } from '@/lib/location-source/contracts'
+
+const MobileAtlasCanvas = dynamic(() => import('./MobileAtlasCanvas'), { ssr: false })
 
 interface MobileMapShellProps {
   source: LocationSource
@@ -22,21 +17,6 @@ interface MobileMapShellProps {
   onStop?: () => void
   onReplaceSession?: () => void
   onDeleteSession?: () => void
-}
-
-const STREET_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-const SATELLITE_TILES =
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-
-function CenterOnSnapshot({ snapshot, centerRequest }: { snapshot: LocationSnapshot; centerRequest: number }) {
-  const map = useMap()
-  useEffect(() => {
-    map.flyTo([snapshot.lat, snapshot.lng], Math.max(map.getZoom(), 16), {
-      animate: true,
-      duration: 0.45,
-    })
-  }, [centerRequest, map, snapshot.lat, snapshot.lng])
-  return null
 }
 
 function freshnessText(snapshot: LocationSnapshot): string {
@@ -77,33 +57,20 @@ export default function MobileMapShell({
 
   return (
     <main className="relative h-[100dvh] w-full overflow-hidden bg-black text-white" data-location-source={source}>
-      <MapContainer
-        center={[snapshot.lat, snapshot.lng]}
-        zoom={17}
-        minZoom={3}
-        maxZoom={20}
-        zoomControl={false}
-        attributionControl={false}
-        className="h-full w-full"
-      >
-        <TileLayer url={satellite ? SATELLITE_TILES : STREET_TILES} />
-        <CenterOnSnapshot snapshot={snapshot} centerRequest={centerRequest} />
-        {railVisible && rail.length > 1 ? (
-          <Polyline positions={rail} pathOptions={{ color: '#ffffff', opacity: 0.6, weight: 3 }} />
-        ) : null}
-        {snapshot.accuracyM ? (
-          <Circle
-            center={[snapshot.lat, snapshot.lng]}
-            radius={snapshot.accuracyM}
-            pathOptions={{ color: '#ffffff', opacity: 0.35, fillOpacity: 0.07, weight: 1 }}
-          />
-        ) : null}
-        <CircleMarker
-          center={[snapshot.lat, snapshot.lng]}
-          radius={9}
-          pathOptions={{ color: '#000000', fillColor: '#ffffff', fillOpacity: 1, weight: 3 }}
-        />
-      </MapContainer>
+      <MobileAtlasCanvas
+        snapshot={snapshot}
+        ghostrail={ghostrail}
+        satellite={satellite}
+        railVisible={railVisible && rail.length > 1}
+        centerRequest={centerRequest}
+      />
+
+      <div className="pointer-events-none absolute left-3 top-[calc(max(12px,env(safe-area-inset-top))+58px)] z-[500] rounded-full border border-white/10 bg-black/75 px-3 py-2 text-[10px] font-semibold tracking-[0.14em] text-white/80 backdrop-blur-xl">
+        {satellite ? 'SATÉLITE' : 'ATLAS ISOMÉTRICO 2.5D'}
+      </div>
+      <div className="pointer-events-none absolute bottom-[calc(max(8px,env(safe-area-inset-bottom))+88px)] left-3 z-[500] rounded-full bg-black/70 px-2 py-1 text-[9px] text-white/65">
+        © OpenFreeMap · OpenStreetMap{satellite ? ' · Esri' : ''}
+      </div>
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] flex justify-center px-3 pt-[max(12px,env(safe-area-inset-top))]">
         <div className="max-w-[calc(100vw-24px)] truncate rounded-full border border-white/10 bg-black/85 px-4 py-2 text-sm font-semibold shadow-lg backdrop-blur-xl">
@@ -114,7 +81,7 @@ export default function MobileMapShell({
       <div className="absolute right-3 top-[calc(max(12px,env(safe-area-inset-top))+58px)] z-[500] flex flex-col gap-2">
         <button
           type="button"
-          aria-label="Cambiar capa"
+          aria-label={satellite ? "Volver al atlas 3D" : "Activar vista satélite"}
           onClick={() => setSatellite((value) => !value)}
           className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/85 backdrop-blur-xl active:scale-95"
         >
