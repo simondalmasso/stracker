@@ -1873,26 +1873,34 @@ export default function TrackerView() {
       }
     }
 
-    // ── SOURCE 2 (RESCUE ONLY): localStorage cache ──
-    // Only used if Source 1 is empty (backend unreachable or no data).
-    // Cache points must also have valid timestamps within 24h.
-    // V5.8: cache is now AES-256-GCM encrypted, loaded async into cachedGhostPts.
-    if (canonical.length === 0) {
-      for (const cp of cachedGhostPts) {
-        if (isValid(cp)) {
-          canonical.push({ lat: cp.lat, lng: cp.lng, t: cp.t!, zone: (cp as any).zone, _src: 'cache' })
-          diag.cache++
-        }
+    // ── SOURCE 2: encrypted local cache complements live history ──
+    // Always merge both sources: after a backend restart, live data may contain
+    // only the newest point while the browser still holds the rest of the last
+    // 24 hours. Both sources are timestamp-validated by isValid(); no points
+    // are fabricated and no points older than the 24h window are admitted.
+    // Live points are inserted first, so they win exact duplicate conflicts.
+    for (const cp of cachedGhostPts) {
+      if (isValid(cp)) {
+        canonical.push({ lat: cp.lat, lng: cp.lng, t: cp.t!, zone: (cp as any).zone, _src: 'cache' })
+        diag.cache++
       }
     }
 
-    // ── Sort by timestamp ascending ──
+    // ── Sort chronologically; keep distinct visits to the same place ──
     canonical.sort((a, b) => a.t.localeCompare(b.t))
 
-    // ── Spatial dedup: remove consecutive points within 5m ──
+    // Drop only exact timestamp duplicates or near-identical GPS samples
+    // within a short 2-minute window. Do not collapse a place revisited later:
+    // repeated stationary/return visits are meaningful GhostRail memory.
     const deduped: typeof canonical = []
     for (const p of canonical) {
-      if (!isNearExisting(p, deduped)) {
+      const pTime = new Date(p.t).getTime()
+      const duplicate = deduped.some(ep => {
+        if (ep.t === p.t) return true
+        const timeGap = Math.abs(new Date(ep.t).getTime() - pTime)
+        return timeGap <= 120_000 && isNearExisting(p, [ep])
+      })
+      if (!duplicate) {
         deduped.push(p)
       } else {
         diag.discarded_dup++
