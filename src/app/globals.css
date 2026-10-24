@@ -502,6 +502,7 @@ input:focus {
 
 /* Tiny London-inspired isometric 2.5D map canvas. */
 
+.stracker-maplibre-container.maplibregl-map,
 .stracker-maplibre-container .maplibregl-map,
 .stracker-maplibre-container .maplibregl-canvas-container,
 .stracker-maplibre-container .maplibregl-canvas {
