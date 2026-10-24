@@ -166,6 +166,20 @@ export async function importCookieSession(raw: string, signal?: AbortSignal): Pr
     signal,
   })
   const handle = await json<CookieSessionHandle>(response)
+  if (!validHandle(handle)) {
+    // Older public Workers may still create a memory-only session. Never accept it
+    // as durable; best-effort revoke the just-created session before surfacing the mismatch.
+    if (TOKEN.test(handle.sessionId || '') && TOKEN.test(handle.ownerToken || '') && TOKEN.test(handle.mobilityScope || '')) {
+      await fetch(`/api/cookie-sessions/${encodeURIComponent(handle.sessionId)}`, {
+        method: 'DELETE',
+        headers: ownerHeaders(handle),
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal,
+      }).catch(() => undefined)
+    }
+    throw new CookieSessionApiError('SESSION_STORAGE_POLICY_MISMATCH', 503)
+  }
   persistCookieSessionHandle(handle)
   return handle
 }
