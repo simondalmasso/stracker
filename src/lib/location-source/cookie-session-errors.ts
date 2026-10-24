@@ -5,6 +5,7 @@ export const COOKIE_SESSION_TRANSIENT_CODES = new Set([
   'FREQUENCY_LIMIT',
   'STORAGE_UNAVAILABLE',
   'BINDING_UNAVAILABLE',
+  'SESSION_STORAGE_POLICY_MISMATCH',
 ])
 
 const ERROR_COPY: Record<string, string> = {
@@ -22,6 +23,7 @@ const ERROR_COPY: Record<string, string> = {
   REQUEST_FAILED: 'No se pudo completar la operación. Conservé la captura para reintentar.',
   STORAGE_UNAVAILABLE: 'El backend de sesiones no pudo completar la operación de guardado seguro. Conservé la captura para reintentar; si persiste, hay que revisar el servicio.',
   BINDING_UNAVAILABLE: 'El servicio de sesiones no está disponible. Conservé la captura para reintentar cuando el backend se recupere.',
+  SESSION_STORAGE_POLICY_MISMATCH: 'El servidor público sigue usando almacenamiento temporal incompatible. No acepté la sesión como persistente y solicité su revocación; conservé la captura para reintentar cuando se actualice el runtime.',
   NOT_FOUND: 'La sesión de STRACKER ya no existe o venció. Volvé a importarla desde el navegador.',
   ORIGIN_REJECTED: 'El servidor rechazó el origen de la solicitud. Abrí STRACKER desde su URL pública y recargá.',
   CONTENT_TYPE_REQUIRED: 'La solicitud no pudo validarse. Recargá STRACKER e intentá de nuevo.',
