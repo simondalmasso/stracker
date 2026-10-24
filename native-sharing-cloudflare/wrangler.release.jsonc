@@ -22,7 +22,7 @@
   "assets": {
     "directory": "../out",
     "binding": "ASSETS",
-    "run_worker_first": ["/", "/share", "/share/", "/api/share/*", "/api/cookie-sessions", "/api/cookie-sessions/*", "/shared", "/shared/*", "/__stracker/version.json", "/__stracker/build.json", "/data/santa-fe-3d/*.pmtiles"]
+    "run_worker_first": ["/", "/share", "/share/", "/api/share/*", "/api/cookie-sessions", "/api/cookie-sessions/*", "/shared", "/shared/*", "/__stracker/version.json", "/__stracker/build.json"]
   },
   "observability": {
     "enabled": false,
