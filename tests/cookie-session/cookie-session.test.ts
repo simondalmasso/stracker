@@ -177,6 +177,8 @@ describe('cookie-session service error handling', () => {
     expect(isTransientCookieSessionError('STORAGE_UNAVAILABLE')).toBe(true)
     expect(cookieSessionErrorMessage('BINDING_UNAVAILABLE')).toContain('servicio de sesiones')
     expect(isTransientCookieSessionError('BINDING_UNAVAILABLE')).toBe(true)
+    expect(cookieSessionErrorMessage('SESSION_STORAGE_POLICY_MISMATCH')).toContain('almacenamiento temporal incompatible')
+    expect(isTransientCookieSessionError('SESSION_STORAGE_POLICY_MISMATCH')).toBe(true)
   })
 
   test('does not treat expired Google authentication as a transient backend error', () => {
