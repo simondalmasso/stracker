@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    target-branch: "feat/stracker-controlled-physical-pilot-v1"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+    commit-message:
+      prefix: "deps"
