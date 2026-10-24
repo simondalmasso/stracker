@@ -3,8 +3,7 @@ import { describe, expect, test } from 'bun:test'
 describe('Cloudflare Static Assets owns the Santa Fe PMTiles byte-range route', () => {
   test('does not route PMTiles archives through the Worker-first pipeline', async () => {
     const config = JSON.parse(await Bun.file('native-sharing-cloudflare/wrangler.release.jsonc').text()) as {
-      assets?: { run_worker_first?: string[]
-    }
+      assets?: { run_worker_first?: string[] }
     expect(config.assets?.run_worker_first).not.toContain('/data/santa-fe-3d/*.pmtiles')
   })
 
