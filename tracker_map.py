@@ -80,8 +80,12 @@ try:
 except NameError:
     BASE_DIR = Path(r"C:\Users\Simon\tracker")
 PROFILE_DIR = BASE_DIR / "playwright_profile"
-COOKIES_PATH = BASE_DIR / "cookies.json"
-CSV_PATH = BASE_DIR / "historial.csv"
+# Point these at a persistent mounted volume in hosted deployments. Without
+# that mount, a platform restart/redeploy may discard session and GhostRail files.
+COOKIES_PATH = Path(os.environ.get("STRACKER_SESSION_PATH", str(BASE_DIR / "cookies.json"))).expanduser()
+CSV_PATH = Path(os.environ.get("STRACKER_HISTORY_PATH", str(BASE_DIR / "historial.csv"))).expanduser()
+GHOSTRAIL_ENC_PATH = Path(os.environ.get("STRACKER_GHOSTRAIL_PATH", str(BASE_DIR / "ghostrail.enc"))).expanduser()
+GHOSTRAIL_ARCHIVE_PATH = Path(os.environ.get("STRACKER_GHOSTRAIL_ARCHIVE_PATH", str(BASE_DIR / "ghostrail_archive.enc"))).expanduser()
 HTML_PATH = BASE_DIR / "mapa.html"
 LOG_PATH = BASE_DIR / "tracker.log"
 
@@ -193,13 +197,10 @@ _NOMINATIM_CACHE = {}
 # Returns HTTP 429 with Retry-After header when exceeded.
 # ═══════════════════════════════════════════════════════════════════
 
-GHOSTRAIL_ENC_PATH = BASE_DIR / "ghostrail.enc"
-
 # V6.0 STORAGE_OPTIMIZATION — Cold Storage archive path.
 # Records older than ARCHIVE_AGE_DAYS are moved here from ghostrail.enc
 # (ZIP-compressed + AES-256-GCM encrypted). /api/archive reads this file
 # on demand, keeping the main /points endpoint ultra-light.
-GHOSTRAIL_ARCHIVE_PATH = BASE_DIR / "ghostrail_archive.enc"
 ARCHIVE_AGE_DAYS = 30  # T-30d threshold
 
 # SECRET_KEY is resolved lazily by stracker_security.get_secret_key().

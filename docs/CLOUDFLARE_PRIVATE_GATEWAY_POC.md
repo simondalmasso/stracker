@@ -1,36 +1,31 @@
 # STRACKER — Cloudflare Private Gateway PoC
 
-## Scope
-
-This stacked phase implements a non-production proof of concept for the shared-location transport boundary:
-
-```text
-Mobile browser
-→ Cloudflare Access
-→ private Worker gateway
-→ server-side X-Stracker-Service-Token injection
-→ protected STRACKER backend binding
-```
-
-The PoC does not connect to Render, production cookies, real shared sessions, real coordinates, DNS, routes, traffic, or production secrets. The end-to-end suite uses an in-memory backend mock and a generated RSA Access key pair.
-
-## Branch and release boundary
+## Frozen baseline
 
 ```text
 BASE_BRANCH=feat/stracker-mobile-session-product-v1
 BASE_SHA=166bf8e316cabd4806ade4fb4c21a20d2ad2040a
 BRANCH=feat/stracker-cloudflare-private-gateway-poc
-PR_BASE=feat/stracker-mobile-session-product-v1
-DEPLOYMENT=NOT_EXECUTED
-VERSION_UPLOAD=NOT_EXECUTED
-PRODUCTION_TRAFFIC=0%
+HEAD_SHA=77a937b4b157c2ec2c47940d6fe6891cf10b74c9
+DRAFT_PR=4
+STATE=ACCEPTED_AND_FROZEN
 ```
 
-PR #2 is frozen as the verified mobile baseline. This PoC is isolated in the third stacked Draft PR.
+The PoC validates the code boundary for:
 
-## Gateway policy
+```text
+Mobile browser
+→ Cloudflare Access JWT validation
+→ private Worker gateway
+→ server-side X-Stracker-Service-Token injection
+→ fixed backend abstraction
+```
 
-The Worker exposes only these exact pairs:
+It contains no production deployment, Render connection, DNS, Google cookies, real sessions, real coordinates or production secret.
+
+## Gateway contract
+
+Exact API routes:
 
 ```text
 GET  /api/session/status
@@ -39,140 +34,71 @@ POST /api/session/delete
 GET  /points
 ```
 
-All other paths are rejected. Query strings are rejected. Methods are not inferred or forwarded. The client cannot select an upstream host, scheme, port, path, redirect target, or service binding.
+The gateway rejects query strings, unknown paths and unsupported methods. The client cannot select an upstream scheme, host, port, path or redirect target. Browser headers are discarded and the upstream request is reconstructed.
 
-The Worker uses a fixed `STRACKER_BACKEND` service binding. This is the PoC SSRF boundary. No request parameter is used to construct the upstream destination.
+The gateway validates the Access assertion with:
 
-## Cloudflare Access validation
+- RS256 only;
+- exact key ID;
+- JWKS restricted to the configured HTTPS `*.cloudflareaccess.com` origin;
+- exact issuer and audience;
+- Web Crypto signature verification;
+- `exp`, `nbf` and `iat` checks;
+- fail-closed behavior for missing or invalid configuration and claims.
 
-The Worker reads only `Cf-Access-Jwt-Assertion` for authorization. It does not trust the browser cookie as proof.
+Sensitive responses are JSON-only, size-limited and use `Cache-Control: no-store`. Redirects, `Set-Cookie` and arbitrary upstream headers are not forwarded.
 
-Validation requirements:
+## Mobile contract
 
-- `RS256` only;
-- exact key ID lookup from the team JWKS;
-- team domain restricted to an HTTPS `*.cloudflareaccess.com` origin;
-- JWKS URL fixed to `/cdn-cgi/access/certs`;
-- exact issuer match;
-- exact audience match, including array claims;
-- signature verification with Web Crypto;
-- required expiration and checks for `nbf` and future `iat`;
-- fail-closed on missing configuration, missing JWT, malformed JWT, unavailable JWKS, invalid claims, or invalid signature.
+`MI UBICACIÓN` remains browser-local and does not require the shared gateway.
 
-The test suite generates a temporary RSA key pair and never uses a real Access application or account key.
-
-## Header boundary
-
-The gateway does not forward browser headers. It constructs a new upstream request with only:
-
-```text
-Accept: application/json
-Content-Type: application/json              # import route only
-X-Stracker-Service-Token: <server binding>
-X-Stracker-Gateway-Version: private-poc-v1
-```
-
-Client-supplied values for `Authorization`, `Cookie`, `Cf-Access-Jwt-Assertion`, `X-Stracker-Service-Token`, forwarding headers, and arbitrary custom secrets are discarded.
-
-Upstream response headers are also rebuilt. `Set-Cookie`, redirects, cache directives, and arbitrary backend headers are not forwarded.
-
-Every gateway response uses:
-
-```text
-Cache-Control: no-store, max-age=0
-Pragma: no-cache
-Expires: 0
-X-Content-Type-Options: nosniff
-Referrer-Policy: no-referrer
-X-Frame-Options: DENY
-X-Stracker-Gateway: private-poc-v1
-```
-
-Only JSON responses within the configured size limit are accepted from the backend binding.
-
-## Mobile behavior
-
-`MI UBICACIÓN` remains browser-local and has no dependency on Cloudflare Access, the gateway, the service token, or the shared-session API.
-
-`UBICACIÓN COMPARTIDA` uses same-origin relative paths and requires the response attestation header:
+`UBICACIÓN COMPARTIDA` uses same-origin paths and requires:
 
 ```text
 X-Stracker-Gateway: private-poc-v1
 ```
 
-A direct static host, Render endpoint, missing Access policy, missing Worker binding, or non-gateway response therefore remains fail-closed with `PRIVATE_GATEWAY_REQUIRED` or a gateway authorization/configuration error.
+Missing Access, gateway, binding or response attestation remains fail-closed. No Render origin or service token is embedded in the mobile bundle.
 
-No Render origin or service token is embedded in the mobile bundle.
+## PoC test boundary
 
-## Mock end-to-end test
+The frozen PoC uses generated RSA keys, a synthetic test token and an in-memory backend. Its current-head CI verifies JWT validation, open-proxy resistance, SSRF blocking, header stripping, mock E2E, static export and mobile QA.
 
-The mock E2E test executes:
+## Mandatory architectural clarification
 
-```text
-signed Access JWT
-→ Worker authorization
-→ POST /api/session/import with MOCK_SESSION_ONLY
-→ server-side mock token injection
-→ mock backend token assertion
-→ GET /points
-→ POST /api/session/delete
-```
+A Cloudflare Worker Service Binding connects one Worker to another Worker. It is not an external-origin transport.
 
-The mock backend asserts that sensitive client headers were removed and that only the server-side test token reached it. No real cookies, sessions, identifiers, or locations are used.
-
-## Wrangler configuration
-
-`gateway/wrangler.jsonc` is intentionally non-routable:
+The authorized live staging phase must use exactly:
 
 ```text
-workers_dev=false
-preview_urls=false
-routes=none
-custom_domains=none
-production secrets=none
+stracker-gateway-staging
+→ STRACKER_BACKEND Service Binding
+→ stracker-backend-mock-staging
 ```
-
-CI runs only:
 
 ```text
-wrangler versions upload --dry-run
+SERVICE_BINDING=WORKER_TO_WORKER_ONLY
+RENDER_INTEGRATION=NOT_PART_OF_THIS_PHASE
 ```
 
-No `wrangler deploy`, deployment creation, traffic promotion, DNS change, or real version upload is part of this phase.
+The PoC wording `protected STRACKER backend binding` must not be interpreted as a direct Render connection.
 
-## Required runtime bindings for a future isolated candidate
-
-A future non-production candidate would require all of the following before upload:
+A future Render integration requires a separate architecture and authorization:
 
 ```text
-ACCESS_TEAM_DOMAIN=<exact Cloudflare Access team origin>
-ACCESS_AUD=<non-production Access application AUD>
-STRACKER_SERVICE_TOKEN=<non-production backend token secret>
-STRACKER_BACKEND=<isolated backend service binding>
+fixed fetch to an explicit allowlisted HTTPS origin
+or
+a dedicated origin-adapter Worker
 ```
 
-Those bindings are not provisioned by this PR. A live Render bridge remains explicitly pending.
-
-## Validation contract
-
-The Draft PR workflow is authoritative for the current head and must report:
+## Semantic boundaries
 
 ```text
-STACKED_BASE_CHECK=PASS
-BUN_FROZEN_INSTALL=PASS
-ESLINT=PASS
-TYPECHECK=PASS
-STATIC_EXPORT_BUILD=PASS
-BACKEND_TESTS=PASS
-GATEWAY_TESTS=PASS
-ACCESS_JWT_VALIDATION=PASS
-OPEN_PROXY=NO
-SSRF=BLOCKED
-SERVICE_TOKEN_IN_BUNDLE=NO
-MOCK_E2E=PASS
-MY_LOCATION_INDEPENDENT=PASS
-SHARED_LOCATION_FAIL_CLOSED=PASS
-WRANGLER_DRY_RUN=PASS
-MOBILE_QA=PASS
-CI_FINAL=SUCCESS
+SERVICE_BINDING != EXTERNAL_ORIGIN
+STAGING_DEPLOYMENT != PRODUCTION_DEPLOYMENT
+WORKER_VERSION != WORKER_DEPLOYMENT
+ACCESS_IDENTITY != ORIGIN_SERVICE_TOKEN
+CODE_ROLLBACK != DATA_ROLLBACK
 ```
+
+PR #4 remains frozen. All real non-production infrastructure, IDs and live evidence belong to the next stacked Draft PR.

@@ -15,9 +15,22 @@ import {
   SessionApiError,
 } from './session-api'
 
+const SHARED_SESSION_LINKED_KEY = 'stracker.sharedSessionLinked.v1'
+
+function saveLinkedSession(linked: boolean): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (linked) window.localStorage.setItem(SHARED_SESSION_LINKED_KEY, '1')
+    else window.localStorage.removeItem(SHARED_SESSION_LINKED_KEY)
+  } catch {
+    // The backend remains authoritative if browser storage is unavailable.
+  }
+}
+
 interface SharedLocationController {
   state: SharedLocationState
   status: SharedSessionStatus | null
+  rememberedSession: boolean
   snapshot: LocationSnapshot | null
   ghostrail: LocationSnapshot[]
   loading: boolean
@@ -69,6 +82,10 @@ function userMessage(error: unknown): string {
 export function useSharedLocation(): SharedLocationController {
   const [state, setState] = useState<SharedLocationState>('SHARED_UNCONFIGURED')
   const [status, setStatus] = useState<SharedSessionStatus | null>(null)
+  const [rememberedSession, setRememberedSession] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try { return window.localStorage.getItem(SHARED_SESSION_LINKED_KEY) === '1' } catch { return false }
+  })
   const [snapshot, setSnapshot] = useState<LocationSnapshot | null>(null)
   const [ghostrail, setGhostrail] = useState<LocationSnapshot[]>([])
   const [loading, setLoading] = useState(false)
@@ -132,11 +149,15 @@ export function useSharedLocation(): SharedLocationController {
   const refreshStatus = useCallback(async () => {
     setLoading(true)
     setError(null)
+    // Keep the import screen available for a first-time user while checking the server.
+    // A previously linked marker remains in state until the server confirms otherwise.
     const controller = new AbortController()
     requestRef.current = controller
     try {
       const next = await getSharedSessionStatus(controller.signal)
       setStatus(next)
+      setRememberedSession(next.configured)
+      saveLinkedSession(next.configured)
       setState(next.state)
       if (
         next.state === 'SHARED_READY' ||
@@ -164,6 +185,8 @@ export function useSharedLocation(): SharedLocationController {
       try {
         const result = await importSharedSession(raw, controller.signal)
         setStatus(result)
+        setRememberedSession(result.configured)
+        saveLinkedSession(result.configured)
         setState(result.state)
         if (
           result.state === 'SHARED_READY' ||
@@ -193,6 +216,8 @@ export function useSharedLocation(): SharedLocationController {
     try {
       await deleteSharedSession()
       setStatus(null)
+      setRememberedSession(false)
+      saveLinkedSession(false)
       setSnapshot(null)
       setGhostrail([])
       setState('SHARED_UNCONFIGURED')
@@ -208,6 +233,7 @@ export function useSharedLocation(): SharedLocationController {
   return {
     state,
     status,
+    rememberedSession,
     snapshot,
     ghostrail,
     loading,

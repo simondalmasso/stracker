@@ -1,0 +1,13 @@
+{
+  "name": "stracker-backend-mock-staging",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-07-21",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "secrets": {
+    "required": ["STRACKER_SERVICE_TOKEN"]
+  }
+}
