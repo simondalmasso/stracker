@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ClipboardPaste, Cookie, History, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react'
 import type { GhostRailSegment, LocationKeyframe, LocationSnapshot } from '@/lib/location-source/contracts'
 import { freshnessFromTimestamp } from '@/lib/location-source/contracts'
+import { cookieSessionErrorMessage, isTransientCookieSessionError } from '@/lib/location-source/cookie-session-errors'
 import {
   CookieSessionApiError,
   clearCookieMobility,
@@ -27,32 +28,11 @@ import {
 const MobileMapShell = dynamic(() => import('./MobileMapShell'), { ssr: false })
 const SERVER_STATE_POLL_INTERVAL_MS = 20_000
 const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000
-const TRANSIENT_CODES = new Set(['COOKIE_PROVIDER_UNAVAILABLE', 'OPERATION_TIMEOUT', 'REQUEST_FAILED', 'FREQUENCY_LIMIT'])
-
-interface CookieSessionPanelProps { onBack: () => void }
-interface CapturedCookieInput { format: string; bytes: number }
-
-const ERROR_COPY: Record<string, string> = {
-  COOKIE_FORMAT_UNRECOGNIZED: 'Formato no reconocido. Usá Cookie Editor JSON, Cookie Header o Netscape cookies.txt.',
-  COOKIE_INVALID: 'La exportación contiene una fila crítica inválida. Volvé a exportarla sin editarla.',
-  COOKIE_DOMAIN_REJECTED: 'La exportación contiene una cookie crítica fuera de google.com.',
-  COOKIE_SET_INCOMPLETE: 'No queda autenticación suficiente para validar la sesión.',
-  COOKIE_EXPIRED: 'La sesión importada ya no contiene autenticación vigente. Exportá cookies nuevas.',
-  COOKIE_AUTH_EXPIRED: 'Google rechazó la autenticación o ya no queda una cookie de autenticación vigente.',
-  COOKIE_PROVIDER_UNAVAILABLE: 'Google no está disponible temporalmente. STRACKER conserva la sesión cifrada y reintentará.',
-  COOKIE_SESSION_EXPIRED: 'La sesión temporal de STRACKER venció. Importala nuevamente.',
-  BODY_TOO_LARGE: 'El archivo supera el límite permitido de 64 KiB.',
-  FREQUENCY_LIMIT: 'La actualización fue demasiado rápida. El sampler seguirá en segundo plano.',
-  OPERATION_TIMEOUT: 'La validación tardó demasiado. STRACKER conserva la sesión para el próximo intento.',
-  REQUEST_FAILED: 'No se pudo completar la operación.',
-}
-
 function message(error: unknown): string {
-  if (error instanceof CookieSessionApiError) return ERROR_COPY[error.code] || 'El servidor rechazó la sesión de forma segura.'
+  if (error instanceof CookieSessionApiError) return cookieSessionErrorMessage(error.code)
   if (error instanceof DOMException && error.name === 'AbortError') return ''
   return 'No se pudo completar la operación. Revisá la conexión y reintentá.'
 }
-
 function snapshot(status: CookieSessionStatus, point: CookieSessionPoint | null): LocationSnapshot | null {
   if (!point) return null
   const freshness = freshnessFromTimestamp('shared-location', point.capturedAt)
