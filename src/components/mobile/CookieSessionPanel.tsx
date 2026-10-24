@@ -89,6 +89,15 @@ function keyframes(history: CookieHistoryResponse | null): LocationKeyframe[] {
   }))
 }
 
+interface CookieSessionPanelProps {
+  onBack: () => void
+}
+
+interface CapturedCookieInput {
+  format: string
+  bytes: number
+}
+
 export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) {
   const [captured, setCaptured] = useState<CapturedCookieInput | null>(null)
   const [handle, setHandle] = useState<CookieSessionHandle | null>(null)
