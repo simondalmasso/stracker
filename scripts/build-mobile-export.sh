@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+node scripts/copy-maplibre-worker.mjs
+
 BUILD_EXPORT=1 bunx next build
 
 test -f out/share.html

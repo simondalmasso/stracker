@@ -1521,12 +1521,15 @@ function deriveNetwork(pyState: any): {
 // L5: Building — height inference ≥85% confidence, ≥12m, not home/work
 // ══════════════════════════════════════════════════════════════════
 
-// ── KNOWN GEOFENCES ──
-// Home: Mariano Comas 3159 (from user's data)
-const HOME_GEOFENCE = { lat: -31.64693, lng: -60.71598, radiusM: 60, minStayMin: 10 }
+// Personal geofences are owner-configured at runtime; public client code has no home/work coordinates.
+type OptionalPersonalGeofence = { lat: number; lng: number; radiusM: number; minStayMin: number }
+const HOME_GEOFENCE: OptionalPersonalGeofence | null = null
+const WORK_GEOFENCE: OptionalPersonalGeofence | null = null
+const PUBLIC_CITY_CENTER = { lat: -31.6333, lng: -60.7 }
 
-// Work: approximate typical work location (can be overridden by backend)
-const WORK_GEOFENCE = { lat: -31.63700, lng: -60.70600, radiusM: 80, minStayMin: 10 }
+function distanceToPersonalGeofence(lat: number, lng: number, geofence: OptionalPersonalGeofence | null): number {
+  return geofence ? haversineM(lat, lng, geofence.lat, geofence.lng) : Number.POSITIVE_INFINITY
+}
 
 // Nightlife venues in the area
 const NIGHTLIFE_VENUES = [
@@ -1615,9 +1618,9 @@ function derivePlaceBadge(pyState: any): PlaceBadge {
   // L5: BUILDING — show if confidence >= 85% and not at home/work
   if (buildingConfidence >= 85 && estimatedHeightM !== null && estimatedHeightM >= 12) {
     // Check not at home or work first
-    const distToHome = haversineM(lat, lng, HOME_GEOFENCE.lat, HOME_GEOFENCE.lng)
-    const distToWork = haversineM(lat, lng, WORK_GEOFENCE.lat, WORK_GEOFENCE.lng)
-    if (distToHome > HOME_GEOFENCE.radiusM && distToWork > WORK_GEOFENCE.radiusM) {
+    const distToHome = distanceToPersonalGeofence(lat, lng, HOME_GEOFENCE)
+    const distToWork = distanceToPersonalGeofence(lat, lng, WORK_GEOFENCE)
+    if (distToHome > (HOME_GEOFENCE?.radiusM ?? 0) && distToWork > (WORK_GEOFENCE?.radiusM ?? 0)) {
       return {
         type: 'BUILDING',
         icon: '🏢',
@@ -1650,14 +1653,14 @@ function derivePlaceBadge(pyState: any): PlaceBadge {
   }
 
   // L3: WORK — geofence <80m, stay >10min, confidence ≥90%
-  const distToWork = haversineM(lat, lng, WORK_GEOFENCE.lat, WORK_GEOFENCE.lng)
+  const distToWork = distanceToPersonalGeofence(lat, lng, WORK_GEOFENCE)
   // Also check backend zone hint
   const backendZone = (pyState?.location?.zone || '').toUpperCase()
   const backendLabel = (pyState?.location?.label_primary || '').toUpperCase()
-  if (distToWork < WORK_GEOFENCE.radiusM || backendZone === 'WORK' || backendLabel.includes('TRABAJO') || backendLabel.includes('WORK')) {
+  if (distToWork < (WORK_GEOFENCE?.radiusM ?? 0) || backendZone === 'WORK' || backendLabel.includes('TRABAJO') || backendLabel.includes('WORK')) {
     let confidence = 75
-    if (distToWork < WORK_GEOFENCE.radiusM) confidence += 10
-    if (stayDurationMin > WORK_GEOFENCE.minStayMin) confidence += 10
+    if (distToWork < (WORK_GEOFENCE?.radiusM ?? 0)) confidence += 10
+    if (stayDurationMin > (WORK_GEOFENCE?.minStayMin ?? 10)) confidence += 10
     if (backendZone === 'WORK') confidence = Math.max(confidence, 92)
     if (confidence >= 90) {
       return {
@@ -1672,11 +1675,11 @@ function derivePlaceBadge(pyState: any): PlaceBadge {
   }
 
   // L2: HOME — geofence <60m, stay >10min, confidence ≥90%
-  const distToHome = haversineM(lat, lng, HOME_GEOFENCE.lat, HOME_GEOFENCE.lng)
-  if (distToHome < HOME_GEOFENCE.radiusM || backendZone === 'HOME' || pyState?.location?.is_home || backendLabel.includes('CASA') || backendLabel.includes('HOME')) {
+  const distToHome = distanceToPersonalGeofence(lat, lng, HOME_GEOFENCE)
+  if (distToHome < (HOME_GEOFENCE?.radiusM ?? 0) || backendZone === 'HOME' || pyState?.location?.is_home || backendLabel.includes('CASA') || backendLabel.includes('HOME')) {
     let confidence = 75
-    if (distToHome < HOME_GEOFENCE.radiusM) confidence += 10
-    if (stayDurationMin > HOME_GEOFENCE.minStayMin) confidence += 10
+    if (distToHome < (HOME_GEOFENCE?.radiusM ?? 0)) confidence += 10
+    if (stayDurationMin > (HOME_GEOFENCE?.minStayMin ?? 10)) confidence += 10
     if (backendZone === 'HOME' || pyState?.location?.is_home) confidence = Math.max(confidence, 95)
     if (confidence >= 90) {
       return {
@@ -2617,10 +2620,10 @@ export default function TrackerView() {
     let unknownSpotSince: number | null = null
     if (lat != null && lng != null) {
       // reuse the geofence calc: distance to home
-      const d = haversineM(lat, lng, HOME_GEOFENCE.lat, HOME_GEOFENCE.lng)
-      const insideHome = d < HOME_GEOFENCE.radiusM
-      const dWork = haversineM(lat, lng, WORK_GEOFENCE.lat, WORK_GEOFENCE.lng)
-      const insideWork = dWork < WORK_GEOFENCE.radiusM
+      const d = distanceToPersonalGeofence(lat, lng, HOME_GEOFENCE)
+      const insideHome = d < (HOME_GEOFENCE?.radiusM ?? 0)
+      const dWork = distanceToPersonalGeofence(lat, lng, WORK_GEOFENCE)
+      const insideWork = dWork < (WORK_GEOFENCE?.radiusM ?? 0)
       const insideKnown = insideHome || insideWork
       insideGeofence = insideHome
       // STAGNATION: at an unknown spot — track when this state began.
@@ -2633,7 +2636,7 @@ export default function TrackerView() {
       }
     }
     const next: AlertState = { insideGeofence, avgSpeedKmh: speedKmh, unknownSpotSince }
-    evaluateAlerts(prevAlertRef.current, next, { homeRadiusM: HOME_GEOFENCE.radiusM })
+    evaluateAlerts(prevAlertRef.current, next, { homeRadiusM: (HOME_GEOFENCE?.radiusM ?? 0) })
     prevAlertRef.current = next
   }, [snapshot, pyState, movement])
 
@@ -2993,11 +2996,11 @@ export default function TrackerView() {
   const ui = snapshot?.state?.ui
 
   // LOGIC_02 (stracker_v5.2_rev): fallback chain ahora prefiere la última
-  // posición guardada en localStorage antes que el HOME_GEOFENCE estático.
-  // Orden: ui.map > pyState.location > URL params > localStorage(last) > HOME_GEOFENCE
+  // Prefer the last locally saved position; never fall back to a hardcoded personal location.
+  // Order: ui.map > backend location > URL params > localStorage > public city-center fallback.
   const lastSavedPos = typeof window !== 'undefined' ? loadLastPosition() : null
-  const mapLat = ui?.map?.lat ?? pyState?.location?.lat ?? urlParams.lat ?? lastSavedPos?.lat ?? HOME_GEOFENCE.lat
-  const mapLng = ui?.map?.lng ?? pyState?.location?.lng ?? urlParams.lng ?? lastSavedPos?.lng ?? HOME_GEOFENCE.lng
+  const mapLat = ui?.map?.lat ?? pyState?.location?.lat ?? urlParams.lat ?? lastSavedPos?.lat ?? PUBLIC_CITY_CENTER.lat
+  const mapLng = ui?.map?.lng ?? pyState?.location?.lng ?? urlParams.lng ?? lastSavedPos?.lng ?? PUBLIC_CITY_CENTER.lng
 
   // LOGIC_02: persistir posición válida del backend para futuras sesiones
   useEffect(() => {
@@ -3052,13 +3055,9 @@ export default function TrackerView() {
     prevSpoofLevelRef.current = currentSpoof
   }, [snapshot, movement.inferredMode, spoofResult.level])
 
-  // FIX_1 (stracker_hotfix_ui_v8.2): Coordenadas fallback Santa Fe para
-  // depuración visual. Cuando el backend reporta "Sin ubicacion" (lat/lng
-  // null), el LiveMarker no renderizaba y el usuario veía un mapa vacío.
-  // Ahora usamos el HOME_GEOFENCE como fallback para que el pin SIEMPRE
-  // aparezca (criterio_1 de la matriz de verificación v8.2).
-  const FALLBACK_LAT = HOME_GEOFENCE.lat // -31.64693 (Santa Fe, AR)
-  const FALLBACK_LNG = HOME_GEOFENCE.lng // -60.71598
+  // Coarse public city-center fallback only; not a home/work location.
+  const FALLBACK_LAT = PUBLIC_CITY_CENTER.lat
+  const FALLBACK_LNG = PUBLIC_CITY_CENTER.lng // -60.71598
 
   const mapData = ui?.map || (pyState?.location && pyState.location.lat != null && pyState.location.lng != null ? {
     lat: pyState.location.lat,
@@ -3145,7 +3144,7 @@ export default function TrackerView() {
   // context (last 20 critical points) + embedded analyst instruction.
   // NOTE: Not wrapped in useCallback to avoid TDZ issues with deps array.
   const buildForensicPayload = async () => {
-    const HOME_TARGET: [number, number] = [-31.64693, -60.71598] // HOME_ZONE_CENTER from backend
+    const HOME_TARGET: [number, number] | null = null // Never embed a personal destination in public client code.
 
     const lat = mapData?.lat ?? mapLat
     const lng = mapData?.lng ?? mapLng
@@ -3159,9 +3158,9 @@ export default function TrackerView() {
       distancia_restante_metros: null,
       eta_segundos: null,
       desvio_trayectoria: false,
-      destino: { lat: HOME_TARGET[0], lng: HOME_TARGET[1], label: 'HOME_ZONE_CENTER' },
+      destino: null,
     }
-    if (lat != null && lng != null && isFinite(lat) && isFinite(lng)) {
+    if (HOME_TARGET && lat != null && lng != null && isFinite(lat) && isFinite(lng)) {
       try {
         const coordsStr = `${lng},${lat};${HOME_TARGET[1]},${HOME_TARGET[0]}`
         const resp = await fetch(`/osrm-route?coords=${encodeURIComponent(coordsStr)}`)

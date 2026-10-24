@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "stracker",
-  "main": "src/minimal-worker.ts",
+  "main": "src/public-worker.ts",
   "compatibility_date": "2026-06-22",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
@@ -22,7 +22,7 @@
   "assets": {
     "directory": "../out",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/share/*", "/shared", "/shared/*", "/__stracker/version.json", "/__stracker/build.json"]
+    "run_worker_first": ["/", "/share", "/share/", "/api/share/*", "/api/cookie-sessions", "/api/cookie-sessions/*", "/shared", "/shared/*", "/__stracker/version.json", "/__stracker/build.json"]
   },
   "observability": {
     "enabled": false,

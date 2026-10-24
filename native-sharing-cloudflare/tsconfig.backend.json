@@ -8,6 +8,9 @@
     "src/runtime-limits.ts",
     "src/session-runtime.ts",
     "src/sqlite-store.ts",
+    "src/cookie-session.ts",
+    "src/cookie-session-store.ts",
+    "src/cookie-session-durable.ts",
     "worker-backend-configuration.d.ts"
   ]
 }

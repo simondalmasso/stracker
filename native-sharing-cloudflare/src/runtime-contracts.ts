@@ -8,6 +8,8 @@ import type {
   ViewerPointsResponse,
   ViewerStatusResponse,
 } from '../../native-sharing/src/contracts.js'
+import type { CookieHistoryResponse } from './cookie-session-durable.js'
+import type { CookieSessionImportInput, CookieSessionPointResponse, CookieSessionPublicStatus } from './cookie-session.js'
 
 export type RuntimeErrorCode =
   | 'NOT_FOUND'
@@ -44,6 +46,14 @@ export type RuntimeErrorCode =
   | 'BINDING_UNAVAILABLE'
   | 'OPERATION_TIMEOUT'
   | 'CAPABILITY_GENERATION_FAILED'
+  | 'COOKIE_FORMAT_UNRECOGNIZED'
+  | 'COOKIE_INVALID'
+  | 'COOKIE_DOMAIN_REJECTED'
+  | 'COOKIE_SET_INCOMPLETE'
+  | 'COOKIE_EXPIRED'
+  | 'COOKIE_AUTH_EXPIRED'
+  | 'COOKIE_PROVIDER_UNAVAILABLE'
+  | 'COOKIE_SESSION_EXPIRED'
 
 export type RpcResult<T> =
   | { ok: true; value: T }
@@ -58,6 +68,13 @@ export interface NativeSharingRpcStub {
   logoutViewer(sessionId: string, viewerSessionToken: string): Promise<RpcResult<null>>
   rotateViewer(sessionId: string, emitterToken: string): Promise<RpcResult<{ viewerCapability: string; viewerGeneration: number }>>
   revoke(sessionId: string, emitterToken: string): Promise<RpcResult<null>>
+  importCookieSession(input: CookieSessionImportInput): Promise<RpcResult<CookieSessionPublicStatus>>
+  getCookieSessionStatus(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>>
+  getCookieSessionPoint(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPointResponse>>
+  getCookieSessionHistory(sessionId: string, ownerToken: string, sinceIso: string): Promise<RpcResult<CookieHistoryResponse>>
+  refreshCookieSession(sessionId: string, ownerToken: string): Promise<RpcResult<CookieSessionPublicStatus>>
+  clearCookieMobility(sessionId: string, ownerToken: string): Promise<RpcResult<null>>
+  deleteCookieSession(sessionId: string, ownerToken: string): Promise<RpcResult<null>>
 }
 
 export interface NativeSharingNamespaceBinding {
@@ -83,6 +100,12 @@ export interface RuntimeViewerExchangeRequest {
 
 export interface RuntimeViewerLogoutRequest {
   sessionId: string
+}
+
+export interface RuntimeCookieSessionRequest {
+  raw: string
+  durationMs?: number
+  mobilityScope?: string
 }
 
 export type { CreateSessionResponse }

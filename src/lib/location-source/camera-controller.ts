@@ -1,6 +1,8 @@
 import type { CameraMode, MotionState } from './contracts'
 import { clamp, smoothBearing } from './geo'
 
+export const MAP_PERSPECTIVE_PITCH_DEG = 56
+
 export interface CameraControllerState {
   mode: CameraMode
   bearingDeg: number | null
@@ -61,7 +63,7 @@ export function planCamera(input: CameraControllerInput): CameraPlan {
   if (mode === 'follow') {
     return {
       state: { mode, bearingDeg: nextBearing },
-      pitchDeg: reduced ? 40 : 60,
+      pitchDeg: reduced ? MAP_PERSPECTIVE_PITCH_DEG : 60,
       zoom: 17.4,
       offsetYRatio: reduced ? 0.08 : 0.18,
       durationMs: reduced ? 0 : 650,
@@ -73,7 +75,7 @@ export function planCamera(input: CameraControllerInput): CameraPlan {
   if (mode === 'stationary') {
     return {
       state: { mode, bearingDeg: nextBearing },
-      pitchDeg: reduced ? 0 : 35,
+      pitchDeg: MAP_PERSPECTIVE_PITCH_DEG,
       zoom: 17,
       offsetYRatio: 0,
       durationMs: reduced ? 0 : 350,
@@ -84,8 +86,8 @@ export function planCamera(input: CameraControllerInput): CameraPlan {
 
   return {
     state: { mode: 'overview', bearingDeg: nextBearing },
-    pitchDeg: 0,
-    zoom: input.hasPoint ? 15.5 : 4,
+    pitchDeg: input.hasPoint ? MAP_PERSPECTIVE_PITCH_DEG : 0,
+    zoom: input.hasPoint ? 16.3 : 4,
     offsetYRatio: 0,
     durationMs: reduced ? 0 : 350,
     animate: !reduced,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { initialGhostRailState, updateGhostRail } from '../../src/lib/location-source/ghostrail'
-import { initialCameraControllerState, planCamera } from '../../src/lib/location-source/camera-controller'
+import { MAP_PERSPECTIVE_PITCH_DEG, initialCameraControllerState, planCamera } from '../../src/lib/location-source/camera-controller'
 import type { AccuracyFilterResult } from '../../src/lib/location-source/accuracy-filter'
 import type { LocationSample } from '../../src/lib/location-source/contracts'
 
@@ -62,13 +62,22 @@ describe('camera controller', () => {
     const result = planCamera({ current: { mode: 'manual', bearingDeg: 10 }, motion: 'stationary', hasPoint: true, recenter: true })
     expect(result.state.mode).toBe('stationary')
     expect(result.shouldMove).toBe(true)
+    expect(result.pitchDeg).toBeGreaterThanOrEqual(52)
   })
 
-  test('reduced motion removes animated camera duration', () => {
+  test('reduced motion removes animation without flattening the city', () => {
     const result = planCamera({ current: initialCameraControllerState(), motion: 'moving', hasPoint: true, recenter: true, reducedMotion: true })
     expect(result.state.mode).toBe('follow')
     expect(result.animate).toBe(false)
     expect(result.durationMs).toBe(0)
-    expect(result.pitchDeg).toBeLessThanOrEqual(40)
+    expect(result.pitchDeg).toBe(MAP_PERSPECTIVE_PITCH_DEG)
+    expect(result.pitchDeg).toBeGreaterThanOrEqual(52)
+  })
+
+  test('overview uses an oblique dense-city camera', () => {
+    const result = planCamera({ current: { mode: 'manual', bearingDeg: 25 }, motion: 'unknown', hasPoint: true, recenter: true })
+    expect(result.state.mode).toBe('overview')
+    expect(result.zoom).toBeGreaterThanOrEqual(16.3)
+    expect(result.pitchDeg).toBe(MAP_PERSPECTIVE_PITCH_DEG)
   })
 })

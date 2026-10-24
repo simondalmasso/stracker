@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "overture_release": "2026-07-22.0",
+  "overture_s3_building_path": "s3://overturemaps-us-west-2/release/2026-07-22.0/theme=buildings/type=building/*",
+  "overture_s3_building_part_path": "s3://overturemaps-us-west-2/release/2026-07-22.0/theme=buildings/type=building_part/*",
+  "overturemaps_py": {
+    "version": "1.0.1",
+    "wheel_sha256": "b0fa1a4660c8267b8df467bfd9ec3fee9663e7067326f935b9b302ae019e0014",
+    "license": "MIT"
+  },
+  "shapely": {
+    "version": "2.1.1",
+    "license": "BSD-3-Clause"
+  },
+  "pyproj": {
+    "version": "3.7.1",
+    "license": "MIT"
+  },
+  "tippecanoe": {
+    "commit": "7c80fccdc17e4f8d9f4a52d518b4845290224366",
+    "license": "BSD-2-Clause"
+  },
+  "go_pmtiles": {
+    "version": "v1.30.1",
+    "commit": "b854980",
+    "license": "BSD-3-Clause"
+  },
+  "pmtiles_js": {
+    "version": "4.4.1",
+    "license": "BSD-3-Clause"
+  },
+  "data_license": "ODbL-1.0",
+  "attribution": [
+    "© OpenStreetMap contributors",
+    "© Overture Maps Foundation"
+  ],
+  "zero_cost": true
+}
