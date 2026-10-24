@@ -150,7 +150,7 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
         try {
           nextStatus = await refreshCookieSession(current, controller.signal)
         } catch (caught) {
-          if (!(caught instanceof CookieSessionApiError) || !TRANSIENT_CODES.has(caught.code)) throw caught
+          if (!(caught instanceof CookieSessionApiError) || !isTransientCookieSessionError(caught.code)) throw caught
           transientCopy = message(caught)
         }
       }
@@ -167,7 +167,7 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
       setStatus(safeStatus)
       setPoint(location.point)
       setHistory(nextHistory)
-      if (safeStatus.state === 'auth_expired') setError(ERROR_COPY.COOKIE_AUTH_EXPIRED)
+      if (safeStatus.state === 'auth_expired') setError(cookieSessionErrorMessage('COOKIE_AUTH_EXPIRED'))
       else setError(transientCopy || null)
     } catch (caught) {
       const copy = message(caught)
@@ -240,7 +240,7 @@ export default function CookieSessionPanel({ onBack }: CookieSessionPanelProps) 
     } catch (caught) {
       const copy = message(caught)
       if (copy) setError(copy)
-      if (caught instanceof CookieSessionApiError && !TRANSIENT_CODES.has(caught.code)) clearCaptured()
+      if (caught instanceof CookieSessionApiError && !isTransientCookieSessionError(caught.code)) clearCaptured()
     } finally {
       setBusy(false)
     }
