@@ -157,10 +157,11 @@ export function clearCookieSessionHandle(): void {
 }
 
 export async function importCookieSession(raw: string, signal?: AbortSignal): Promise<CookieSessionHandle> {
+  const requestedMobilityScope = getOrCreateMobilityScope()
   const response = await fetch('/api/cookie-sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ raw, durationMs: 24 * 60 * 60 * 1000, mobilityScope: getOrCreateMobilityScope() }),
+    body: JSON.stringify({ raw, durationMs: 24 * 60 * 60 * 1000, mobilityScope: requestedMobilityScope }),
     cache: 'no-store',
     credentials: 'same-origin',
     signal,
@@ -174,15 +175,14 @@ export async function importCookieSession(raw: string, signal?: AbortSignal): Pr
       : null
     const sessionId = candidate?.sessionId
     const ownerToken = candidate?.ownerToken
-    const mobilityScope = candidate?.mobilityScope
     if (
       typeof sessionId === 'string' && TOKEN.test(sessionId)
       && typeof ownerToken === 'string' && TOKEN.test(ownerToken)
-      && typeof mobilityScope === 'string' && TOKEN.test(mobilityScope)
+      && TOKEN.test(requestedMobilityScope)
     ) {
       await fetch(`/api/cookie-sessions/${encodeURIComponent(sessionId)}`, {
         method: 'DELETE',
-        headers: ownerHeaders({ ownerToken, mobilityScope }),
+        headers: ownerHeaders({ ownerToken, mobilityScope: requestedMobilityScope }),
         cache: 'no-store',
         credentials: 'same-origin',
         signal,
