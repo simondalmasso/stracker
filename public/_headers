@@ -13,3 +13,6 @@
   Permissions-Policy: geolocation=(), camera=(), microphone=()
   X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
   Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.openfreemap.org https://*.eox.at; connect-src 'self' https://*.openfreemap.org https://*.eox.at; font-src 'self' data:; worker-src 'self' blob:; child-src blob:; manifest-src 'self'
+
+/data/santa-fe-3d/*.pmtiles
+  X-Stracker-PMTiles-Transport: query-v1
