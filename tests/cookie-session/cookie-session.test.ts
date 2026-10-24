@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { capabilityVerifier } from '../../native-sharing/src/security'
 import { cookieSessionErrorMessage, isTransientCookieSessionError } from '../../src/lib/location-source/cookie-session-errors'
+import { CookieSessionApiError, importCookieSession } from '../../src/lib/location-source/cookie-session-api'
 import {
   CookieSessionMemoryRuntime,
   COOKIE_POLICY_VERSION,
@@ -189,5 +190,78 @@ describe('cookie-session service error handling', () => {
   test('identifies an otherwise unknown safe error code without leaking arbitrary input', () => {
     expect(cookieSessionErrorMessage('FUTURE_ERROR_CODE')).toContain('FUTURE_ERROR_CODE')
     expect(cookieSessionErrorMessage('<script>secret</script>')).not.toContain('<script>')
+  })
+})
+
+
+describe('cookie-session API import policy', () => {
+  test('rejects memory-only response and revokes with the requested scope when legacy Worker omits scope', async () => {
+    const sessionId = 's'.repeat(43)
+    const ownerToken = 'o'.repeat(43)
+    const mobilityScope = 'm'.repeat(43)
+    const values = new Map<string, string>([
+      ['stracker.cookie.mobility-scope.v1', mobilityScope],
+    ])
+    const storage = {
+      getItem(key: string) { return values.get(key) ?? null },
+      setItem(key: string, value: string) { values.set(key, value) },
+      removeItem(key: string) { values.delete(key) },
+    }
+    const originalFetch = globalThis.fetch
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+    const calls: Array<{ url: string; method: string; headers?: HeadersInit; body?: BodyInit | null }> = []
+
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { localStorage: storage, sessionStorage: storage },
+    })
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input)
+      const method = init?.method || 'GET'
+      calls.push({ url, method, headers: init?.headers, body: init?.body })
+      if (url === '/api/cookie-sessions' && method === 'POST') {
+        return new Response(JSON.stringify({
+          status: 'ok',
+          sessionId,
+          ownerToken,
+          expiresAt: '2026-10-25T00:00:00.000Z',
+          storagePolicy: 'memory-only',
+          // Legacy public Worker omits mobilityScope from its 201 response.
+        }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url === `/api/cookie-sessions/${sessionId}` && method === 'DELETE') {
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error('UNEXPECTED_COOKIE_SESSION_REQUEST')
+    }) as typeof fetch
+
+    try {
+      let caught: unknown
+      try {
+        await importCookieSession('SID=synthetic-invalid; SAPISID=synthetic-invalid')
+      } catch (error) {
+        caught = error
+      }
+
+      expect(caught).toBeInstanceOf(CookieSessionApiError)
+      expect((caught as CookieSessionApiError).code).toBe('SESSION_STORAGE_POLICY_MISMATCH')
+      expect((caught as CookieSessionApiError).status).toBe(503)
+      expect(calls.map((call) => call.method)).toEqual(['POST', 'DELETE'])
+      expect(JSON.parse(String(calls[0].body)).mobilityScope).toBe(mobilityScope)
+      const revokeHeaders = new Headers(calls[1].headers)
+      expect(revokeHeaders.get('X-Stracker-Cookie-Owner')).toBe(ownerToken)
+      expect(revokeHeaders.get('X-Stracker-Mobility-Scope')).toBe(mobilityScope)
+      expect(storage.getItem('stracker.cookie.handle.v2')).toBeNull()
+    } finally {
+      globalThis.fetch = originalFetch
+      if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow)
+      else Reflect.deleteProperty(globalThis, 'window')
+    }
   })
 })
