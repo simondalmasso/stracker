@@ -165,14 +165,24 @@ export async function importCookieSession(raw: string, signal?: AbortSignal): Pr
     credentials: 'same-origin',
     signal,
   })
-  const handle = await json<CookieSessionHandle>(response)
-  if (!validHandle(handle)) {
+  const responseHandle = await json<unknown>(response)
+  if (!validHandle(responseHandle)) {
     // Older public Workers may still create a memory-only session. Never accept it
     // as durable; best-effort revoke the just-created session before surfacing the mismatch.
-    if (TOKEN.test(handle.sessionId || '') && TOKEN.test(handle.ownerToken || '') && TOKEN.test(handle.mobilityScope || '')) {
-      await fetch(`/api/cookie-sessions/${encodeURIComponent(handle.sessionId)}`, {
+    const candidate = responseHandle && typeof responseHandle === 'object'
+      ? responseHandle as Partial<CookieSessionHandle>
+      : null
+    const sessionId = candidate?.sessionId
+    const ownerToken = candidate?.ownerToken
+    const mobilityScope = candidate?.mobilityScope
+    if (
+      typeof sessionId === 'string' && TOKEN.test(sessionId)
+      && typeof ownerToken === 'string' && TOKEN.test(ownerToken)
+      && typeof mobilityScope === 'string' && TOKEN.test(mobilityScope)
+    ) {
+      await fetch(`/api/cookie-sessions/${encodeURIComponent(sessionId)}`, {
         method: 'DELETE',
-        headers: ownerHeaders(handle),
+        headers: ownerHeaders({ ownerToken, mobilityScope }),
         cache: 'no-store',
         credentials: 'same-origin',
         signal,
@@ -180,8 +190,8 @@ export async function importCookieSession(raw: string, signal?: AbortSignal): Pr
     }
     throw new CookieSessionApiError('SESSION_STORAGE_POLICY_MISMATCH', 503)
   }
-  persistCookieSessionHandle(handle)
-  return handle
+  persistCookieSessionHandle(responseHandle)
+  return responseHandle
 }
 
 function ownerHeaders(handle: Pick<CookieSessionHandle, 'ownerToken' | 'mobilityScope'>): HeadersInit {
