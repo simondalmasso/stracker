@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { capabilityVerifier } from '../../native-sharing/src/security'
+import { cookieSessionErrorMessage, isTransientCookieSessionError } from '../../src/lib/location-source/cookie-session-errors'
 import {
   CookieSessionMemoryRuntime,
   COOKIE_POLICY_VERSION,
@@ -166,5 +167,25 @@ describe('memory-only cookie session runtime', () => {
     const result = await runtime.importSession({ sessionId: SESSION_ID, ownerVerifier: await capabilityVerifier(OWNER_TOKEN), raw: jsonFixture, durationMs: 60_000 * 30 })
     expect(result).toEqual({ ok: false, status: 401, code: 'COOKIE_AUTH_EXPIRED' })
     expect((await runtime.status(SESSION_ID, OWNER_TOKEN)).ok).toBe(false)
+  })
+})
+
+
+describe('cookie-session service error handling', () => {
+  test('shows actionable copy and keeps transient backend failures retryable', () => {
+    expect(cookieSessionErrorMessage('STORAGE_UNAVAILABLE')).toContain('backend de sesiones')
+    expect(isTransientCookieSessionError('STORAGE_UNAVAILABLE')).toBe(true)
+    expect(cookieSessionErrorMessage('BINDING_UNAVAILABLE')).toContain('servicio de sesiones')
+    expect(isTransientCookieSessionError('BINDING_UNAVAILABLE')).toBe(true)
+  })
+
+  test('does not treat expired Google authentication as a transient backend error', () => {
+    expect(cookieSessionErrorMessage('COOKIE_AUTH_EXPIRED')).toContain('Google rechazó')
+    expect(isTransientCookieSessionError('COOKIE_AUTH_EXPIRED')).toBe(false)
+  })
+
+  test('identifies an otherwise unknown safe error code without leaking arbitrary input', () => {
+    expect(cookieSessionErrorMessage('FUTURE_ERROR_CODE')).toContain('FUTURE_ERROR_CODE')
+    expect(cookieSessionErrorMessage('<script>secret</script>')).not.toContain('<script>')
   })
 })
