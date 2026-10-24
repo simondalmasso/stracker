@@ -1845,11 +1845,15 @@ export default function TrackerView() {
 
     // ── VALIDATION: must have valid lat/lng and timestamp within 24h ──
     function isValid(p: any): p is { lat: number; lng: number; t: string; zone?: string } {
-      if (p.lat == null || p.lng == null || !isFinite(p.lat) || !isFinite(p.lng)) return false
+      // Reject coerced strings, out-of-range coordinates, and malformed GPS records.
+      if (typeof p.lat !== 'number' || typeof p.lng !== 'number' ||
+          !Number.isFinite(p.lat) || !Number.isFinite(p.lng) ||
+          p.lat < -90 || p.lat > 90 || p.lng < -180 || p.lng > 180) return false
       if (!p.t || typeof p.t !== 'string') { diag.discarded_no_ts++; return false }
       const ts = new Date(p.t).getTime()
-      if (!isFinite(ts)) { diag.discarded_no_ts++; return false }
-      if (ts < cutoff24h) { diag.discarded_age++; return false }
+      if (!Number.isFinite(ts)) { diag.discarded_no_ts++; return false }
+      // GhostRail is a rolling past-24h trail; future samples must not enter it.
+      if (ts < cutoff24h || ts > now) { diag.discarded_age++; return false }
       return true
     }
 
