@@ -109,7 +109,6 @@ export function processLocationSample(
   const rail = trimGhostRail(updateGhostRail(previous.rail, {
     sample,
     filter,
-    freshness,
     sessionEpoch: previous.sessionEpoch,
   }))
 

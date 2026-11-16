@@ -1,13 +1,14 @@
 export const CAPABILITY_BYTES = 32
 export const VIEWER_SESSION_TOKEN_BYTES = 32
-export const VIEWER_SESSION_TTL_MS = 4 * 60 * 60 * 1000
-export const MAX_SESSION_DURATION_MS = 4 * 60 * 60 * 1000
+export const VIEWER_SESSION_TTL_MS = 24 * 60 * 60 * 1000
+export const MAX_SESSION_DURATION_MS = 24 * 60 * 60 * 1000
 export const DEFAULT_SESSION_DURATION_MS = 60 * 60 * 1000
 export const MIN_SESSION_DURATION_MS = 5 * 60 * 1000
-export const MAX_POINTS_PER_SESSION = 2_880
+// 24h at the minimum accepted publish interval (5 seconds).
+export const MAX_POINTS_PER_SESSION = 17_280
 export const MIN_POINT_INTERVAL_MS = 5_000
-export const MAX_GHOSTRAIL_SEGMENTS = 64
-export const MAX_POINTS_PER_RESPONSE = 600
+export const MAX_GHOSTRAIL_SEGMENTS = 256
+export const MAX_POINTS_PER_RESPONSE = 2_880
 export const EXPIRATION_GRACE_MS = 60_000
 export const DELETE_AFTER_EXPIRATION_MS = 24 * 60 * 60 * 1000
 export const MAX_POINT_AGE_MS = 5 * 60 * 1000

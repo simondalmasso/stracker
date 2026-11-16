@@ -1,9 +1,10 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronLeft, Copy, Eye, ShieldCheck, Wifi, WifiOff } from 'lucide-react'
 import { useNativeViewer } from '@/lib/location-source/use-native-viewer'
+import { keyframesFromGhostrail } from '@/lib/location-source/keyframes-from-rail'
 
 const MobileMapShell = dynamic(() => import('./MobileMapShell'), { ssr: false })
 
@@ -47,6 +48,7 @@ function ageText(capturedAt: string): string {
 export default function NativeViewerApp() {
   const viewer = useNativeViewer()
   const [diagnosticCopied, setDiagnosticCopied] = useState(false)
+  const keyframes = useMemo(() => keyframesFromGhostrail(viewer.ghostrail), [viewer.ghostrail])
 
   const close = () => {
     viewer.stop()
@@ -65,7 +67,7 @@ export default function NativeViewerApp() {
       : viewer.snapshot
     return (
       <div className="relative h-[100dvh] w-full overflow-hidden bg-black" data-pilot-freshness={viewer.freshnessState} data-pilot-network={viewer.networkState}>
-        <MobileMapShell source="shared-location" snapshot={mapSnapshot} ghostrail={viewer.ghostrail} onChangeSource={close} onStop={close} />
+        <MobileMapShell source="shared-location" snapshot={mapSnapshot} ghostrail={viewer.ghostrail} keyframes={keyframes} onChangeSource={close} onStop={close} />
         <section className="pointer-events-none absolute inset-x-3 top-[calc(max(12px,env(safe-area-inset-top))+52px)] z-[540] rounded-2xl border border-white/10 bg-black/90 px-3 py-2 text-white shadow-lg backdrop-blur-xl" aria-label="Frescura y conexión del visor">
           <div className="flex items-center justify-between gap-3 text-[11px] font-semibold">
             <span>{freshnessLabel(viewer.freshnessState)}</span>

@@ -9,6 +9,7 @@ const DURATIONS = [
   { label: '15 MIN', ms: 15 * 60_000 },
   { label: '1 HORA', ms: 60 * 60_000 },
   { label: '4 HORAS', ms: 4 * 60 * 60_000 },
+  { label: '24 HORAS', ms: 24 * 60 * 60_000 },
 ]
 
 function durationText(value: number | null): string {
@@ -93,7 +94,7 @@ export default function NativeEmitterApp() {
           <>
             <section className="mt-6 rounded-[24px] border border-white/10 p-4">
               <p className="text-xs font-semibold text-white/45">DURACIÓN</p>
-              <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="mt-3 grid grid-cols-4 gap-2">
                 {DURATIONS.map((duration) => <button key={duration.ms} type="button" aria-pressed={durationMs === duration.ms} onClick={() => setDurationMs(duration.ms)} className={`min-h-11 rounded-2xl text-xs font-semibold ${durationMs === duration.ms ? 'bg-white text-black' : 'border border-white/10 text-white/70'}`}>{duration.label}</button>)}
               </div>
             </section>
