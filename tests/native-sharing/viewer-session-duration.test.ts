@@ -25,7 +25,8 @@ describe('viewer session duration', () => {
     expect(Date.parse(viewer.expiresAt) - h.now()).toBe(MAX_SESSION_DURATION_MS)
 
     h.advance(MAX_SESSION_DURATION_MS - 1)
-    expect((await h.service.getStatus(created.sessionId, viewer.viewerSessionToken)).state).toBe('stale')
+    // No point has been received, so the viewer remains valid and active until expiry.
+    expect((await h.service.getStatus(created.sessionId, viewer.viewerSessionToken)).state).toBe('active')
   })
 
   test('is still bounded by the remaining sharing-session lifetime', async () => {

@@ -1,5 +1,7 @@
-import type { FreshnessState, GhostRailSegment, LocationSample, LocationSource } from './contracts'
+import type { GhostRailSegment, LocationSample, LocationSource } from './contracts'
 import type { AccuracyFilterResult } from './accuracy-filter'
+
+export const GHOSTRAIL_MEMORY_MS = 24 * 60 * 60 * 1000
 
 export interface GhostRailState {
   source: LocationSource
@@ -10,7 +12,6 @@ export interface GhostRailState {
 export interface GhostRailInput {
   sample: LocationSample
   filter: AccuracyFilterResult
-  freshness: FreshnessState
   sessionEpoch: number
   sessionReplaced?: boolean
 }
@@ -20,7 +21,7 @@ export function initialGhostRailState(source: LocationSource, sessionEpoch = 0):
 }
 
 function maximumIntervalMs(source: LocationSource): number {
-  return source === 'my-device' ? 45_000 : 180_000
+  return source === 'my-device' ? 45_000 : 600_000
 }
 
 function segmentId(source: LocationSource, epoch: number, capturedAt: string, index: number): string {
@@ -28,12 +29,17 @@ function segmentId(source: LocationSource, epoch: number, capturedAt: string, in
 }
 
 export function updateGhostRail(previous: GhostRailState, input: GhostRailInput): GhostRailState {
-  const { sample, filter, freshness, sessionEpoch } = input
+  const { sample, filter, sessionEpoch } = input
   if (sample.source !== previous.source || sessionEpoch !== previous.sessionEpoch || input.sessionReplaced) {
     previous = initialGhostRailState(sample.source, sessionEpoch)
   }
 
-  if (filter.decision !== 'accepted' || !filter.visualPoint || freshness === 'stale' || freshness === 'expired') {
+  if (filter.decision !== 'accepted' || !filter.visualPoint) {
+    return previous
+  }
+
+  const capturedMs = Date.parse(sample.capturedAt)
+  if (!Number.isFinite(capturedMs) || Date.now() - capturedMs > GHOSTRAIL_MEMORY_MS) {
     return previous
   }
 
@@ -70,10 +76,16 @@ export function updateGhostRail(previous: GhostRailState, input: GhostRailInput)
   }
 }
 
-export function trimGhostRail(state: GhostRailState, maximumPoints = 600): GhostRailState {
+export function trimGhostRail(state: GhostRailState, maximumPoints = 2_880): GhostRailState {
+  const cutoffMs = Date.now() - GHOSTRAIL_MEMORY_MS
+  const recentSegments = state.segments.filter((segment) => {
+    const endedMs = Date.parse(segment.endedAt)
+    return Number.isFinite(endedMs) && endedMs >= cutoffMs
+  })
+
   let remaining = maximumPoints
   const kept: GhostRailSegment[] = []
-  for (const segment of [...state.segments].reverse()) {
+  for (const segment of [...recentSegments].reverse()) {
     if (remaining <= 0) break
     const points = segment.points.slice(Math.max(0, segment.points.length - remaining))
     if (points.length) kept.push({ ...segment, points })

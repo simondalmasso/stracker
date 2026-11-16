@@ -6,6 +6,7 @@ import { ChevronLeft, LocateFixed, MapPinned } from 'lucide-react'
 import type { LocationSource, ProductFlow } from '@/lib/location-source/contracts'
 import { isMapUnlocked } from '@/lib/location-source/contracts'
 import { useMyLocation } from '@/lib/location-source/use-my-location'
+import { keyframesFromGhostrail } from '@/lib/location-source/keyframes-from-rail'
 import NativeSharingHub from './NativeSharingHub'
 
 const MobileMapShell = dynamic(() => import('./MobileMapShell'), { ssr: false })
@@ -82,6 +83,7 @@ export default function MobileLocationApp() {
   const [flow, setFlow] = useState<ProductFlow>('SELECTING_SOURCE')
   const [source, setSource] = useState<LocationSource | null>(null)
   const my = useMyLocation()
+  const myKeyframes = useMemo(() => keyframesFromGhostrail(my.ghostrail), [my.ghostrail])
 
   const select = useCallback((next: LocationSource) => {
     my.stop()
@@ -102,6 +104,6 @@ export default function MobileLocationApp() {
       : <SharedUnavailable onBack={reset} />
   }
   return isMapUnlocked(source, my.state, 'unconfirmed') && my.snapshot
-    ? <MobileMapShell source="my-device" snapshot={my.snapshot} ghostrail={my.ghostrail} onChangeSource={reset} onStop={reset} />
+    ? <MobileMapShell source="my-device" snapshot={my.snapshot} ghostrail={my.ghostrail} keyframes={myKeyframes} onChangeSource={reset} onStop={reset} />
     : <MyOnboarding state={my.state} requestPermission={my.requestPermission} onBack={reset} />
 }

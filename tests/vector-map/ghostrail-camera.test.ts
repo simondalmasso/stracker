@@ -22,27 +22,29 @@ function accepted(point: { lat: number; lng: number }): AccuracyFilterResult {
 describe('GhostRail segmentation', () => {
   test('does not connect excessive time gaps', () => {
     let state = initialGhostRailState('my-device')
-    state = updateGhostRail(state, { sample: sample('2026-07-21T12:00:00Z', -31.63, -60.70), filter: accepted({ lat: -31.63, lng: -60.70 }), freshness: 'fresh', sessionEpoch: 0 })
-    state = updateGhostRail(state, { sample: sample('2026-07-21T12:00:10Z', -31.631, -60.701), filter: accepted({ lat: -31.631, lng: -60.701 }), freshness: 'fresh', sessionEpoch: 0 })
-    state = updateGhostRail(state, { sample: sample('2026-07-21T12:02:00Z', -31.632, -60.702), filter: accepted({ lat: -31.632, lng: -60.702 }), freshness: 'fresh', sessionEpoch: 0 })
+    const now = Date.now()
+    state = updateGhostRail(state, { sample: sample(new Date(now - 20 * 60_000).toISOString(), -31.63, -60.70), filter: accepted({ lat: -31.63, lng: -60.70 }), sessionEpoch: 0 })
+    state = updateGhostRail(state, { sample: sample(new Date(now - 20 * 60_000 + 10_000).toISOString(), -31.631, -60.701), filter: accepted({ lat: -31.631, lng: -60.701 }), sessionEpoch: 0 })
+    state = updateGhostRail(state, { sample: sample(new Date(now - 5 * 60_000).toISOString(), -31.632, -60.702), filter: accepted({ lat: -31.632, lng: -60.702 }), sessionEpoch: 0 })
     expect(state.segments).toHaveLength(2)
     expect(state.segments[0].points).toHaveLength(2)
     expect(state.segments[1].points).toHaveLength(1)
   })
 
-  test('rejected or stale points are not rendered', () => {
+  test('rejected points are not rendered; accepted historical points remain in the 24-hour rail', () => {
     let state = initialGhostRailState('my-device')
-    const point = sample('2026-07-21T12:00:00Z', -31.63, -60.70)
-    state = updateGhostRail(state, { sample: point, filter: { ...accepted(point), decision: 'rejected', reason: 'impossible-speed' }, freshness: 'fresh', sessionEpoch: 0 })
-    state = updateGhostRail(state, { sample: point, filter: accepted(point), freshness: 'stale', sessionEpoch: 0 })
+    const point = sample(new Date(Date.now() - 20 * 60_000).toISOString(), -31.63, -60.70)
+    state = updateGhostRail(state, { sample: point, filter: { ...accepted(point), decision: 'rejected', reason: 'impossible-speed' }, sessionEpoch: 0 })
     expect(state.segments).toHaveLength(0)
+    state = updateGhostRail(state, { sample: point, filter: accepted(point), sessionEpoch: 0 })
+    expect(state.segments).toHaveLength(1)
   })
 
   test('session replacement clears all segments', () => {
     let state = initialGhostRailState('shared-location', 1)
-    const remote = { ...sample('2026-07-21T12:00:00Z', -31.63, -60.70), source: 'shared-location' as const }
-    state = updateGhostRail(state, { sample: remote, filter: accepted(remote), freshness: 'fresh', sessionEpoch: 1 })
-    state = updateGhostRail(state, { sample: remote, filter: accepted(remote), freshness: 'fresh', sessionEpoch: 2, sessionReplaced: true })
+    const remote = { ...sample(new Date(Date.now() - 20 * 60_000).toISOString(), -31.63, -60.70), source: 'shared-location' as const }
+    state = updateGhostRail(state, { sample: remote, filter: accepted(remote), sessionEpoch: 1 })
+    state = updateGhostRail(state, { sample: remote, filter: accepted(remote), sessionEpoch: 2, sessionReplaced: true })
     expect(state.sessionEpoch).toBe(2)
     expect(state.segments).toHaveLength(1)
   })
